@@ -247,18 +247,9 @@ public:
 
     /**
      * Appends a ContextFreeRPCCommand to the dispatch table.
-     *
      * Returns false if RPC server is already running (dump concurrency
      * protection).
-     *
      * Commands cannot be overwritten (returns false).
-     *
-     * Commands with different method names but the same callback function will
-     * be considered aliases, and only the first registered method name will
-     * show up in the help text command listing. Aliased commands do not have
-     * to have the same behavior. Server and client code can distinguish
-     * between calls based on method name, and aliased commands can also
-     * register different names, types, and numbers of parameters.
      */
     bool appendCommand(const std::string &name,
                        const ContextFreeRPCCommand *pcmd);
@@ -277,12 +268,15 @@ extern std::vector<uint8_t> ParseHexV(const UniValue &v, std::string strName);
 extern std::vector<uint8_t> ParseHexO(const UniValue &o, std::string strKey);
 
 extern Amount AmountFromValue(const UniValue &value);
+// extern UniValue ValueFromAmount(const Amount &amount);
+extern UniValue ValueFromCAmount(const CAmount &amount);
+extern std::string HelpRequiringPassphrase();
 extern std::string HelpExampleCli(const std::string &methodname,
                                   const std::string &args);
 extern std::string HelpExampleRpc(const std::string &methodname,
                                   const std::string &args);
 
-void StartRPC();
+bool StartRPC();
 void InterruptRPC();
 void StopRPC();
 std::string JSONRPCExecBatch(Config &config, RPCServer &rpcServer,

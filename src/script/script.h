@@ -192,9 +192,6 @@ enum opcodetype {
     OP_INVALIDOPCODE = 0xff,
 };
 
-// Maximum value that an opcode can be
-static const unsigned int MAX_OPCODE = FIRST_UNDEFINED_OP_VALUE - 1;
-
 const char *GetOpName(opcodetype opcode);
 
 /**
@@ -557,6 +554,7 @@ public:
      */
     uint32_t GetSigOpCount(uint32_t flags, const CScript &scriptSig) const;
 
+    bool IsPayToPublicKeyHash() const;
     bool IsPayToScriptHash() const;
     bool IsCommitment(const std::vector<uint8_t> &data) const;
     bool IsWitnessProgram(int &version, std::vector<uint8_t> &program) const;
@@ -568,9 +566,6 @@ public:
      */
     bool IsPushOnly(const_iterator pc) const;
     bool IsPushOnly() const;
-
-    /** Check if the script contains valid OP_CODES */
-    bool HasValidOps() const;
 
     /**
      * Returns whether the script is guaranteed to fail at execution, regardless

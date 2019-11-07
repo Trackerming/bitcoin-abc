@@ -27,6 +27,9 @@
 #include <utility>
 #include <vector>
 
+#include <addressindex.h>
+#include <spentindex.h>
+
 class CBlockIndex;
 class Config;
 
@@ -225,7 +228,7 @@ private:
     const LockPoints &lp;
 };
 
-// extracts a transaction hash from CTxMemPoolEntry or CTransactionRef
+// extracts a transaction hash from CTxMempoolEntry or CTransactionRef
 struct mempoolentry_txid {
     typedef uint256 result_type;
     result_type operator()(const CTxMemPoolEntry &entry) const {
@@ -372,19 +375,19 @@ struct TxMempoolInfo {
  * notification signal.
  */
 enum class MemPoolRemovalReason {
-    //!< Manually removed or unknown reason
+    //! Manually removed or unknown reason
     UNKNOWN = 0,
-    //!< Expired from mempool
+    //! Expired from mempool
     EXPIRY,
-    //!< Removed in size limiting
+    //! Removed in size limiting
     SIZELIMIT,
-    //!< Removed for reorganization
+    //! Removed for reorganization
     REORG,
-    //!< Removed for block
+    //! Removed for block
     BLOCK,
-    //!< Removed for conflict with in-block transaction
+    //! Removed for conflict with in-block transaction
     CONFLICT,
-    //!< Removed for replacement
+    //! Removed for replacement
     REPLACED
 };
 
@@ -522,43 +525,7 @@ public:
                                  CompareTxMemPoolEntryByAncestorFee>>>
         indexed_transaction_set;
 
-    /**
-     * This mutex needs to be locked when accessing `mapTx` or other members
-     * that are guarded by it.
-     *
-     * @par Consistency guarantees
-     *
-     * By design, it is guaranteed that:
-     *
-     * 1. Locking both `cs_main` and `mempool.cs` will give a view of mempool
-     *    that is consistent with current chain tip (`chainActive` and
-     *    `pcoinsTip`) and is fully populated. Fully populated means that if the
-     *    current active chain is missing transactions that were present in a
-     *    previously active chain, all the missing transactions will have been
-     *    re-added to the mempool and should be present if they meet size and
-     *    consistency constraints.
-     *
-     * 2. Locking `mempool.cs` without `cs_main` will give a view of a mempool
-     *    consistent with some chain that was active since `cs_main` was last
-     *    locked, and that is fully populated as described above. It is ok for
-     *    code that only needs to query or remove transactions from the mempool
-     *    to lock just `mempool.cs` without `cs_main`.
-     *
-     * To provide these guarantees, it is necessary to lock both `cs_main` and
-     * `mempool.cs` whenever adding transactions to the mempool and whenever
-     * changing the chain tip. It's necessary to keep both mutexes locked until
-     * the mempool is consistent with the new chain tip and fully populated.
-     *
-     * @par Consistency bug
-     *
-     * The second guarantee above is not currently enforced, but
-     * https://github.com/bitcoin/bitcoin/pull/14193 will fix it. No known code
-     * in bitcoin currently depends on second guarantee, but it is important to
-     * fix for third party code that needs be able to frequently poll the
-     * mempool without locking `cs_main` and without encountering missing
-     * transactions during reorgs.
-     */
-    mutable RecursiveMutex cs;
+    mutable CCriticalSection cs;
     indexed_transaction_set mapTx GUARDED_BY(cs);
 
     typedef indexed_transaction_set::nth_index<0>::type::iterator txiter;
@@ -589,6 +556,23 @@ private:
 
     typedef std::map<txiter, TxLinks, CompareIteratorByHash> txlinksMap;
     txlinksMap mapLinks;
+
+    typedef std::map<CMempoolAddressDeltaKey, CMempoolAddressDelta,
+                     CMempoolAddressDeltaKeyCompare>
+        addressDeltaMap;
+    addressDeltaMap mapAddress;
+
+    typedef std::map<uint256, std::vector<CMempoolAddressDeltaKey>>
+        addressDeltaMapInserted;
+    addressDeltaMapInserted mapAddressInserted;
+
+    typedef std::map<CSpentIndexKey, CSpentIndexValue, CSpentIndexKeyCompare>
+        mapSpentIndex;
+    mapSpentIndex mapSpent;
+
+    typedef std::map<uint256, std::vector<CSpentIndexKey>>
+        mapSpentIndexInserted;
+    mapSpentIndexInserted mapSpentInserted;
 
     void UpdateParent(txiter entry, txiter parent, bool add);
     void UpdateChild(txiter entry, txiter child, bool add);
@@ -625,11 +609,22 @@ public:
     // Note that addUnchecked is ONLY called from ATMP outside of tests
     // and any other callers may break wallet's in-mempool tracking (due to
     // lack of CValidationInterface::TransactionAddedToMempool callbacks).
-    void addUnchecked(const uint256 &hash, const CTxMemPoolEntry &entry)
-        EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
-    void addUnchecked(const uint256 &hash, const CTxMemPoolEntry &entry,
-                      setEntries &setAncestors)
-        EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
+    bool addUnchecked(const uint256 &hash, const CTxMemPoolEntry &entry);
+    bool addUnchecked(const uint256 &hash, const CTxMemPoolEntry &entry,
+                      setEntries &setAncestors);
+
+    void addAddressIndex(const CTxMemPoolEntry &entry,
+                         const CCoinsViewCache &view);
+    bool getAddressIndex(
+        std::vector<std::pair<uint160, int>> &addresses,
+        std::vector<std::pair<CMempoolAddressDeltaKey, CMempoolAddressDelta>>
+            &results);
+    bool removeAddressIndex(const uint256 txhash);
+
+    void addSpentIndex(const CTxMemPoolEntry &entry,
+                       const CCoinsViewCache &view);
+    bool getSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value);
+    bool removeSpentIndex(const uint256 txhash);
 
     void removeRecursive(
         const CTransaction &tx,
@@ -645,7 +640,7 @@ public:
     // lock free
     void _clear() EXCLUSIVE_LOCKS_REQUIRED(cs);
     bool CompareDepthAndScore(const uint256 &hasha, const uint256 &hashb);
-    void queryHashes(std::vector<uint256> &vtxid) const;
+    void queryHashes(std::vector<uint256> &vtxid);
     bool isSpent(const COutPoint &outpoint) const;
     unsigned int GetTransactionsUpdated() const;
     void AddTransactionsUpdated(unsigned int n);
@@ -687,8 +682,7 @@ public:
      * Note: txidsToUpdate should be the set of transactions from the
      * disconnected block that have been accepted back into the mempool.
      */
-    void UpdateTransactionsFromBlock(const std::vector<TxId> &txidsToUpdate)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+    void UpdateTransactionsFromBlock(const std::vector<TxId> &txidsToUpdate);
 
     /**
      * Try to calculate all in-mempool ancestors of entry.
@@ -706,8 +700,7 @@ public:
         const CTxMemPoolEntry &entry, setEntries &setAncestors,
         uint64_t limitAncestorCount, uint64_t limitAncestorSize,
         uint64_t limitDescendantCount, uint64_t limitDescendantSize,
-        std::string &errString, bool fSearchForParents = true) const
-        EXCLUSIVE_LOCKS_REQUIRED(cs);
+        std::string &errString, bool fSearchForParents = true) const;
 
     /**
      * Populate setDescendants with all in-mempool descendants of hash.
@@ -753,7 +746,7 @@ public:
     void GetTransactionAncestry(const uint256 &txid, size_t &ancestors,
                                 size_t &descendants) const;
 
-    unsigned long size() const {
+    unsigned long size() {
         LOCK(cs);
         return mapTx.size();
     }

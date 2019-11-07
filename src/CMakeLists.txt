@@ -1,6 +1,6 @@
 # Copyright (c) 2017 The Bitcoin developers
 
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.5)
 project(bitcoind)
 
 set(CMAKE_CXX_STANDARD 14)
@@ -96,7 +96,10 @@ if(ENABLE_STATIC_LIBSTDCXX)
 	add_linker_flags(-static-libstdc++)
 endif()
 
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# All windows code is PIC, forcing it on just adds useless compile warnings
+if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	add_compiler_flags(-fPIC)
+endif()
 
 if(ENABLE_HARDENING)
 	# Enable stack protection
@@ -114,17 +117,11 @@ if(ENABLE_HARDENING)
 	# CMake provides the POSITION_INDEPENDENT_CODE property to set PIC/PIE.
 	# Unfortunately setting the -pie linker flag this way require CMake >= 3.14,
 	# which is not widely distributed at the time of writing.
-	# FIXME: remove the fallback case when cmake >= 3.14 get enforced.
-	if(POLICY CMP0083)
-		cmake_policy(SET CMP0083 NEW)
-		include(CheckPIESupported)
-		check_pie_supported()
-	elseif(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	# FIXME: use the POSITION_INDEPENDENT_CODE property instead
+	if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 		add_compiler_flags(-fPIE)
 		add_linker_flags(-pie)
-	endif()
-
-	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
+	else()
 		# MinGw provides its own libssp for stack smashing protection
 		link_libraries(ssp)
 	endif()
@@ -186,10 +183,12 @@ function(find_git_head_logs_file RESULT)
 		if(GIT_RESULT EQUAL 0)
 			set(GIT_LOGS_DIR "${GIT_ROOT}/.git/logs")
 			set(GIT_HEAD_LOGS_FILE "${GIT_LOGS_DIR}/HEAD")
-			# If the .git/logs/HEAD does not exist, create it
+			# If the .git/logs/HEAD, create it
 			if(NOT EXISTS "${GIT_HEAD_LOGS_FILE}")
+				# FIXME No longer needed once cmake > 3.10 get enforced.
 				file(MAKE_DIRECTORY "${GIT_LOGS_DIR}")
-				file(TOUCH "${GIT_HEAD_LOGS_FILE}")
+				# FIXME Replace with file(TOUCH) when cmake > 3.12 get enforced.
+				file(APPEND "${GIT_HEAD_LOGS_FILE}" "")
 			endif()
 			set(${RESULT} "${GIT_HEAD_LOGS_FILE}" PARENT_SCOPE)
 		endif()
@@ -296,17 +295,7 @@ if(ENABLE_GLIBC_BACK_COMPAT)
 	add_linker_flags(-Wl,--wrap=__divmoddi4)
 	add_linker_flags(-Wl,--wrap=log2f)
 
-	if(NOT HAVE_LARGE_FILE_SUPPORT)
-		add_linker_flags(-Wl,--wrap=fcntl -Wl,--wrap=fcntl64)
-	endif()
-
 	target_sources(util PRIVATE compat/glibc_compat.cpp)
-endif()
-
-# Enable LFS (Large File Support) on targets that don't have it natively.
-if(NOT HAVE_LARGE_FILE_SUPPORT)
-	add_compiler_flags(-D_FILE_OFFSET_BITS=64)
-	add_linker_flags(-Wl,--large-address-aware)
 endif()
 
 # Target specific configs
@@ -367,25 +356,13 @@ add_library(common
 	primitives/block.cpp
 	protocol.cpp
 	scheduler.cpp
+	script/ismine.cpp
+	script/sign.cpp
+	script/standard.cpp
 	warnings.cpp
 )
 
 target_link_libraries(common util secp256k1)
-
-# script library
-add_library(script
-	script/bitcoinconsensus.cpp
-	script/bitfield.cpp
-	script/interpreter.cpp
-	script/ismine.cpp
-	script/script.cpp
-	script/script_error.cpp
-	script/sigencoding.cpp
-	script/sign.cpp
-	script/standard.cpp
-)
-
-target_link_libraries(script common)
 
 # libbitcoinconsensus
 add_library(bitcoinconsensus
@@ -393,11 +370,17 @@ add_library(bitcoinconsensus
 	hash.cpp
 	primitives/transaction.cpp
 	pubkey.cpp
+	script/bitcoinconsensus.cpp
+	script/bitfield.cpp
+	script/interpreter.cpp
+	script/script.cpp
+	script/script_error.cpp
+	script/sigencoding.cpp
 	uint256.cpp
 	util/strencodings.cpp
 )
 
-target_link_libraries(bitcoinconsensus script)
+target_link_libraries(bitcoinconsensus common)
 
 # Bitcoin server facilities
 add_library(server
@@ -450,7 +433,10 @@ add_library(server
 	ui_interface.cpp
 	validation.cpp
 	validationinterface.cpp
-)
+		addressindex.h
+		spentindex.h
+		timestampindex.h
+	)
 
 # This require libevent
 find_package(Event REQUIRED)

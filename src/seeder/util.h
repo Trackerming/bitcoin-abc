@@ -13,4 +13,4 @@ static inline void Sleep(int nMilliSec) {
     nanosleep(&wa, nullptr);
 }
 
-#endif // BITCOIN_SEEDER_UTIL_H
+#endif

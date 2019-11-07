@@ -58,7 +58,7 @@ public:
             // Old versions stored the version number for the last spend of a
             // transaction's outputs. Non-final spends were indicated with
             // height = 0.
-            unsigned int nVersionDummy;
+            int nVersionDummy;
             ::Unserialize(s, VARINT(nVersionDummy));
         }
 
@@ -140,6 +140,7 @@ DisconnectResult UndoCoinSpend(const Coin &undo, CCoinsViewCache &view,
  */
 DisconnectResult ApplyBlockUndo(const CBlockUndo &blockUndo,
                                 const CBlock &block, const CBlockIndex *pindex,
-                                CCoinsViewCache &coins);
+                                CCoinsViewCache &coins,
+                                bool fJustCheck = false);
 
 #endif // BITCOIN_UNDO_H

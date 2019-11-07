@@ -160,6 +160,15 @@ Amount AmountFromValue(const UniValue &value) {
     return amt;
 }
 
+UniValue ValueFromCAmount(const CAmount &amount) {
+    bool sign = amount < 0;
+    int64_t n_abs = (sign ? -amount : amount);
+    int64_t quotient = n_abs / (COIN / SATOSHI);
+    int64_t remainder = n_abs % (COIN / SATOSHI);
+    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
+                                              quotient, remainder));
+}
+
 uint256 ParseHashV(const UniValue &v, std::string strName) {
     std::string strHex;
     if (v.isStr()) {
@@ -371,10 +380,11 @@ bool CRPCTable::appendCommand(const std::string &name,
     return true;
 }
 
-void StartRPC() {
+bool StartRPC() {
     LogPrint(BCLog::RPC, "Starting RPC\n");
     fRPCRunning = true;
     g_rpcSignals.Started();
+    return true;
 }
 
 void InterruptRPC() {

@@ -20,7 +20,7 @@ BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
 
 BOOST_AUTO_TEST_CASE(TestPackageAccounting) {
     CTxMemPool testPool;
-    LOCK2(cs_main, testPool.cs);
+    LOCK(testPool.cs);
     TestMemPoolEntryHelper entry;
     CMutableTransaction parentOfAll;
 
@@ -163,7 +163,6 @@ BOOST_AUTO_TEST_CASE(MempoolRemoveTest) {
     }
 
     CTxMemPool testPool;
-    LOCK2(cs_main, testPool.cs);
 
     // Nothing in pool, remove should do nothing:
     unsigned int poolSize = testPool.size();
@@ -231,7 +230,7 @@ BOOST_AUTO_TEST_CASE(MempoolClearTest) {
     }
 
     CTxMemPool testPool;
-    LOCK2(cs_main, testPool.cs);
+    LOCK(testPool.cs);
 
     // Nothing in pool, clear should do nothing:
     testPool.clear();
@@ -271,7 +270,6 @@ static void CheckSort(CTxMemPool &pool, std::vector<std::string> &sortedOrder,
 
 BOOST_AUTO_TEST_CASE(MempoolIndexingTest) {
     CTxMemPool pool;
-    LOCK2(cs_main, pool.cs);
     TestMemPoolEntryHelper entry;
 
     /* 3rd highest fee */
@@ -323,6 +321,7 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest) {
     sortedOrder[2] = tx1.GetId().ToString(); // 10000
     sortedOrder[3] = tx4.GetId().ToString(); // 15000
     sortedOrder[4] = tx2.GetId().ToString(); // 20000
+    LOCK(pool.cs);
     CheckSort<descendant_score>(pool, sortedOrder, "MempoolIndexingTest1");
 
     /* low fee but with high fee child */
@@ -462,7 +461,6 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest) {
 
 BOOST_AUTO_TEST_CASE(MempoolAncestorIndexingTest) {
     CTxMemPool pool;
-    LOCK2(cs_main, pool.cs);
     TestMemPoolEntryHelper entry;
 
     /* 3rd highest fee */
@@ -522,6 +520,7 @@ BOOST_AUTO_TEST_CASE(MempoolAncestorIndexingTest) {
     }
     sortedOrder[4] = tx3.GetId().ToString(); // 0
 
+    LOCK(pool.cs);
     CheckSort<ancestor_score>(pool, sortedOrder,
                               "MempoolAncestorIndexingTest1");
 
@@ -602,7 +601,6 @@ BOOST_AUTO_TEST_CASE(MempoolAncestorIndexingTest) {
 
 BOOST_AUTO_TEST_CASE(MempoolSizeLimitTest) {
     CTxMemPool pool;
-    LOCK2(cs_main, pool.cs);
     TestMemPoolEntryHelper entry;
     entry.dPriority = 10.0;
     Amount feeIncrement = MEMPOOL_FULL_FEE_INCREMENT.GetFeePerK();
@@ -844,18 +842,14 @@ BOOST_AUTO_TEST_CASE(TestImportMempool) {
             // If the mempool is empty, importMempool doesn't change
             // disconnectPool
             CTxMemPool testPool;
-
             disconnectPool.importMempool(testPool);
             CheckDisconnectPoolOrder(disconnectPool, correctlyOrderedIds,
                                      disconnectedTxns.size());
 
-            {
-                LOCK2(cs_main, testPool.cs);
-                // Add all unconfirmed transactions in testPool
-                for (auto tx : unconfTxns) {
-                    TestMemPoolEntryHelper entry;
-                    testPool.addUnchecked(tx->GetId(), entry.FromTx(*tx));
-                }
+            // Add all unconfirmed transactions in testPool
+            for (auto tx : unconfTxns) {
+                TestMemPoolEntryHelper entry;
+                testPool.addUnchecked(tx->GetId(), entry.FromTx(*tx));
             }
 
             // Now we test importMempool with a non empty mempool
@@ -900,7 +894,6 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests) {
     size_t ancestors, descendants;
 
     CTxMemPool pool;
-    LOCK2(cs_main, pool.cs);
     TestMemPoolEntryHelper entry;
 
     /* Base transaction */

@@ -116,7 +116,7 @@ public:
  */
 class CCryptoKeyStore : public CBasicKeyStore {
 private:
-    CKeyingMaterial vMasterKey GUARDED_BY(cs_KeyStore);
+    CKeyingMaterial vMasterKey;
 
     //! if fUseCrypto is true, mapKeys must be empty
     //! if fUseCrypto is false, vMasterKey must be empty
@@ -132,7 +132,7 @@ protected:
     bool EncryptKeys(CKeyingMaterial &vMasterKeyIn);
 
     bool Unlock(const CKeyingMaterial &vMasterKeyIn);
-    CryptedKeyMap mapCryptedKeys GUARDED_BY(cs_KeyStore);
+    CryptedKeyMap mapCryptedKeys;
 
 public:
     CCryptoKeyStore()

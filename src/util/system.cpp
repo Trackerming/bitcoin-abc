@@ -74,7 +74,6 @@
 #include <codecvt>
 
 #include <io.h> /* for _commit */
-#include <shellapi.h>
 #include <shlobj.h>
 #endif
 
@@ -93,6 +92,8 @@ const char *const BITCOIN_CONF_FILENAME = "bitcoin.conf";
 const char *const BITCOIN_PID_FILENAME = "bitcoind.pid";
 
 ArgsManager gArgs;
+
+CTranslationInterface translationInterface;
 
 /** Init OpenSSL library multithreading support */
 static std::unique_ptr<CCriticalSection[]> ppmutexOpenSSL;
@@ -482,7 +483,7 @@ bool ArgsManager::ParseParameters(int argc, const char *const argv[],
 
         // Check that the arg is known
         if (!(IsSwitchChar(key[0]) && key.size() == 1)) {
-            if (!IsArgKnown(key)) {
+            if (!IsArgKnown(key, error)) {
                 error = strprintf("Invalid parameter %s", key.c_str());
                 return false;
             }
@@ -505,7 +506,7 @@ bool ArgsManager::ParseParameters(int argc, const char *const argv[],
     return true;
 }
 
-bool ArgsManager::IsArgKnown(const std::string &key) const {
+bool ArgsManager::IsArgKnown(const std::string &key, std::string &error) {
     size_t option_index = key.find('.');
     std::string arg_no_net;
     if (option_index == std::string::npos) {
@@ -672,7 +673,7 @@ void ArgsManager::ClearArg(const std::string &strArg) {
     m_config_args.erase(strArg);
 }
 
-std::string ArgsManager::GetHelpMessage() const {
+std::string ArgsManager::GetHelpMessage() {
     const bool show_debug = gArgs.GetBoolArg("-help-debug", false);
 
     std::string usage = "";
@@ -949,7 +950,7 @@ bool ArgsManager::ReadConfigStream(std::istream &stream, std::string &error,
         }
 
         // Check that the arg is known
-        if (!IsArgKnown(strKey) && !ignore_invalid_keys) {
+        if (!IsArgKnown(strKey, error) && !ignore_invalid_keys) {
             error = strprintf("Invalid configuration value %s",
                               option.first.c_str());
             return false;
@@ -1294,10 +1295,6 @@ void SetupEnvironment() {
     } catch (const std::runtime_error &) {
         setenv("LC_ALL", "C", 1);
     }
-#elif defined(WIN32)
-    // Set the default input/output charset is utf-8
-    SetConsoleCP(CP_UTF8);
-    SetConsoleOutputCP(CP_UTF8);
 #endif
     // The path locale is lazy initialized and to avoid deinitialization errors
     // in multithreading environments, it is set explicitly by the main thread.
@@ -1354,27 +1351,3 @@ int ScheduleBatchPriority() {
     return 1;
 #endif
 }
-
-namespace util {
-#ifdef WIN32
-WinCmdLineArgs::WinCmdLineArgs() {
-    wchar_t **wargv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>, wchar_t> utf8_cvt;
-    argv = new char *[argc];
-    args.resize(argc);
-    for (int i = 0; i < argc; i++) {
-        args[i] = utf8_cvt.to_bytes(wargv[i]);
-        argv[i] = &*args[i].begin();
-    }
-    LocalFree(wargv);
-}
-
-WinCmdLineArgs::~WinCmdLineArgs() {
-    delete[] argv;
-}
-
-std::pair<int, char **> WinCmdLineArgs::get() {
-    return std::make_pair(argc, argv);
-}
-#endif
-} // namespace util

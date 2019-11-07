@@ -361,7 +361,7 @@ struct PrecomputedTransactionData {
         : hashPrevouts(txdata.hashPrevouts), hashSequence(txdata.hashSequence),
           hashOutputs(txdata.hashOutputs) {}
 
-    template <class T> explicit PrecomputedTransactionData(const T &tx);
+    explicit PrecomputedTransactionData(const CTransaction &tx);
 };
 
 #endif // BITCOIN_PRIMITIVES_TRANSACTION_H

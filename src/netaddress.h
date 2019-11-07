@@ -11,7 +11,6 @@
 
 #include <compat.h>
 #include <serialize.h>
-#include <span.h>
 
 #include <cstdint>
 #include <string>
@@ -115,7 +114,7 @@ public:
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(ip);
+        READWRITE(FLATDATA(ip));
     }
 
     friend class CSubNet;
@@ -154,8 +153,8 @@ public:
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream &s, Operation ser_action) {
         READWRITE(network);
-        READWRITE(netmask);
-        READWRITE(valid);
+        READWRITE(FLATDATA(netmask));
+        READWRITE(FLATDATA(valid));
     }
 };
 
@@ -190,9 +189,9 @@ public:
 
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(ip);
+        READWRITE(FLATDATA(ip));
         unsigned short portN = htons(port);
-        READWRITE(Span<uint8_t>((uint8_t *)&portN, 2));
+        READWRITE(FLATDATA(portN));
         if (ser_action.ForRead()) {
             port = ntohs(portN);
         }

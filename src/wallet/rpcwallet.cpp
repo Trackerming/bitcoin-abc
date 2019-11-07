@@ -50,23 +50,14 @@ static std::string urlDecode(const std::string &urlEncoded) {
     return res;
 }
 
-bool GetWalletNameFromJSONRPCRequest(const JSONRPCRequest &request,
-                                     std::string &wallet_name) {
+std::shared_ptr<CWallet>
+GetWalletForJSONRPCRequest(const JSONRPCRequest &request) {
     if (request.URI.substr(0, WALLET_ENDPOINT_BASE.size()) ==
         WALLET_ENDPOINT_BASE) {
         // wallet endpoint was used
-        wallet_name =
+        std::string requestedWallet =
             urlDecode(request.URI.substr(WALLET_ENDPOINT_BASE.size()));
-        return true;
-    }
-    return false;
-}
-
-std::shared_ptr<CWallet>
-GetWalletForJSONRPCRequest(const JSONRPCRequest &request) {
-    std::string wallet_name;
-    if (GetWalletNameFromJSONRPCRequest(request, wallet_name)) {
-        std::shared_ptr<CWallet> pwallet = GetWallet(wallet_name);
+        std::shared_ptr<CWallet> pwallet = GetWallet(requestedWallet);
         if (!pwallet) {
             throw JSONRPCError(
                 RPC_WALLET_NOT_FOUND,
@@ -96,6 +87,11 @@ bool EnsureWalletIsAvailable(CWallet *const pwallet, bool avoidException) {
         return false;
     }
     if (!HasWallets()) {
+        // Note: It isn't currently possible to trigger this error because
+        // wallet RPC methods aren't registered unless a wallet is loaded. But
+        // this error is being kept as a precaution, because it's possible in
+        // the future that wallet RPC methods might get or remain registered
+        // when no wallets are loaded.
         throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Method not found (wallet "
                                                  "method is disabled because "
                                                  "no wallet is loaded)");
@@ -603,15 +599,17 @@ static UniValue sendtoaddress(const Config &config,
 
     // Wallet comments
     mapValue_t mapValue;
-    if (!request.params[2].isNull() && !request.params[2].get_str().empty()) {
+    if (request.params.size() > 2 && !request.params[2].isNull() &&
+        !request.params[2].get_str().empty()) {
         mapValue["comment"] = request.params[2].get_str();
     }
-    if (!request.params[3].isNull() && !request.params[3].get_str().empty()) {
+    if (request.params.size() > 3 && !request.params[3].isNull() &&
+        !request.params[3].get_str().empty()) {
         mapValue["to"] = request.params[3].get_str();
     }
 
     bool fSubtractFeeFromAmount = false;
-    if (!request.params[4].isNull()) {
+    if (request.params.size() > 4) {
         fSubtractFeeFromAmount = request.params[4].get_bool();
     }
 
@@ -997,36 +995,21 @@ static UniValue getbalance(const Config &config,
 
     LOCK2(cs_main, pwallet->cs_wallet);
 
-    const UniValue &account_value = request.params[0];
-    const UniValue &minconf = request.params[1];
-    const UniValue &include_watchonly = request.params[2];
-
-    if (account_value.isNull()) {
-        if (!minconf.isNull()) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER,
-                               "getbalance minconf option is only currently "
-                               "supported if an account is specified");
-        }
-        if (!include_watchonly.isNull()) {
-            throw JSONRPCError(
-                RPC_INVALID_PARAMETER,
-                "getbalance include_watchonly option is only currently "
-                "supported if an account is specified");
-        }
+    if (request.params.size() == 0) {
         return ValueFromAmount(pwallet->GetBalance());
     }
 
-    const std::string &account_param = account_value.get_str();
+    const std::string &account_param = request.params[0].get_str();
     const std::string *account =
         account_param != "*" ? &account_param : nullptr;
 
     int nMinDepth = 1;
-    if (!minconf.isNull()) {
-        nMinDepth = minconf.get_int();
+    if (!request.params[1].isNull()) {
+        nMinDepth = request.params[1].get_int();
     }
 
     isminefilter filter = ISMINE_SPENDABLE;
-    if (!include_watchonly.isNull() && include_watchonly.get_bool()) {
+    if (!request.params[2].isNull() && request.params[2].get_bool()) {
         filter = filter | ISMINE_WATCH_ONLY;
     }
 
@@ -1111,13 +1094,13 @@ static UniValue movecmd(const Config &config, const JSONRPCRequest &request) {
     if (nAmount <= Amount::zero()) {
         throw JSONRPCError(RPC_TYPE_ERROR, "Invalid amount for send");
     }
-    if (!request.params[3].isNull()) {
+    if (request.params.size() > 3) {
         // Unused parameter, used to be nMinDepth, keep type-checking it though.
         (void)request.params[3].get_int();
     }
 
     std::string strComment;
-    if (!request.params[4].isNull()) {
+    if (request.params.size() > 4) {
         strComment = request.params[4].get_str();
     }
 
@@ -1212,16 +1195,18 @@ static UniValue sendfrom(const Config &config, const JSONRPCRequest &request) {
     }
 
     int nMinDepth = 1;
-    if (!request.params[3].isNull()) {
+    if (request.params.size() > 3) {
         nMinDepth = request.params[3].get_int();
     }
 
     mapValue_t mapValue;
-    if (!request.params[4].isNull() && !request.params[4].get_str().empty()) {
+    if (request.params.size() > 4 && !request.params[4].isNull() &&
+        !request.params[4].get_str().empty()) {
         mapValue["comment"] = request.params[4].get_str();
     }
 
-    if (!request.params[5].isNull() && !request.params[5].get_str().empty()) {
+    if (request.params.size() > 5 && !request.params[5].isNull() &&
+        !request.params[5].get_str().empty()) {
         mapValue["to"] = request.params[5].get_str();
     }
 
@@ -1341,12 +1326,13 @@ static UniValue sendmany(const Config &config, const JSONRPCRequest &request) {
     }
 
     mapValue_t mapValue;
-    if (!request.params[3].isNull() && !request.params[3].get_str().empty()) {
+    if (request.params.size() > 3 && !request.params[3].isNull() &&
+        !request.params[3].get_str().empty()) {
         mapValue["comment"] = request.params[3].get_str();
     }
 
     UniValue subtractFeeFromAmount(UniValue::VARR);
-    if (!request.params[4].isNull()) {
+    if (request.params.size() > 4) {
         subtractFeeFromAmount = request.params[4].get_array();
     }
 
@@ -2157,12 +2143,12 @@ static UniValue listaccounts(const Config &config,
     LOCK2(cs_main, pwallet->cs_wallet);
 
     int nMinDepth = 1;
-    if (!request.params[0].isNull()) {
+    if (request.params.size() > 0) {
         nMinDepth = request.params[0].get_int();
     }
 
     isminefilter includeWatchonly = ISMINE_SPENDABLE;
-    if (!request.params[1].isNull() && request.params[1].get_bool()) {
+    if (request.params.size() > 1 && request.params[1].get_bool()) {
         includeWatchonly = includeWatchonly | ISMINE_WATCH_ONLY;
     }
 
@@ -3060,18 +3046,20 @@ static UniValue lockunspent(const Config &config,
 
     LOCK2(cs_main, pwallet->cs_wallet);
 
-    RPCTypeCheckArgument(request.params[0], UniValue::VBOOL);
+    if (request.params.size() == 1) {
+        RPCTypeCheck(request.params, {UniValue::VBOOL});
+    } else {
+        RPCTypeCheck(request.params, {UniValue::VBOOL, UniValue::VARR});
+    }
 
     bool fUnlock = request.params[0].get_bool();
 
-    if (request.params[1].isNull()) {
+    if (request.params.size() == 1) {
         if (fUnlock) {
             pwallet->UnlockAllCoins();
         }
         return true;
     }
-
-    RPCTypeCheckArgument(request.params[1], UniValue::VARR);
 
     const UniValue &output_params = request.params[1];
 
@@ -3196,7 +3184,7 @@ static UniValue listlockunspent(const Config &config,
 
     UniValue ret(UniValue::VARR);
 
-    for (const COutPoint &output : vOutpts) {
+    for (COutPoint &output : vOutpts) {
         UniValue o(UniValue::VOBJ);
 
         o.pushKV("txid", output.GetTxId().GetHex());
@@ -3364,8 +3352,7 @@ static UniValue listwallets(const Config &config,
     return obj;
 }
 
-static UniValue loadwallet(const Config &config,
-                           const JSONRPCRequest &request) {
+UniValue loadwallet(const Config &config, const JSONRPCRequest &request) {
     if (request.fHelp || request.params.size() != 1) {
         throw std::runtime_error(
             "loadwallet \"filename\"\n"
@@ -3398,15 +3385,6 @@ static UniValue loadwallet(const Config &config,
     if (fs::symlink_status(wallet_path).type() == fs::file_not_found) {
         throw JSONRPCError(RPC_WALLET_NOT_FOUND,
                            "Wallet " + wallet_file + " not found.");
-    } else if (fs::is_directory(wallet_path)) {
-        // The given filename is a directory. Check that there's a wallet.dat
-        // file.
-        fs::path wallet_dat_file = wallet_path / "wallet.dat";
-        if (fs::symlink_status(wallet_dat_file).type() == fs::file_not_found) {
-            throw JSONRPCError(RPC_WALLET_NOT_FOUND,
-                               "Directory " + wallet_file +
-                                   " does not contain a wallet.dat file.");
-        }
     }
 
     std::string warning;
@@ -3429,116 +3407,6 @@ static UniValue loadwallet(const Config &config,
     obj.pushKV("warning", warning);
 
     return obj;
-}
-
-static UniValue createwallet(const Config &config,
-                             const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() != 1) {
-        throw std::runtime_error(
-            "createwallet \"wallet_name\"\n"
-            "\nCreates and loads a new wallet.\n"
-            "\nArguments:\n"
-            "1. \"wallet_name\"    (string, required) The name for the new "
-            "wallet. If this is a path, the wallet will be created at the path "
-            "location.\n"
-            "\nResult:\n"
-            "{\n"
-            "  \"name\" :    <wallet_name>,        (string) The wallet name if "
-            "created successfully. If the wallet was created using a full "
-            "path, the wallet_name will be the full path.\n"
-            "  \"warning\" : <warning>,            (string) Warning message if "
-            "wallet was not loaded cleanly.\n"
-            "}\n"
-            "\nExamples:\n" +
-            HelpExampleCli("createwallet", "\"testwallet\"") +
-            HelpExampleRpc("createwallet", "\"testwallet\""));
-    }
-
-    const CChainParams &chainParams = config.GetChainParams();
-
-    std::string wallet_name = request.params[0].get_str();
-    std::string error;
-    std::string warning;
-
-    fs::path wallet_path = fs::absolute(wallet_name, GetWalletDir());
-    if (fs::symlink_status(wallet_path).type() != fs::file_not_found) {
-        throw JSONRPCError(RPC_WALLET_ERROR,
-                           "Wallet " + wallet_name + " already exists.");
-    }
-
-    // Wallet::Verify will check if we're trying to create a wallet with a
-    // duplicate name.
-    if (!CWallet::Verify(chainParams, wallet_name, false, error, warning)) {
-        throw JSONRPCError(RPC_WALLET_ERROR,
-                           "Wallet file verification failed: " + error);
-    }
-
-    std::shared_ptr<CWallet> const wallet = CWallet::CreateWalletFromFile(
-        chainParams, wallet_name, fs::absolute(wallet_name, GetWalletDir()));
-    if (!wallet) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "Wallet creation failed.");
-    }
-    AddWallet(wallet);
-
-    wallet->postInitProcess();
-
-    UniValue obj(UniValue::VOBJ);
-    obj.pushKV("name", wallet->GetName());
-    obj.pushKV("warning", warning);
-
-    return obj;
-}
-
-static UniValue unloadwallet(const Config &config,
-                             const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() > 1) {
-        throw std::runtime_error(
-            "unloadwallet ( \"wallet_name\" )\n"
-            "Unloads the wallet referenced by the request endpoint otherwise "
-            "unloads the wallet specified in the argument.\n"
-            "Specifying the wallet name on a wallet endpoint is invalid."
-            "\nArguments:\n"
-            "1. \"wallet_name\"    (string, optional) The name of the wallet "
-            "to unload.\n"
-            "\nExamples:\n" +
-            HelpExampleCli("unloadwallet", "wallet_name") +
-            HelpExampleRpc("unloadwallet", "wallet_name"));
-    }
-
-    std::string wallet_name;
-    if (GetWalletNameFromJSONRPCRequest(request, wallet_name)) {
-        if (!request.params[0].isNull()) {
-            throw JSONRPCError(RPC_INVALID_PARAMETER,
-                               "Cannot unload the requested wallet");
-        }
-    } else {
-        wallet_name = request.params[0].get_str();
-    }
-
-    std::shared_ptr<CWallet> wallet = GetWallet(wallet_name);
-    if (!wallet) {
-        throw JSONRPCError(RPC_WALLET_NOT_FOUND,
-                           "Requested wallet does not exist or is not loaded");
-    }
-
-    // Release the "main" shared pointer and prevent further notifications.
-    // Note that any attempt to load the same wallet would fail until the wallet
-    // is destroyed (see CheckUniqueFileid).
-    if (!RemoveWallet(wallet)) {
-        throw JSONRPCError(RPC_MISC_ERROR, "Requested wallet already unloaded");
-    }
-    UnregisterValidationInterface(wallet.get());
-
-    // The wallet can be in use so it's not possible to explicitly unload here.
-    // Just notify the unload intent so that all shared pointers are released.
-    // The wallet will be destroyed once the last shared pointer is released.
-    wallet->NotifyUnload();
-
-    // There's no point in waiting for the wallet to unload.
-    // At this point this method should never fail. The unloading could only
-    // fail due to an unexpected error which would cause a process termination.
-
-    return NullUniValue;
 }
 
 static UniValue resendwallettransactions(const Config &config,
@@ -3686,19 +3554,19 @@ static UniValue listunspent(const Config &config,
     }
 
     int nMinDepth = 1;
-    if (!request.params[0].isNull()) {
+    if (request.params.size() > 0 && !request.params[0].isNull()) {
         RPCTypeCheckArgument(request.params[0], UniValue::VNUM);
         nMinDepth = request.params[0].get_int();
     }
 
     int nMaxDepth = 9999999;
-    if (!request.params[1].isNull()) {
+    if (request.params.size() > 1 && !request.params[1].isNull()) {
         RPCTypeCheckArgument(request.params[1], UniValue::VNUM);
         nMaxDepth = request.params[1].get_int();
     }
 
     std::set<CTxDestination> destinations;
-    if (!request.params[2].isNull()) {
+    if (request.params.size() > 2 && !request.params[2].isNull()) {
         RPCTypeCheckArgument(request.params[2], UniValue::VARR);
         UniValue inputs = request.params[2].get_array();
         for (size_t idx = 0; idx < inputs.size(); idx++) {
@@ -3720,7 +3588,7 @@ static UniValue listunspent(const Config &config,
     }
 
     bool include_unsafe = true;
-    if (!request.params[3].isNull()) {
+    if (request.params.size() > 3 && !request.params[3].isNull()) {
         RPCTypeCheckArgument(request.params[3], UniValue::VBOOL);
         include_unsafe = request.params[3].get_bool();
     }
@@ -4147,7 +4015,7 @@ UniValue generate(const Config &config, const JSONRPCRequest &request) {
 
     int num_generate = request.params[0].get_int();
     uint64_t max_tries = 1000000;
-    if (!request.params[1].isNull()) {
+    if (request.params.size() > 1 && !request.params[1].isNull()) {
         max_tries = request.params[1].get_int();
     }
 
@@ -4491,99 +4359,6 @@ UniValue getaddressinfo(const Config &config, const JSONRPCRequest &request) {
     return ret;
 }
 
-static UniValue sethdseed(const Config &config, const JSONRPCRequest &request) {
-    std::shared_ptr<CWallet> const wallet = GetWalletForJSONRPCRequest(request);
-    CWallet *const pwallet = wallet.get();
-
-    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
-        return NullUniValue;
-    }
-
-    if (request.fHelp || request.params.size() > 2) {
-        throw std::runtime_error(
-            "sethdseed ( \"newkeypool\" \"seed\" )\n"
-            "\nSet or generate a new HD wallet seed. Non-HD wallets will not "
-            "be upgraded to being a HD wallet. Wallets that are already\n"
-            "HD will have a new HD seed set so that new keys added to the "
-            "keypool will be derived from this new seed.\n"
-            "\nNote that you will need to MAKE A NEW BACKUP of your wallet "
-            "after setting the HD wallet seed.\n" +
-            HelpRequiringPassphrase(pwallet) +
-            "\nArguments:\n"
-            "1. \"newkeypool\"         (boolean, optional, default=true) "
-            "Whether to flush old unused addresses, including change "
-            "addresses, from the keypool and regenerate it.\n"
-            "                             If true, the next address from "
-            "getnewaddress and change address from getrawchangeaddress will be "
-            "from this new seed.\n"
-            "                             If false, addresses (including "
-            "change addresses if the wallet already had HD Chain Split "
-            "enabled) from the existing\n"
-            "                             keypool will be used until it has "
-            "been depleted.\n"
-            "2. \"seed\"               (string, optional) The WIF private key "
-            "to use as the new HD seed; if not provided a random seed will be "
-            "used.\n"
-            "                             The seed value can be retrieved "
-            "using the dumpwallet command. It is the private key marked "
-            "hdmaster=1\n"
-            "\nExamples:\n" +
-            HelpExampleCli("sethdseed", "") +
-            HelpExampleCli("sethdseed", "false") +
-            HelpExampleCli("sethdseed", "true \"wifkey\"") +
-            HelpExampleRpc("sethdseed", "true, \"wifkey\""));
-    }
-
-    if (IsInitialBlockDownload()) {
-        throw JSONRPCError(
-            RPC_CLIENT_IN_INITIAL_DOWNLOAD,
-            "Cannot set a new HD seed while still in Initial Block Download");
-    }
-
-    LOCK2(cs_main, pwallet->cs_wallet);
-
-    // Do not do anything to non-HD wallets
-    if (!pwallet->IsHDEnabled()) {
-        throw JSONRPCError(
-            RPC_WALLET_ERROR,
-            "Cannot set a HD seed on a non-HD wallet. Start with "
-            "-upgradewallet in order to upgrade a non-HD wallet to HD");
-    }
-
-    EnsureWalletIsUnlocked(pwallet);
-
-    bool flush_key_pool = true;
-    if (!request.params[0].isNull()) {
-        flush_key_pool = request.params[0].get_bool();
-    }
-
-    CPubKey master_pub_key;
-    if (request.params[1].isNull()) {
-        master_pub_key = pwallet->GenerateNewHDMasterKey();
-    } else {
-        CKey key = DecodeSecret(request.params[1].get_str());
-        if (!key.IsValid()) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                               "Invalid private key");
-        }
-
-        if (HaveKey(*pwallet, key)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-                               "Already have this key (either as an HD seed or "
-                               "as a loose private key)");
-        }
-
-        master_pub_key = pwallet->DeriveNewMasterHDKey(key);
-    }
-
-    pwallet->SetHDMasterKey(master_pub_key);
-    if (flush_key_pool) {
-        pwallet->NewKeyPool();
-    }
-
-    return NullUniValue;
-}
-
 // clang-format off
 static const ContextFreeRPCCommand commands[] = {
     //  category            name                            actor (function)              argNames
@@ -4593,7 +4368,6 @@ static const ContextFreeRPCCommand commands[] = {
     { "wallet",             "abandontransaction",           abandontransaction,           {"txid"} },
     { "wallet",             "addmultisigaddress",           addmultisigaddress,           {"nrequired","keys","label|account"} },
     { "wallet",             "backupwallet",                 backupwallet,                 {"destination"} },
-    { "wallet",             "createwallet",                 createwallet,                 {"wallet_name"} },
     { "wallet",             "encryptwallet",                encryptwallet,                {"passphrase"} },
     { "wallet",             "getaccountaddress",            getlabeladdress,              {"account"} },
     { "wallet",             "getlabeladdress",              getlabeladdress,              {"label"} },
@@ -4624,7 +4398,6 @@ static const ContextFreeRPCCommand commands[] = {
     { "wallet",             "lockunspent",                  lockunspent,                  {"unlock","transactions"} },
     { "wallet",             "move",                         movecmd,                      {"fromaccount","toaccount","amount","minconf","comment"} },
     { "wallet",             "rescanblockchain",             rescanblockchain,             {"start_height", "stop_height"} },
-    { "wallet",             "sethdseed",                    sethdseed,                    {"newkeypool","seed"} },
     { "wallet",             "sendfrom",                     sendfrom,                     {"fromaccount","toaddress","amount","minconf","comment","comment_to"} },
     { "wallet",             "sendmany",                     sendmany,                     {"fromaccount","amounts","minconf","comment","subtractfeefrom"} },
     { "wallet",             "sendtoaddress",                sendtoaddress,                {"address","amount","comment","comment_to","subtractfeefromamount"} },
@@ -4633,7 +4406,6 @@ static const ContextFreeRPCCommand commands[] = {
     { "wallet",             "settxfee",                     settxfee,                     {"amount"} },
     { "wallet",             "signmessage",                  signmessage,                  {"address","message"} },
     { "wallet",             "signrawtransactionwithwallet", signrawtransactionwithwallet, {"hextring","prevtxs","sighashtype"} },
-    { "wallet",             "unloadwallet",                 unloadwallet,                 {"wallet_name"} },
     { "wallet",             "walletlock",                   walletlock,                   {} },
     { "wallet",             "walletpassphrasechange",       walletpassphrasechange,       {"oldpassphrase","newpassphrase"} },
     { "wallet",             "walletpassphrase",             walletpassphrase,             {"passphrase","timeout"} },

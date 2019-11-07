@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 
-export LC_ALL=C.UTF-8
+export LC_ALL=C
 
 set -euxo pipefail
 
-: ${ABC_BUILD_NAME:=""}
 if [ -z "$ABC_BUILD_NAME" ]; then
   echo "Error: Environment variable ABC_BUILD_NAME must be set"
   exit 1
@@ -16,11 +15,9 @@ TOPLEVEL=$(git rev-parse --show-toplevel)
 export TOPLEVEL
 
 setup() {
-  : "${BUILD_DIR:=${TOPLEVEL}/build}"
-  mkdir -p "${BUILD_DIR}/output"
-  BUILD_DIR=$(cd "${BUILD_DIR}"; pwd)
-  export BUILD_DIR
+  export BUILD_DIR="${TOPLEVEL}/build"
 
+  mkdir -p "${BUILD_DIR}/output"
   TEST_RUNNER_FLAGS="--tmpdirprefix=output"
 
   cd "${BUILD_DIR}"
@@ -61,8 +58,6 @@ case "$ABC_BUILD_NAME" in
     # Build with the address sanitizer, then run unit tests and functional tests.
     CONFIGURE_FLAGS="--enable-debug --with-sanitizers=address --disable-ccache" "${CI_SCRIPTS_DIR}"/build.sh
     make -j "${THREADS}" check
-    # FIXME Remove when wallet_multiwallet works with asan after backporting at least the following PRs from Core and their dependencies: 13161, 12493, 14320, 14552, 14760, 11911.
-    TEST_RUNNER_FLAGS="${TEST_RUNNER_FLAGS} --exclude=wallet_multiwallet"
     ./test/functional/test_runner.py -J=junit_results_asan.xml ${TEST_RUNNER_FLAGS}
     ;;
 
@@ -89,7 +84,6 @@ case "$ABC_BUILD_NAME" in
 
     # Build secp256k1 and run the java tests.
     export TOPLEVEL="${TOPLEVEL}"/src/secp256k1
-    export BUILD_DIR="${TOPLEVEL}"/build
     setup
     CONFIGURE_FLAGS="--enable-jni --enable-experimental --enable-module-ecdh" "${CI_SCRIPTS_DIR}"/build.sh
     make -j "${THREADS}" check-java
@@ -109,11 +103,6 @@ case "$ABC_BUILD_NAME" in
   build-ibd-no-assumevalid-checkpoint)
     "${CI_SCRIPTS_DIR}"/build.sh
     "${CI_SCRIPTS_DIR}"/ibd.sh -disablewallet -assumevalid=0 -checkpoints=0 -debug=net
-    ;;
-
-  build-werror)
-    # Build with variable-length-array and thread-safety-analysis treated as errors
-    CONFIGURE_FLAGS="--enable-debug --enable-werror CC=clang CXX=clang++" "${CI_SCRIPTS_DIR}"/build.sh
     ;;
 
   *)

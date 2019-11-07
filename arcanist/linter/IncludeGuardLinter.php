@@ -58,8 +58,7 @@ final class IncludeGuardLinter extends ArcanistLinter {
     // Surround with prefix and suffix.
     $guard = self::GUARD_PREFIX.$guard.self::GUARD_SUFFIX;
 
-    if (preg_match_all('@#(?:ifndef|define|endif //) '.$guard.'@',
-      $fileContent) != 3) {
+    if (preg_match_all('/#(?:ifndef|define) '.$guard.'/', $fileContent) != 2) {
       return $this->raiseLintAtPath(
         self::INCLUDE_GUARD_INVALID,
         pht("Include guard is malformed or missing. Expected format:\n".

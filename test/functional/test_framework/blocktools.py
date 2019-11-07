@@ -10,6 +10,7 @@ from .script import (
     OP_DUP,
     OP_EQUALVERIFY,
     OP_HASH160,
+    OP_PUSHDATA2,
     OP_RETURN,
     OP_TRUE,
 )
@@ -175,9 +176,10 @@ def mine_big_block(node, utxos=None):
 
 
 def send_big_transactions(node, utxos, num, fee_multiplier):
-    from .cashaddr import decode
+    #from .cashaddr import decode
+    from .address import decode
     txids = []
-    padding = "1"*512
+    padding = "1"*(512*127)
     addrHash = decode(node.getnewaddress())[2]
 
     for _ in range(num):
@@ -185,14 +187,13 @@ def send_big_transactions(node, utxos, num, fee_multiplier):
         utxo = utxos.pop()
         txid = int(utxo['txid'], 16)
         ctx.vin.append(CTxIn(COutPoint(txid, int(utxo["vout"])), b""))
+        ctx.vout.append(CTxOut(0, CScript(
+            [OP_RETURN, OP_PUSHDATA2, len(padding), bytes(padding, 'utf-8')])))
         ctx.vout.append(
             CTxOut(int(satoshi_round(utxo['amount']*COIN)),
                    CScript([OP_DUP, OP_HASH160, addrHash, OP_EQUALVERIFY, OP_CHECKSIG])))
-        for i in range(0, 127):
-            ctx.vout.append(CTxOut(0, CScript(
-                [OP_RETURN, bytes(padding, 'utf-8')])))
         # Create a proper fee for the transaction to be mined
-        ctx.vout[0].nValue -= int(fee_multiplier * node.calculate_fee(ctx))
+        ctx.vout[1].nValue -= int(fee_multiplier * node.calculate_fee(ctx))
         signresult = node.signrawtransactionwithwallet(
             ToHex(ctx), None, "NONE|FORKID")
         txid = node.sendrawtransaction(signresult["hex"], True)

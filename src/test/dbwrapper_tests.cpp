@@ -25,7 +25,7 @@ BOOST_FIXTURE_TEST_SUITE(dbwrapper_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(dbwrapper) {
     // Perform tests both obfuscated and non-obfuscated.
-    for (const bool obfuscate : {false, true}) {
+    for (bool obfuscate : {false, true}) {
         fs::path ph = SetDataDir(
             std::string("dbwrapper").append(obfuscate ? "_true" : "_false"));
         CDBWrapper dbw(ph, (1 << 20), true, false, obfuscate);
@@ -43,10 +43,52 @@ BOOST_AUTO_TEST_CASE(dbwrapper) {
     }
 }
 
+BOOST_AUTO_TEST_CASE(dbwrapper_compression) {
+    // Perform tests both with compression and without
+    for (int i = 0; i < 2; i++) {
+        bool compression = (bool)i;
+        boost::filesystem::path ph = boost::filesystem::temp_directory_path() /
+                                     boost::filesystem::unique_path();
+        CDBWrapper dbw(ph, (1 << 20), true, false, false, compression);
+        char key = 'k';
+        uint256 in = GetRandHash();
+        uint256 res;
+
+        BOOST_CHECK(dbw.Write(key, in));
+        BOOST_CHECK(dbw.Read(key, res));
+        BOOST_CHECK_EQUAL(res.ToString(), in.ToString());
+    }
+}
+BOOST_AUTO_TEST_CASE(dbwrapper_maxopenfiles_64) {
+    boost::filesystem::path ph = boost::filesystem::temp_directory_path() /
+                                 boost::filesystem::unique_path();
+    CDBWrapper dbw(ph, (1 << 20), true, false, false, false, 64);
+    char key = 'k';
+    uint256 in = GetRandHash();
+    uint256 res;
+
+    BOOST_CHECK(dbw.Write(key, in));
+    BOOST_CHECK(dbw.Read(key, res));
+    BOOST_CHECK_EQUAL(res.ToString(), in.ToString());
+}
+
+BOOST_AUTO_TEST_CASE(dbwrapper_maxopenfiles_1000) {
+    boost::filesystem::path ph = boost::filesystem::temp_directory_path() /
+                                 boost::filesystem::unique_path();
+    CDBWrapper dbw(ph, (1 << 20), true, false, false, false, 1000);
+    char key = 'k';
+    uint256 in = GetRandHash();
+    uint256 res;
+
+    BOOST_CHECK(dbw.Write(key, in));
+    BOOST_CHECK(dbw.Read(key, res));
+    BOOST_CHECK_EQUAL(res.ToString(), in.ToString());
+}
+
 // Test batch operations
 BOOST_AUTO_TEST_CASE(dbwrapper_batch) {
     // Perform tests both obfuscated and non-obfuscated.
-    for (const bool obfuscate : {false, true}) {
+    for (bool obfuscate : {false, true}) {
         fs::path ph = SetDataDir(std::string("dbwrapper_batch")
                                      .append(obfuscate ? "_true" : "_false"));
         CDBWrapper dbw(ph, (1 << 20), true, false, obfuscate);
@@ -82,7 +124,7 @@ BOOST_AUTO_TEST_CASE(dbwrapper_batch) {
 
 BOOST_AUTO_TEST_CASE(dbwrapper_iterator) {
     // Perform tests both obfuscated and non-obfuscated.
-    for (const bool obfuscate : {false, true}) {
+    for (bool obfuscate : {false, true}) {
         fs::path ph = SetDataDir(std::string("dbwrapper_iterator")
                                      .append(obfuscate ? "_true" : "_false"));
         CDBWrapper dbw(ph, (1 << 20), true, false, obfuscate);
@@ -224,7 +266,7 @@ BOOST_AUTO_TEST_CASE(iterator_ordering) {
         }
     }
 
-    for (const int seek_start : {0x00, 0x80}) {
+    for (int seek_start : {0x00, 0x80}) {
         it->Seek((uint8_t)seek_start);
         for (unsigned int x = seek_start; x < 255; ++x) {
             uint8_t key;
@@ -302,7 +344,7 @@ BOOST_AUTO_TEST_CASE(iterator_string_ordering) {
 
     std::unique_ptr<CDBIterator> it(
         const_cast<CDBWrapper &>(dbw).NewIterator());
-    for (const int seek_start : {0, 5}) {
+    for (int seek_start : {0, 5}) {
         snprintf(buf, sizeof(buf), "%d", seek_start);
         StringContentsSerializer seek_key(buf);
         it->Seek(seek_key);

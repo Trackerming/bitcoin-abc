@@ -8,6 +8,7 @@ from .script import CScript, hash160, hash256
 from .util import bytes_to_hex_str, hex_str_to_bytes
 
 chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+b58len = len(chars)
 
 
 def byte_to_base58(b, version):
@@ -26,6 +27,37 @@ def byte_to_base58(b, version):
     return result
 
 # TODO: def base58_decode
+# base58地址decode成bytes
+
+
+def decode(v, length=None):
+    """ decode v into a string of len bytes
+    """
+    long_value = 0
+    for i, c in enumerate(v[::-1]):
+        pos = chars.find(c)
+        assert pos != -1
+        long_value += pos * (b58len**i)
+
+    result = bytes()
+    while long_value >= 256:
+        div, mod = divmod(long_value, 256)
+        result = bytes((mod,)) + result
+        long_value = div
+    result = bytes((long_value, )) + result
+
+    nPad = 0
+    for c in v:
+        if c == chars[0]:
+            nPad += 1
+            continue
+        break
+
+    result = bytes(nPad) + result
+    if length is not None and len(result) != length:
+        return None
+
+    return result
 
 
 def keyhash_to_p2pkh(hash, main=False):

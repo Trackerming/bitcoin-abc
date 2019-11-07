@@ -435,6 +435,13 @@ uint32_t CScript::GetSigOpCount(uint32_t flags,
     return subscript.GetSigOpCount(flags, true);
 }
 
+bool CScript::IsPayToPublicKeyHash() const {
+    // Extra-fast test for pay-to-pubkey-hash CScripts:
+    return (this->size() == 25 && (*this)[0] == OP_DUP &&
+            (*this)[1] == OP_HASH160 && (*this)[2] == 0x14 &&
+            (*this)[23] == OP_EQUALVERIFY && (*this)[24] == OP_CHECKSIG);
+}
+
 bool CScript::IsPayToScriptHash() const {
     // Extra-fast test for pay-to-script-hash CScripts:
     return (this->size() == 23 && (*this)[0] == OP_HASH160 &&
@@ -560,18 +567,5 @@ bool GetScriptOp(CScriptBase::const_iterator &pc,
     }
 
     opcodeRet = static_cast<opcodetype>(opcode);
-    return true;
-}
-
-bool CScript::HasValidOps() const {
-    CScript::const_iterator it = begin();
-    while (it < end()) {
-        opcodetype opcode;
-        std::vector<uint8_t> item;
-        if (!GetOp(it, opcode, item) || opcode > MAX_OPCODE ||
-            item.size() > MAX_SCRIPT_ELEMENT_SIZE) {
-            return false;
-        }
-    }
     return true;
 }

@@ -148,6 +148,9 @@ public:
     }
 };
 
+/** Amount in satoshis (Can be negative) */
+typedef int64_t CAmount;
+
 static constexpr Amount SATOSHI = Amount::satoshi();
 static constexpr Amount CASH = 100 * SATOSHI;
 static constexpr Amount COIN = 100000000 * SATOSHI;
@@ -170,4 +173,4 @@ inline bool MoneyRange(const Amount nValue) {
     return nValue >= Amount::zero() && nValue <= MAX_MONEY;
 }
 
-#endif // BITCOIN_AMOUNT_H
+#endif //  BITCOIN_AMOUNT_H

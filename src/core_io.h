@@ -24,6 +24,7 @@ std::string ScriptToAsmStr(const CScript &script,
 bool DecodeHexTx(CMutableTransaction &tx, const std::string &strHexTx);
 bool DecodeHexBlk(CBlock &, const std::string &strHexBlk);
 bool DecodeHexBlockHeader(CBlockHeader &, const std::string &hex_header);
+uint256 ParseHashUV(const UniValue &v, const std::string &strName);
 uint256 ParseHashStr(const std::string &, const std::string &strName);
 std::vector<uint8_t> ParseHexUV(const UniValue &v, const std::string &strName);
 
@@ -35,5 +36,8 @@ void ScriptPubKeyToUniv(const CScript &scriptPubKey, UniValue &out,
                         bool fIncludeHex);
 void TxToUniv(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry,
               bool include_hex = true, int serialize_flags = 0);
+void TxToUnivS(const CTransaction &tx, const uint256 &hashBlock,
+               UniValue &entry, bool include_hex = false,
+               int serialize_flags = 0);
 
 #endif // BITCOIN_CORE_IO_H

@@ -9,8 +9,6 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <qt/optionsdialog.h>
-
 #include <amount.h>
 
 #include <QLabel>
@@ -49,10 +47,6 @@ class QProgressBar;
 class QProgressDialog;
 QT_END_NAMESPACE
 
-namespace GUIUtil {
-class ClickableLabel;
-}
-
 /**
  * Bitcoin GUI main class. This class represents the main window of the Bitcoin
  * UI. It communicates with both the client and wallet models to give the user
@@ -83,7 +77,6 @@ public:
      * list of transactions, address book and sending functionality.
      */
     bool addWallet(WalletModel *walletModel);
-    bool removeWallet(WalletModel *walletModel);
     void removeAllWallets();
 #endif // ENABLE_WALLET
     bool enableWallet = false;
@@ -106,8 +99,7 @@ private:
     UnitDisplayStatusBarControl *unitDisplayControl = nullptr;
     QLabel *labelWalletEncryptionIcon = nullptr;
     QLabel *labelWalletHDStatusIcon = nullptr;
-    GUIUtil::ClickableLabel *labelProxyIcon = nullptr;
-    GUIUtil::ClickableLabel *connectionsControl = nullptr;
+    QLabel *connectionsControl = nullptr;
     QLabel *labelBlocksIcon = nullptr;
     QLabel *progressBarLabel = nullptr;
     QProgressBar *progressBar = nullptr;
@@ -136,8 +128,6 @@ private:
     QAction *openRPCConsoleAction = nullptr;
     QAction *openAction = nullptr;
     QAction *showHelpMessageAction = nullptr;
-    QAction *m_wallet_selector_label_action = nullptr;
-    QAction *m_wallet_selector_action = nullptr;
 
     QLabel *m_wallet_selector_label = nullptr;
     QComboBox *m_wallet_selector = nullptr;
@@ -180,9 +170,6 @@ private:
 
     void updateHeadersSyncProgressLabel();
 
-    /** Open the OptionsDialog on the specified tab index */
-    void openOptionsDialogWithTab(OptionsDialog::Tab tab);
-
 Q_SIGNALS:
     /** Signal raised when a URI was entered or dragged to the GUI */
     void receivedURI(const QString &uri);
@@ -211,7 +198,6 @@ public Q_SLOTS:
 
 #ifdef ENABLE_WALLET
     bool setCurrentWallet(const QString &name);
-    bool setCurrentWalletBySelectorIndex(int index);
     /** Set the UI status indicators based on the currently selected wallet.
      */
     void updateWalletStatus();
@@ -237,10 +223,6 @@ public Q_SLOTS:
                              const QString &type, const QString &address,
                              const QString &label, const QString &walletName);
 #endif // ENABLE_WALLET
-
-private:
-    /** Set the proxy-enabled icon as shown in the UI. */
-    void updateProxyIcon();
 
 private Q_SLOTS:
 #ifdef ENABLE_WALLET
@@ -291,6 +273,9 @@ private Q_SLOTS:
     /** When hideTrayIcon setting is changed in OptionsModel hide or show the
      * icon accordingly. */
     void setTrayIconVisible(bool);
+
+    /** Toggle networking */
+    void toggleNetworkActive();
 
     void showModalOverlay();
 };

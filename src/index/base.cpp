@@ -66,8 +66,7 @@ bool BaseIndex::Init() {
     return true;
 }
 
-static const CBlockIndex *NextSyncBlock(const CBlockIndex *pindex_prev)
-    EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+static const CBlockIndex *NextSyncBlock(const CBlockIndex *pindex_prev) {
     AssertLockHeld(cs_main);
 
     if (!pindex_prev) {

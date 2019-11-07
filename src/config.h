@@ -106,4 +106,4 @@ private:
 // Temporary woraround.
 const Config &GetConfig();
 
-#endif // BITCOIN_CONFIG_H
+#endif

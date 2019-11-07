@@ -85,10 +85,8 @@ enum WalletFeature {
     // Wallet without a default key written
     FEATURE_NO_DEFAULT_KEY = 190700,
 
-    // Upgraded to HD SPLIT and can have a pre-split keypool
-    FEATURE_PRE_SPLIT_KEYPOOL = 200300,
-
-    FEATURE_LATEST = FEATURE_PRE_SPLIT_KEYPOOL,
+    // HD is optional, use FEATURE_COMPRPUBKEY as latest version
+    FEATURE_LATEST = FEATURE_COMPRPUBKEY,
 };
 
 enum class OutputType {
@@ -104,10 +102,7 @@ class CKeyPool {
 public:
     int64_t nTime;
     CPubKey vchPubKey;
-    // for change outputs
-    bool fInternal;
-    // For keys generated before keypool split upgrade
-    bool m_pre_split;
+    bool fInternal; // for change outputs
 
     CKeyPool();
     CKeyPool(const CPubKey &vchPubKeyIn, bool internalIn);
@@ -134,19 +129,8 @@ public:
                  */
                 fInternal = false;
             }
-            try {
-                READWRITE(m_pre_split);
-            } catch (std::ios_base::failure &) {
-                /**
-                 * flag as postsplit address if we can't read the m_pre_split
-                 * boolean (this will be the case for any wallet that upgrades
-                 * to HD chain split)
-                 */
-                m_pre_split = false;
-            }
         } else {
             READWRITE(fInternal);
-            READWRITE(m_pre_split);
         }
     }
 };
@@ -738,7 +722,6 @@ private:
 
     std::set<int64_t> setInternalKeyPool;
     std::set<int64_t> setExternalKeyPool;
-    std::set<int64_t> set_pre_split_keypool;
     int64_t m_max_keypool_index = 0;
     std::map<CKeyID, int64_t> m_pool_key_to_index;
 
@@ -811,7 +794,6 @@ public:
 
     void LoadKeyPool(int64_t nIndex, const CKeyPool &keypool)
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
-    void MarkPreSplitKeys();
 
     // Map from Key ID to key metadata.
     std::map<CKeyID, CKeyMetadata> mapKeyMetadata;
@@ -875,8 +857,7 @@ public:
      * Return list of available coins and locked coins grouped by non-change
      * output address.
      */
-    std::map<CTxDestination, std::vector<COutput>> ListCoins() const
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main, cs_wallet);
+    std::map<CTxDestination, std::vector<COutput>> ListCoins() const;
 
     /**
      * Find non-change parent output.
@@ -937,9 +918,9 @@ public:
     }
 
     //! Load metadata (used by LoadWallet)
-    void LoadKeyMetadata(const CKeyID &keyID, const CKeyMetadata &metadata)
+    bool LoadKeyMetadata(const CKeyID &keyID, const CKeyMetadata &metadata)
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
-    void LoadScriptMetadata(const CScriptID &script_id,
+    bool LoadScriptMetadata(const CScriptID &script_id,
                             const CKeyMetadata &metadata)
         EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
@@ -968,7 +949,7 @@ public:
     //! Erases a destination data tuple in the store and on disk
     bool EraseDestData(const CTxDestination &dest, const std::string &key);
     //! Adds a destination data tuple to the store, without saving it to disk
-    void LoadDestData(const CTxDestination &dest, const std::string &key,
+    bool LoadDestData(const CTxDestination &dest, const std::string &key,
                       const std::string &value);
     //! Look up a destination data tuple in the store, return true if found
     //! false otherwise
@@ -1015,7 +996,7 @@ public:
 
     void MarkDirty();
     bool AddToWallet(const CWalletTx &wtxIn, bool fFlushOnClose = true);
-    void LoadToWallet(const CWalletTx &wtxIn);
+    bool LoadToWallet(const CWalletTx &wtxIn);
     void TransactionAddedToMempool(const CTransactionRef &tx) override;
     void
     BlockConnected(const std::shared_ptr<const CBlock> &pblock,
@@ -1118,22 +1099,7 @@ public:
     bool NewKeyPool();
     size_t KeypoolCountExternalKeys() EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
     bool TopUpKeyPool(unsigned int kpSize = 0);
-
-    /**
-     * Reserves a key from the keypool and sets nIndex to its index
-     *
-     * @param[out] nIndex the index of the key in keypool
-     * @param[out] keypool the keypool the key was drawn from, which could be
-     * the the pre-split pool if present, or the internal or external pool
-     * @param fRequestedInternal true if the caller would like the key drawn
-     *     from the internal keypool, false if external is preferred
-     *
-     * @return true if succeeded, false if failed due to empty keypool
-     * @throws std::runtime_error if keypool read failed, key was invalid,
-     *     was not found in the wallet, or was misclassified in the internal
-     *     or external keypool
-     */
-    bool ReserveKeyFromKeyPool(int64_t &nIndex, CKeyPool &keypool,
+    void ReserveKeyFromKeyPool(int64_t &nIndex, CKeyPool &keypool,
                                bool fRequestedInternal);
     void KeepKey(int64_t nIndex);
     void ReturnKey(int64_t nIndex, bool fInternal, const CPubKey &pubkey);
@@ -1198,7 +1164,7 @@ public:
 
     //! signify that a particular wallet feature is now used. this may change
     //! nWalletVersion and nWalletMaxVersion if those are lower
-    void SetMinVersion(enum WalletFeature, WalletBatch *batch_in = nullptr,
+    bool SetMinVersion(enum WalletFeature, WalletBatch *batch_in = nullptr,
                        bool fExplicit = false);
 
     //! change which version we're allowed to upgrade to (note that this does
@@ -1223,9 +1189,6 @@ public:
 
     //! Flush wallet (bitdb flush)
     void Flush(bool shutdown = false);
-
-    /** Wallet is about to be unloaded */
-    boost::signals2::signal<void()> NotifyUnload;
 
     /**
      * Address book entry changed.
@@ -1290,7 +1253,7 @@ public:
     bool BackupWallet(const std::string &strDest);
 
     /* Set the HD chain model (chain child index counters) */
-    void SetHDChain(const CHDChain &chain, bool memonly);
+    bool SetHDChain(const CHDChain &chain, bool memonly);
     const CHDChain &GetHDChain() const { return hdChain; }
 
     /* Returns true if HD is enabled */
@@ -1300,17 +1263,12 @@ public:
     CPubKey GenerateNewHDMasterKey();
 
     /**
-     * Derives a new HD master key (will not be activated)
-     */
-    CPubKey DeriveNewMasterHDKey(const CKey &key);
-
-    /**
      * Set the current HD master key (will reset the chain child index counters)
      * Sets the master key's version based on the current wallet version (so the
      * caller must ensure the current wallet version is correct before calling
      *  this function).
      */
-    void SetHDMasterKey(const CPubKey &key);
+    bool SetHDMasterKey(const CPubKey &key);
 
     /**
      * Blocks until the wallet state is up-to-date to /at least/ the current

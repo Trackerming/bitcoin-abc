@@ -548,7 +548,7 @@ BerkeleyBatch::BerkeleyBatch(BerkeleyDatabase &database, const char *pszMode,
             // be implemented, so no equality checks are needed at all. (Newer
             // versions of BDB have an set_lk_exclusive method for this
             // purpose, but the older version we use does not.)
-            for (const auto &dbenv : g_dbenvs) {
+            for (auto &dbenv : g_dbenvs) {
                 CheckUniqueFileid(dbenv.second, strFilename, *pdb_temp);
             }
 
@@ -773,7 +773,6 @@ void BerkeleyEnvironment::Flush(bool fShutdown) {
                 if (!fMockDb) {
                     fs::remove_all(fs::path(strPath) / "database");
                 }
-                g_dbenvs.erase(strPath);
             }
         }
     }
@@ -869,8 +868,5 @@ bool BerkeleyDatabase::Backup(const std::string &strDest) {
 void BerkeleyDatabase::Flush(bool shutdown) {
     if (!IsDummy()) {
         env->Flush(shutdown);
-        if (shutdown) {
-            env = nullptr;
-        }
     }
 }

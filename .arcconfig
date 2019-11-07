@@ -1,11 +1,6 @@
 {
-  "conduit_uri" : "https://reviews.bitcoinabc.org/",
-  "repository.callsign": "ABC",
-  "base" : "git:HEAD^, hg:.^",
-  "git.default-relative-commit" : "HEAD^",
-  "git:arc.feature.start.default" : "origin/master",
-  "arc.feature.start.default" : "master",
-  "history.immutable" : false,
-  "load" : ["arcanist"],
-  "lint.engine": "ExtendedConfigurationDrivenLintEngine"
+  "phabricator.uri" : "https://phabricator.coincola.com",
+   "load" : ["arcanist"],
+   "lint.engine": "ExtendedConfigurationDrivenLintEngine",
+   "repository.callsign" : "https://github.com/Trackerming/bitcoin-abc"
 }

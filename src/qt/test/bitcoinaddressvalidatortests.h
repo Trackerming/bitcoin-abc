@@ -15,4 +15,4 @@ private Q_SLOTS:
     void inputTests();
 };
 
-#endif // BITCOIN_QT_TEST_BITCOINADDRESSVALIDATORTESTS_H
+#endif

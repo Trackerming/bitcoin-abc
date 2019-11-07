@@ -445,4 +445,4 @@ public:
     }
 };
 
-#endif // BITCOIN_SEEDER_DB_H
+#endif

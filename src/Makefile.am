@@ -102,6 +102,9 @@ endif
 # bitcoin core #
 BITCOIN_CORE_H = \
   addrdb.h \
+  addressindex.h \
+  spentindex.h \
+  timestampindex.h \
   addrman.h \
   avalanche.h \
   banman.h \
@@ -407,7 +410,6 @@ libbitcoin_consensus_a_SOURCES = \
   script/sigencoding.cpp \
   script/sigencoding.h \
   serialize.h \
-  span.h \
   tinyformat.h \
   uint256.cpp \
   uint256.h \
@@ -496,6 +498,7 @@ libbitcoin_seeder_a_SOURCES = \
   seeder/db.h \
   seeder/dns.cpp \
   seeder/dns.h \
+  seeder/strlcpy.h \
   seeder/util.h
 
 nodist_libbitcoin_util_a_SOURCES = $(srcdir)/obj/build.h

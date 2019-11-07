@@ -300,78 +300,69 @@ void SendCoinsDialog::on_sendButton_clicked() {
         address.append("</span>");
 
         QString recipientElement;
-        recipientElement = "<br />";
 
         // normal payment
         if (!rcp.paymentRequest.IsInitialized()) {
             if (rcp.label.length() > 0) {
                 // label with address
-                recipientElement.append(
-                    tr("%1 to %2").arg(amount, GUIUtil::HtmlEscape(rcp.label)));
+                recipientElement =
+                    tr("%1 to %2").arg(amount, GUIUtil::HtmlEscape(rcp.label));
                 recipientElement.append(QString(" (%1)").arg(address));
             } else {
                 // just address
-                recipientElement.append(tr("%1 to %2").arg(amount, address));
+                recipientElement = tr("%1 to %2").arg(amount, address);
             }
         } else if (!rcp.authenticatedMerchant.isEmpty()) {
             // authenticated payment request
-            recipientElement.append(
+            recipientElement =
                 tr("%1 to %2")
                     .arg(amount,
-                         GUIUtil::HtmlEscape(rcp.authenticatedMerchant)));
+                         GUIUtil::HtmlEscape(rcp.authenticatedMerchant));
         } else {
             // unauthenticated payment request
-            recipientElement.append(tr("%1 to %2").arg(amount, address));
+            recipientElement = tr("%1 to %2").arg(amount, address);
         }
 
         formatted.append(recipientElement);
     }
 
     QString questionString = tr("Are you sure you want to send?");
-    questionString.append("<br /><span style='font-size:10pt;'>");
-    questionString.append(tr("Please, review your transaction."));
-    questionString.append("</span><br />%1");
+    questionString.append("<br /><br />%1");
 
     if (txFee > Amount::zero()) {
         // append fee string if a fee is required
-        questionString.append("<hr /><b>");
-        questionString.append(tr("Transaction fee"));
-        questionString.append("</b>");
+        questionString.append("<hr /><span style='color:#aa0000;'>");
+        questionString.append(BitcoinUnits::formatHtmlWithUnit(
+            model->getOptionsModel()->getDisplayUnit(), txFee));
+        questionString.append("</span> ");
+        questionString.append(tr("added as transaction fee"));
 
         // append transaction size
         questionString.append(
             " (" +
             QString::number((double)currentTransaction.getTransactionSize() /
                             1000) +
-            " kB): ");
-
-        // append transaction fee value
-        questionString.append(
-            "<span style='color:#aa0000; font-weight:bold;'>");
-        questionString.append(BitcoinUnits::formatHtmlWithUnit(
-            model->getOptionsModel()->getDisplayUnit(), txFee));
-        questionString.append("</span><br />");
+            " kB)");
     }
 
     // add total amount in all subdivision units
     questionString.append("<hr />");
     Amount totalAmount = currentTransaction.getTotalTransactionAmount() + txFee;
     QStringList alternativeUnits;
-    for (const BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
+    for (BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
         if (u != model->getOptionsModel()->getDisplayUnit()) {
             alternativeUnits.append(
                 BitcoinUnits::formatHtmlWithUnit(u, totalAmount));
         }
     }
     questionString.append(
-        QString("<b>%1</b>: <b>%2</b>")
-            .arg(tr("Total Amount"))
+        tr("Total Amount %1")
             .arg(BitcoinUnits::formatHtmlWithUnit(
                 model->getOptionsModel()->getDisplayUnit(), totalAmount)));
     questionString.append(
-        QString("<br /><span style='font-size:10pt; "
-                "font-weight:normal;'>(=%1)</span>")
-            .arg(alternativeUnits.join(" " + tr("or") + " ")));
+        QString("<span style='font-size:10pt;font-weight:normal;'><br "
+                "/>(=%1)</span>")
+            .arg(alternativeUnits.join(" " + tr("or") + "<br />")));
 
     SendConfirmationDialog confirmationDialog(
         tr("Confirm send coins"), questionString.arg(formatted.join("<br />")),

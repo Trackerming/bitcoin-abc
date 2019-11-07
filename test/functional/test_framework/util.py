@@ -334,15 +334,28 @@ def initialize_datadir(dirname, n):
     if not os.path.isdir(datadir):
         os.makedirs(datadir)
     with open(os.path.join(datadir, "bitcoin.conf"), 'w', encoding='utf8') as f:
+        '''
+        按照生产环境的配置进行测试
+         若将usecashaddr=1设置
+           由于txindex和prue模式不兼容会导致wallet_import_rescan.py、rpc_blockchain.py、p2p_node_network_limited.py失败
+           rpc_txoutproof和rpc_getblockstats, txindex enbale导致状态本该抛出异常但没有异常
+         若将usecashaddr=0设置
+           除以上之外，mempool_limit.py、mining_prioritisetransaction.py、feature_maxuploadtarget.py会由于cash的地址全小写不支持传统的大小写混用地址
+           wallet_basic由于传统地址和cash地址不相同失败
+        '''
         f.write("regtest=1\n")
         f.write("[regtest]\n")
         f.write("port=" + str(p2p_port(n)) + "\n")
         f.write("rpcport=" + str(rpc_port(n)) + "\n")
+        f.write("txindex=1\n")
+        f.write("addressindex=1\n")
+        f.write("spentindex=1\n")
+        f.write("timestampindex=1\n")
         f.write("server=1\n")
         f.write("keypool=1\n")
         f.write("discover=0\n")
         f.write("listenonion=0\n")
-        f.write("usecashaddr=1\n")
+        f.write("usecashaddr=0\n")
         os.makedirs(os.path.join(datadir, 'stderr'), exist_ok=True)
         os.makedirs(os.path.join(datadir, 'stdout'), exist_ok=True)
     return datadir

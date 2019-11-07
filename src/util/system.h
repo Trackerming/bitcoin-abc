@@ -22,6 +22,7 @@
 #include <tinyformat.h>
 #include <util/time.h>
 
+#include <boost/signals2/signal.hpp>
 #include <boost/thread/condition_variable.hpp> // for boost::thread_interrupted
 
 #include <atomic>
@@ -31,24 +32,31 @@
 #include <set>
 #include <string>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 // Application startup time (used for uptime calculation)
 int64_t GetStartupTime();
 
+/** Signals for translation. */
+class CTranslationInterface {
+public:
+    /** Translate a message to the native language of the user. */
+    boost::signals2::signal<std::string(const char *psz)> Translate;
+};
+
+extern CTranslationInterface translationInterface;
+
 extern const char *const BITCOIN_CONF_FILENAME;
 extern const char *const BITCOIN_PID_FILENAME;
 
-/** Translate a message to the native language of the user. */
-const extern std::function<std::string(const char *)> G_TRANSLATION_FUN;
-
 /**
- * Translation function.
- * If no translation function is set, simply return the input.
+ * Translation function: Call Translate signal on UI interface, which returns a
+ * boost::optional result. If no translation slot is registered, nothing is
+ * returned, and simply return the input.
  */
 inline std::string _(const char *psz) {
-    return G_TRANSLATION_FUN ? (G_TRANSLATION_FUN)(psz) : psz;
+    boost::optional<std::string> rv = translationInterface.Translate(psz);
+    return rv ? (*rv) : psz;
 }
 
 void SetupEnvironment();
@@ -277,12 +285,12 @@ public:
     /**
      * Get the help string
      */
-    std::string GetHelpMessage() const;
+    std::string GetHelpMessage();
 
     /**
      * Check whether we know of this arg
      */
-    bool IsArgKnown(const std::string &key) const;
+    bool IsArgKnown(const std::string &key, std::string &error);
 };
 
 extern ArgsManager gArgs;
@@ -354,20 +362,6 @@ template <typename TsetT, typename Tsrc>
 inline void insert(std::set<TsetT> &dst, const Tsrc &src) {
     dst.insert(src.begin(), src.end());
 }
-
-#ifdef WIN32
-class WinCmdLineArgs {
-public:
-    WinCmdLineArgs();
-    ~WinCmdLineArgs();
-    std::pair<int, char **> get();
-
-private:
-    int argc;
-    char **argv;
-    std::vector<std::string> args;
-};
-#endif
 
 } // namespace util
 

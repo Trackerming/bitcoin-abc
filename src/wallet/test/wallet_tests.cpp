@@ -338,11 +338,7 @@ BOOST_FIXTURE_TEST_CASE(ListCoins, ListCoinsTestingSetup) {
 
     // Confirm ListCoins initially returns 1 coin grouped under coinbaseKey
     // address.
-    std::map<CTxDestination, std::vector<COutput>> list;
-    {
-        LOCK2(cs_main, wallet->cs_wallet);
-        list = wallet->ListCoins();
-    }
+    auto list = wallet->ListCoins();
     BOOST_CHECK_EQUAL(list.size(), 1U);
     BOOST_CHECK_EQUAL(boost::get<CKeyID>(list.begin()->first).ToString(),
                       coinbaseAddress);
@@ -357,10 +353,7 @@ BOOST_FIXTURE_TEST_CASE(ListCoins, ListCoinsTestingSetup) {
     // pubkey.
     AddTx(CRecipient{GetScriptForRawPubKey({}), 1 * COIN,
                      false /* subtract fee */});
-    {
-        LOCK2(cs_main, wallet->cs_wallet);
-        list = wallet->ListCoins();
-    }
+    list = wallet->ListCoins();
     BOOST_CHECK_EQUAL(list.size(), 1U);
     BOOST_CHECK_EQUAL(boost::get<CKeyID>(list.begin()->first).ToString(),
                       coinbaseAddress);
@@ -387,10 +380,7 @@ BOOST_FIXTURE_TEST_CASE(ListCoins, ListCoinsTestingSetup) {
     }
     // Confirm ListCoins still returns same result as before, despite coins
     // being locked.
-    {
-        LOCK2(cs_main, wallet->cs_wallet);
-        list = wallet->ListCoins();
-    }
+    list = wallet->ListCoins();
     BOOST_CHECK_EQUAL(list.size(), 1U);
     BOOST_CHECK_EQUAL(boost::get<CKeyID>(list.begin()->first).ToString(),
                       coinbaseAddress);

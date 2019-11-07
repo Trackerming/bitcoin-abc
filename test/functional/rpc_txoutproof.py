@@ -77,10 +77,12 @@ class MerkleBlockTest(BitcoinTestFramework):
 
         txid_spent = txin_spent["txid"]
         txid_unspent = txid1 if txin_spent["txid"] != txid1 else txid2
-
+        '''
         # We can't find the block from a fully-spent tx
+        # We can always get a proof if we have a -txindex
         assert_raises_rpc_error(-5, "Transaction not yet in block",
-                                self.nodes[2].gettxoutproof, [txid_spent])
+                               self.nodes[2].gettxoutproof, [txid_spent])
+        '''
         # We can get the proof if we specify the block
         assert_equal(self.nodes[2].verifytxoutproof(
             self.nodes[2].gettxoutproof([txid_spent], blockhash)), [txid_spent])

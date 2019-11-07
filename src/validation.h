@@ -22,13 +22,16 @@
 #include <sync.h>
 #include <versionbits.h>
 
+#include <addressindex.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <exception>
 #include <map>
 #include <set>
+#include <spentindex.h>
 #include <string>
+#include <timestampindex.h>
 #include <utility>
 #include <vector>
 
@@ -178,6 +181,13 @@ static const int64_t MAX_FEE_ESTIMATION_TIP_AGE = 3 * 60 * 60;
 static const bool DEFAULT_PERMIT_BAREMULTISIG = true;
 static const bool DEFAULT_CHECKPOINTS_ENABLED = true;
 static const bool DEFAULT_TXINDEX = false;
+
+static const bool DEFAULT_ADDRESS_INDEX = false;
+static const bool DEFAULT_SPENT_INDEX = false;
+static const bool DEFAULT_TIMESTAMP_INDEX = false;
+static const unsigned int DEFAULT_DB_MAX_OPEN_FILES = 1000;
+static const bool DEFAULT_DB_COMPRESSION = true;
+
 static const unsigned int DEFAULT_BANSCORE_THRESHOLD = 100;
 
 /** Default for -persistmempool */
@@ -221,6 +231,9 @@ extern uint256 g_best_block;
 extern std::atomic_bool fImporting;
 extern std::atomic_bool fReindex;
 extern int nScriptCheckThreads;
+extern bool fAddressIndex;
+extern bool fSpentIndex;
+extern bool fTimestampIndex;
 extern bool fIsBareMultisigStd;
 extern bool fRequireStandard;
 extern bool fCheckBlockIndex;
@@ -400,7 +413,7 @@ bool LoadBlockIndex(const Config &config);
 /**
  * Update the chain tip based on database information.
  */
-bool LoadChainTip(const Config &config) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+bool LoadChainTip(const Config &config);
 
 /**
  * Unload database information.
@@ -529,8 +542,8 @@ bool TestLockPointValidity(const LockPoints *lp)
  *
  * See consensus/consensus.h for flag definitions.
  */
-bool CheckSequenceLocks(const CTxMemPool &pool, const CTransaction &tx,
-                        int flags, LockPoints *lp = nullptr,
+bool CheckSequenceLocks(const CTransaction &tx, int flags,
+                        LockPoints *lp = nullptr,
                         bool useExistingLockPoints = false)
     EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
@@ -577,6 +590,20 @@ public:
 
     ScriptError GetScriptError() const { return error; }
 };
+
+bool GetTimestampIndex(const unsigned int &high, const unsigned int &low,
+                       const bool fActiveOnly,
+                       std::vector<std::pair<uint256, unsigned int>> &hashes);
+bool GetSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value);
+bool HashOnchainActive(const uint256 &hash);
+bool GetAddressIndex(
+    uint160 addressHash, int type,
+    std::vector<std::pair<CAddressIndexKey, CAmount>> &addressIndex,
+    int start = 0, int end = 0);
+bool GetAddressUnspent(
+    uint160 addressHash, int type,
+    std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue>>
+        &unspentOutputs);
 
 /** Functions for disk access for blocks */
 bool ReadBlockFromDisk(CBlock &block, const FlatFilePos &pos,
@@ -638,8 +665,7 @@ bool ReplayBlocks(const Consensus::Params &params, CCoinsView *view);
 
 /** Find the last common block between the parameter chain and a locator. */
 CBlockIndex *FindForkInGlobalIndex(const CChain &chain,
-                                   const CBlockLocator &locator)
-    EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+                                   const CBlockLocator &locator);
 
 /**
  * Mark a block as precious and reorganize.
@@ -666,13 +692,13 @@ bool ParkBlock(const Config &config, CValidationState &state,
                CBlockIndex *pindex);
 
 /** Remove invalidity status from a block and its descendants. */
-void ResetBlockFailureFlags(CBlockIndex *pindex);
+bool ResetBlockFailureFlags(CBlockIndex *pindex);
 
 /** Remove parked status from a block and its descendants. */
-void UnparkBlockAndChildren(CBlockIndex *pindex);
+bool UnparkBlockAndChildren(CBlockIndex *pindex);
 
 /** Remove parked status from a block. */
-void UnparkBlock(CBlockIndex *pindex);
+bool UnparkBlock(CBlockIndex *pindex);
 
 /**
  * Retrieve the topmost finalized block.

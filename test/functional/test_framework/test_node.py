@@ -73,9 +73,12 @@ class TestNode():
             # Wait for up to 60 seconds for the RPC server to respond
             self.rpc_timeout = 60
         self.binary = bitcoind
+        print("Mining blocks...", self.binary)
+        '''
         if not os.path.isfile(self.binary):
-            raise FileNotFoundError(
-                "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOIND=<path/to/bitcoind> {}".format(self.binary, sys.argv[0]))
+           raise FileNotFoundError(
+               "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOIND=<path/to/bitcoind> {}".format(self.binary, sys.argv[0]))
+        '''
         self.coverage_dir = coverage_dir
         if extra_conf != None:
             append_config(datadir, extra_conf)
@@ -88,10 +91,11 @@ class TestNode():
         self.extra_args = extra_args
         self.default_args = ["-datadir=" + self.datadir, "-logtimemicros", "-debug", "-debugexclude=libevent",
                              "-debugexclude=leveldb", "-mocktime=" + str(mocktime), "-uacomment=" + self.name]
-
+        '''
         if not os.path.isfile(bitcoin_cli):
-            raise FileNotFoundError(
-                "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOINCLI=<path/to/bitcoin-cli> {}".format(bitcoin_cli, sys.argv[0]))
+           raise FileNotFoundError(
+               "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOINCLI=<path/to/bitcoin-cli> {}".format(bitcoin_cli, sys.argv[0]))
+        '''
         self.cli = TestNodeCLI(bitcoin_cli, self.datadir)
         self.use_cli = use_cli
 

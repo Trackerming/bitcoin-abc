@@ -28,6 +28,12 @@
 #include <validationinterface.h>
 #include <warnings.h>
 
+#include <key_io.h>
+#include <script/script.h>
+#include <script/script_error.h>
+#include <script/sign.h>
+#include <script/standard.h>
+
 #include <boost/algorithm/string.hpp>
 #include <boost/thread/thread.hpp> // boost::thread::interrupt
 
@@ -100,6 +106,112 @@ UniValue blockheaderToJSON(const CBlockIndex *tip,
     }
     if (pnext) {
         result.pushKV("nextblockhash", pnext->GetBlockHash().GetHex());
+    }
+    return result;
+}
+
+UniValue blockToDeltasJSON(const Config &config, const CBlock &block,
+                           const CBlockIndex *blockIndex) {
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("hash", block.GetHash().GetHex());
+    int confirmations = -1;
+    // Only report confirmations if the block is on the main chain
+    if (chainActive.Contains(blockIndex)) {
+        confirmations = chainActive.Height() - blockIndex->nHeight + 1;
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "block is an orphan");
+    }
+    result.pushKV("confirmations", confirmations);
+    result.pushKV(
+        "size", (int)::GetSerializeSize(block, SER_NETWORK, PROTOCOL_VERSION));
+    result.pushKV("height", blockIndex->nHeight);
+    result.pushKV("version", block.nVersion);
+    result.pushKV("merkleroot", block.hashMerkleRoot.GetHex());
+
+    UniValue deltas(UniValue::VARR);
+    for (unsigned int i = 0; i < block.vtx.size(); i++) {
+        const CTransaction &tx = *(block.vtx[i]);
+        const uint256 txHash = tx.GetHash();
+        UniValue entry(UniValue::VOBJ);
+        entry.pushKV("txid", txHash.GetHex());
+        entry.pushKV("index", (int)i);
+
+        UniValue inputs(UniValue::VARR);
+        if (!tx.IsCoinBase()) {
+            for (size_t j = 0; j < tx.vin.size(); j++) {
+                const CTxIn input = tx.vin[j];
+                UniValue delta(UniValue::VOBJ);
+                CSpentIndexValue spentInfo;
+                CTxDestination destIn;
+                CSpentIndexKey spentKey(input.prevout.GetTxId(),
+                                        input.prevout.GetN());
+                if (GetSpentIndex(spentKey, spentInfo)) {
+                    if (spentInfo.addressType == 1) {
+                        destIn = CKeyID(spentInfo.addressHash);
+                        delta.pushKV(
+                            "address",
+                            EncodeLegacyAddr(destIn, config.GetChainParams()));
+                    } else if (spentInfo.addressType == 2) {
+                        destIn = CScriptID(spentInfo.addressHash);
+                        delta.pushKV(
+                            "address",
+                            EncodeLegacyAddr(destIn, config.GetChainParams()));
+                    } else {
+                        continue;
+                    }
+                    delta.pushKV("satoshis", -1 * spentInfo.satoshis);
+                    delta.pushKV("index", (int)j);
+                    delta.pushKV("prevtxid", input.prevout.GetTxId().GetHex());
+                    delta.pushKV("prevout", (int)input.prevout.GetN());
+                    inputs.push_back(delta);
+                } else {
+                    throw JSONRPCError(RPC_INTERNAL_ERROR,
+                                       "spent information not available");
+                }
+            }
+        }
+        entry.pushKV("inputs", inputs);
+        UniValue outputs(UniValue::VARR);
+        for (unsigned int k = 0; k < tx.vout.size(); k++) {
+            const CTxOut &out = tx.vout[k];
+            CTxDestination destOut;
+            UniValue delta(UniValue::VOBJ);
+            if (out.scriptPubKey.IsPayToScriptHash()) {
+                std::vector<uint8_t> hashBytes(out.scriptPubKey.begin() + 2,
+                                               out.scriptPubKey.begin() + 22);
+                destOut = CScriptID(uint160(hashBytes));
+                delta.pushKV("address", EncodeLegacyAddr(
+                                            destOut, config.GetChainParams()));
+            } else if (out.scriptPubKey.IsPayToPublicKeyHash()) {
+                std::vector<uint8_t> hashBytes(out.scriptPubKey.begin() + 3,
+                                               out.scriptPubKey.begin() + 23);
+                destOut = CKeyID(uint160(hashBytes));
+                delta.pushKV("address", EncodeLegacyAddr(
+                                            destOut, config.GetChainParams()));
+            } else {
+                continue;
+            }
+            delta.pushKV("satoshis", out.nValue / SATOSHI);
+            delta.pushKV("index", (int)k);
+            outputs.push_back(delta);
+        }
+        entry.pushKV("outputs", outputs);
+        deltas.push_back(entry);
+    }
+    result.pushKV("deltas", deltas);
+    result.pushKV("time", block.GetBlockTime());
+    result.pushKV("mediantime", (int64_t)blockIndex->GetMedianTimePast());
+    result.pushKV("nonce", (uint64_t)block.nNonce);
+    result.pushKV("bits", strprintf("%08x", block.nBits));
+    result.pushKV("difficulty", GetDifficulty(blockIndex));
+    result.pushKV("chainwork", blockIndex->nChainWork.GetHex());
+    if (blockIndex->pprev) {
+        result.pushKV("previousblockhash",
+                      blockIndex->pprev->GetBlockHash().GetHex());
+        CBlockIndex *pnext = chainActive.Next(blockIndex);
+        if (pnext) {
+            result.pushKV("nextblockhash", pnext->GetBlockHash().GetHex());
+        }
     }
     return result;
 }
@@ -406,10 +518,10 @@ static UniValue getdifficulty(const Config &config,
 static std::string EntryDescriptionString() {
     return "    \"size\" : n,             (numeric) transaction size.\n"
            "    \"fee\" : n,              (numeric) transaction fee in " +
-           CURRENCY_UNIT + "(DEPRECATED)" +
+           CURRENCY_UNIT +
            "\n"
            "    \"modifiedfee\" : n,      (numeric) transaction fee with fee "
-           "deltas used for mining priority (DEPRECATED)\n"
+           "deltas used for mining priority\n"
            "    \"time\" : n,             (numeric) local time transaction "
            "entered pool in seconds since 1 Jan 1970 GMT\n"
            "    \"height\" : n,           (numeric) block height when "
@@ -423,30 +535,13 @@ static std::string EntryDescriptionString() {
            "    \"descendantsize\" : n,   (numeric) virtual transaction size "
            "of in-mempool descendants (including this one)\n"
            "    \"descendantfees\" : n,   (numeric) modified fees (see above) "
-           "of in-mempool descendants (including this one) (DEPRECATED)\n"
+           "of in-mempool descendants (including this one)\n"
            "    \"ancestorcount\" : n,    (numeric) number of in-mempool "
            "ancestor transactions (including this one)\n"
            "    \"ancestorsize\" : n,     (numeric) virtual transaction size "
            "of in-mempool ancestors (including this one)\n"
            "    \"ancestorfees\" : n,     (numeric) modified fees (see above) "
-           "of in-mempool ancestors (including this one) (DEPRECATED)\n"
-           "    \"fees\" : {\n"
-           "        \"base\" : n,         (numeric) transaction fee in " +
-           CURRENCY_UNIT +
-           "\n"
-           "        \"modified\" : n,     (numeric) transaction fee with fee "
-           "deltas used for mining priority in " +
-           CURRENCY_UNIT +
-           "\n"
-           "        \"ancestor\" : n,     (numeric) modified fees (see above) "
-           "of in-mempool ancestors (including this one) in " +
-           CURRENCY_UNIT +
-           "\n"
-           "        \"descendant\" : n,   (numeric) modified fees (see above) "
-           "of in-mempool descendants (including this one) in " +
-           CURRENCY_UNIT +
-           "\n"
-           "    }\n"
+           "of in-mempool ancestors (including this one)\n"
            "    \"depends\" : [           (array) unconfirmed transactions "
            "used as inputs for this transaction\n"
            "        \"transactionid\",    (string) parent transaction id\n"
@@ -457,17 +552,9 @@ static std::string EntryDescriptionString() {
            "       ... ]\n";
 }
 
-static void entryToJSON(const CTxMemPool &pool, UniValue &info,
-                        const CTxMemPoolEntry &e)
-    EXCLUSIVE_LOCKS_REQUIRED(pool.cs) {
-    AssertLockHeld(pool.cs);
-
-    UniValue fees(UniValue::VOBJ);
-    fees.pushKV("base", ValueFromAmount(e.GetFee()));
-    fees.pushKV("modified", ValueFromAmount(e.GetModifiedFee()));
-    fees.pushKV("ancestor", ValueFromAmount(e.GetModFeesWithAncestors()));
-    fees.pushKV("descendant", ValueFromAmount(e.GetModFeesWithDescendants()));
-    info.pushKV("fees", fees);
+static void entryToJSON(UniValue &info, const CTxMemPoolEntry &e)
+    EXCLUSIVE_LOCKS_REQUIRED(g_mempool.cs) {
+    AssertLockHeld(g_mempool.cs);
 
     info.pushKV("size", (int)e.GetTxSize());
     info.pushKV("fee", ValueFromAmount(e.GetFee()));
@@ -485,7 +572,7 @@ static void entryToJSON(const CTxMemPool &pool, UniValue &info,
     const CTransaction &tx = e.GetTx();
     std::set<std::string> setDepends;
     for (const CTxIn &txin : tx.vin) {
-        if (pool.exists(txin.prevout.GetTxId())) {
+        if (g_mempool.exists(txin.prevout.GetTxId())) {
             setDepends.insert(txin.prevout.GetTxId().ToString());
         }
     }
@@ -498,29 +585,30 @@ static void entryToJSON(const CTxMemPool &pool, UniValue &info,
     info.pushKV("depends", depends);
 
     UniValue spent(UniValue::VARR);
-    const CTxMemPool::txiter &it = pool.mapTx.find(tx.GetId());
-    const CTxMemPool::setEntries &setChildren = pool.GetMemPoolChildren(it);
-    for (CTxMemPool::txiter childiter : setChildren) {
+    const CTxMemPool::txiter &it = g_mempool.mapTx.find(tx.GetId());
+    const CTxMemPool::setEntries &setChildren =
+        g_mempool.GetMemPoolChildren(it);
+    for (const CTxMemPool::txiter &childiter : setChildren) {
         spent.push_back(childiter->GetTx().GetId().ToString());
     }
 
     info.pushKV("spentby", spent);
 }
 
-UniValue MempoolToJSON(const CTxMemPool &pool, bool verbose) {
-    if (verbose) {
-        LOCK(pool.cs);
+UniValue mempoolToJSON(bool fVerbose) {
+    if (fVerbose) {
+        LOCK(g_mempool.cs);
         UniValue o(UniValue::VOBJ);
-        for (const CTxMemPoolEntry &e : pool.mapTx) {
+        for (const CTxMemPoolEntry &e : g_mempool.mapTx) {
             const uint256 &txid = e.GetTx().GetId();
             UniValue info(UniValue::VOBJ);
-            entryToJSON(pool, info, e);
+            entryToJSON(info, e);
             o.pushKV(txid.ToString(), info);
         }
         return o;
     } else {
         std::vector<uint256> vtxids;
-        pool.queryHashes(vtxids);
+        g_mempool.queryHashes(vtxids);
 
         UniValue a(UniValue::VARR);
         for (const uint256 &txid : vtxids) {
@@ -564,7 +652,7 @@ static UniValue getrawmempool(const Config &config,
         fVerbose = request.params[0].get_bool();
     }
 
-    return MempoolToJSON(::g_mempool, fVerbose);
+    return mempoolToJSON(fVerbose);
 }
 
 static UniValue getmempoolancestors(const Config &config,
@@ -630,7 +718,7 @@ static UniValue getmempoolancestors(const Config &config,
             const CTxMemPoolEntry &e = *ancestorIt;
             const uint256 &_hash = e.GetTx().GetId();
             UniValue info(UniValue::VOBJ);
-            entryToJSON(::g_mempool, info, e);
+            entryToJSON(info, e);
             o.pushKV(_hash.ToString(), info);
         }
         return o;
@@ -699,7 +787,7 @@ static UniValue getmempooldescendants(const Config &config,
             const CTxMemPoolEntry &e = *descendantIt;
             const uint256 &_hash = e.GetTx().GetId();
             UniValue info(UniValue::VOBJ);
-            entryToJSON(::g_mempool, info, e);
+            entryToJSON(info, e);
             o.pushKV(_hash.ToString(), info);
         }
         return o;
@@ -736,8 +824,111 @@ static UniValue getmempoolentry(const Config &config,
 
     const CTxMemPoolEntry &e = *it;
     UniValue info(UniValue::VOBJ);
-    entryToJSON(::g_mempool, info, e);
+    entryToJSON(info, e);
     return info;
+}
+
+UniValue getblockdeltas(const Config &config, const JSONRPCRequest &request) {
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error("");
+
+    std::string strHash = request.params[0].get_str();
+    uint256 hash(uint256S(strHash));
+
+    if (mapBlockIndex.count(hash) == 0)
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
+
+    CBlock block;
+    CBlockIndex *pblockindex = mapBlockIndex[hash];
+
+    if (fHavePruned && !(pblockindex->nStatus.hasData()) &&
+        pblockindex->nTx > 0)
+        throw JSONRPCError(RPC_INTERNAL_ERROR,
+                           "Block not available (pruned data)");
+
+    if (!ReadBlockFromDisk(block, pblockindex,
+                           config.GetChainParams().GetConsensus()))
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Can't read block from disk");
+
+    return blockToDeltasJSON(config, block, pblockindex);
+}
+
+UniValue getblockhashes(const Config &config, const JSONRPCRequest &request) {
+    if (request.fHelp || request.params.size() < 2)
+        throw std::runtime_error(
+            "getblockhashes timestamp\n"
+            "\nReturns array of hashes of blocks within the timestamp range "
+            "provided.\n"
+            "\nArguments:\n"
+            "1. high         (numeric, required) The newer block timestamp\n"
+            "2. low          (numeric, required) The older block timestamp\n"
+            "3. options      (string, required) A json object\n"
+            "    {\n"
+            "      \"noOrphans\":true   (boolean) will only include blocks on "
+            "the main chain\n"
+            "      \"logicalTimes\":true   (boolean) will include logical "
+            "timestamps with hashes\n"
+            "    }\n"
+            "\nResult:\n"
+            "[\n"
+            "  \"hash\"         (string) The block hash\n"
+            "]\n"
+            "[\n"
+            "  {\n"
+            "    \"blockhash\": (string) The block hash\n"
+            "    \"logicalts\": (numeric) The logical timestamp\n"
+            "  }\n"
+            "]\n"
+            "\nExamples:\n" +
+            HelpExampleCli("getblockhashes", "1231614698 1231024505") +
+            HelpExampleRpc("getblockhashes", "1231614698, 1231024505") +
+            HelpExampleCli("getblockhashes",
+                           "1231614698 1231024505 '{\"noOrphans\":false, "
+                           "\"logicalTimes\":true}'"));
+
+    unsigned int high = request.params[0].get_int();
+    unsigned int low = request.params[1].get_int();
+    bool fActiveOnly = false;
+    bool fLogicalTS = false;
+
+    if (request.params.size() > 2) {
+        if (request.params[2].isObject()) {
+            UniValue noOrphans =
+                find_value(request.params[2].get_obj(), "noOrphans");
+            UniValue returnLogical =
+                find_value(request.params[2].get_obj(), "logicalTimes");
+
+            if (noOrphans.isBool()) fActiveOnly = noOrphans.get_bool();
+
+            if (returnLogical.isBool()) fLogicalTS = returnLogical.get_bool();
+        }
+    }
+
+    std::vector<std::pair<uint256, unsigned int>> blockHashes;
+
+    if (fActiveOnly) LOCK(cs_main);
+
+    if (!GetTimestampIndex(high, low, fActiveOnly, blockHashes)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                           "No information available for block hashes");
+    }
+
+    UniValue result(UniValue::VARR);
+
+    for (std::vector<std::pair<uint256, unsigned int>>::const_iterator it =
+             blockHashes.begin();
+         it != blockHashes.end(); it++) {
+        if (fLogicalTS) {
+            UniValue item(UniValue::VOBJ);
+            item.pushKV("blockhash", it->first.GetHex());
+            item.pushKV("logicalts", (int)it->second);
+            result.push_back(item);
+        } else {
+            result.push_back(it->first.GetHex());
+        }
+    }
+
+    return result;
 }
 
 static UniValue getblockhash(const Config &config,
@@ -985,8 +1176,7 @@ static void ApplyStats(CCoinsStats &stats, CHashWriter &ss, const uint256 &hash,
     for (const auto &output : outputs) {
         ss << VARINT(output.first + 1);
         ss << output.second.GetTxOut().scriptPubKey;
-        ss << VARINT(output.second.GetTxOut().nValue / SATOSHI,
-                     VarIntMode::NONNEGATIVE_SIGNED);
+        ss << VARINT(output.second.GetTxOut().nValue / SATOSHI);
         stats.nTransactionOutputs++;
         stats.nTotalAmount += output.second.GetTxOut().nValue;
         stats.nBogoSize +=
@@ -994,7 +1184,7 @@ static void ApplyStats(CCoinsStats &stats, CHashWriter &ss, const uint256 &hash,
             8 /* amount */ + 2 /* scriptPubKey len */ +
             output.second.GetTxOut().scriptPubKey.size() /* scriptPubKey */;
     }
-    ss << VARINT(0u);
+    ss << VARINT(0);
 }
 
 //! Calculate statistics about the unspent transaction output set
@@ -1485,18 +1675,18 @@ static UniValue getchaintips(const Config &config,
     return res;
 }
 
-UniValue MempoolInfoToJSON(const CTxMemPool &pool) {
+UniValue mempoolInfoToJSON() {
     UniValue ret(UniValue::VOBJ);
-    ret.pushKV("size", (int64_t)pool.size());
-    ret.pushKV("bytes", (int64_t)pool.GetTotalTxSize());
-    ret.pushKV("usage", (int64_t)pool.DynamicMemoryUsage());
+    ret.pushKV("size", (int64_t)g_mempool.size());
+    ret.pushKV("bytes", (int64_t)g_mempool.GetTotalTxSize());
+    ret.pushKV("usage", (int64_t)g_mempool.DynamicMemoryUsage());
     size_t maxmempool =
         gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
     ret.pushKV("maxmempool", (int64_t)maxmempool);
-    ret.pushKV(
-        "mempoolminfee",
-        ValueFromAmount(std::max(pool.GetMinFee(maxmempool), ::minRelayTxFee)
-                            .GetFeePerK()));
+    ret.pushKV("mempoolminfee",
+               ValueFromAmount(
+                   std::max(g_mempool.GetMinFee(maxmempool), ::minRelayTxFee)
+                       .GetFeePerK()));
     ret.pushKV("minrelaytxfee", ValueFromAmount(::minRelayTxFee.GetFeePerK()));
 
     return ret;
@@ -1528,7 +1718,7 @@ static UniValue getmempoolinfo(const Config &config,
             HelpExampleRpc("getmempoolinfo", ""));
     }
 
-    return MempoolInfoToJSON(::g_mempool);
+    return mempoolInfoToJSON();
 }
 
 static UniValue preciousblock(const Config &config,
@@ -2214,6 +2404,8 @@ static const ContextFreeRPCCommand commands[] = {
     //  ------------------- ------------------------  ----------------------  ----------
     { "blockchain",         "getbestblockhash",       getbestblockhash,       {} },
     { "blockchain",         "getblock",               getblock,               {"blockhash","verbosity|verbose"} },
+    { "blockchain",         "getblockdeltas",         getblockdeltas,         {}},
+    { "blockchain",         "getblockhashes",         getblockhashes,         {"high","low","options"}},
     { "blockchain",         "getblockchaininfo",      getblockchaininfo,      {} },
     { "blockchain",         "getblockcount",          getblockcount,          {} },
     { "blockchain",         "getblockhash",           getblockhash,           {"height"} },

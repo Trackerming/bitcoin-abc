@@ -179,29 +179,6 @@ CScript ParseScript(const std::string &s) {
     return result;
 }
 
-// Check that all of the input and output scripts of a transaction contains
-// valid opcodes
-bool CheckTxScriptsSanity(const CMutableTransaction &tx) {
-    // Check input scripts for non-coinbase txs
-    if (!CTransaction(tx).IsCoinBase()) {
-        for (const auto &i : tx.vin) {
-            if (!i.scriptSig.HasValidOps() ||
-                i.scriptSig.size() > MAX_SCRIPT_SIZE) {
-                return false;
-            }
-        }
-    }
-    // Check output scripts
-    for (const auto &o : tx.vout) {
-        if (!o.scriptPubKey.HasValidOps() ||
-            o.scriptPubKey.size() > MAX_SCRIPT_SIZE) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
 bool DecodeHexTx(CMutableTransaction &tx, const std::string &strHexTx) {
     if (!IsHex(strHexTx)) {
         return false;
@@ -212,14 +189,14 @@ bool DecodeHexTx(CMutableTransaction &tx, const std::string &strHexTx) {
     CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION);
     try {
         ssData >> tx;
-        if (ssData.eof() && CheckTxScriptsSanity(tx)) {
-            return true;
+        if (!ssData.empty()) {
+            return false;
         }
-    } catch (const std::exception &e) {
-        // Fall through.
+    } catch (const std::exception &) {
+        return false;
     }
 
-    return false;
+    return true;
 }
 
 bool DecodeHexBlockHeader(CBlockHeader &header, const std::string &hex_header) {
@@ -251,6 +228,16 @@ bool DecodeHexBlk(CBlock &block, const std::string &strHexBlk) {
     }
 
     return true;
+}
+
+uint256 ParseHashUV(const UniValue &v, const std::string &strName) {
+    std::string strHex;
+    if (v.isStr()) {
+        strHex = v.getValStr();
+    }
+
+    // Note: ParseHashStr("") throws a runtime_error
+    return ParseHashStr(strHex, strName);
 }
 
 uint256 ParseHashStr(const std::string &strHex, const std::string &strName) {

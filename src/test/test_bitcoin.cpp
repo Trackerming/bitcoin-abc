@@ -31,8 +31,6 @@
 
 #include <memory>
 
-const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
-
 FastRandomContext g_insecure_rand_ctx;
 
 std::ostream &operator<<(std::ostream &os, const uint256 &num) {

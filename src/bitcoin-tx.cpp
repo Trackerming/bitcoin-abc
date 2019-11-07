@@ -31,8 +31,6 @@ static bool fCreateBlank;
 static std::map<std::string, UniValue> registers;
 static const int CONTINUE_EXECUTION = -1;
 
-const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
-
 static void SetupBitcoinTxArgs() {
     gArgs.AddArg("-?", _("This help message"), false, OptionsCategory::OPTIONS);
     gArgs.AddArg("-create", _("Create new, empty TX."), false,
@@ -611,7 +609,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
             throw std::runtime_error("prevtxs internal object typecheck fail");
         }
 
-        TxId txid(ParseHashStr(prevOut["txid"].get_str(), "txid"));
+        TxId txid(ParseHashUV(prevOut["txid"], "txid"));
 
         int nOut = atoi(prevOut["vout"].getValStr());
         if (nOut < 0) {
@@ -658,7 +656,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
 
     // Sign what we can:
     for (size_t i = 0; i < mergedTx.vin.size(); i++) {
-        CTxIn &txin = mergedTx.vin[i];
+        const CTxIn &txin = mergedTx.vin[i];
         const Coin &coin = view.AccessCoin(txin.prevout);
         if (coin.IsSpent()) {
             continue;
@@ -667,8 +665,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
         const CScript &prevPubKey = coin.GetTxOut().scriptPubKey;
         const Amount amount = coin.GetTxOut().nValue;
 
-        SignatureData sigdata =
-            DataFromTransaction(mergedTx, i, coin.GetTxOut());
+        SignatureData sigdata;
         // Only sign SIGHASH_SINGLE if there's a corresponding output:
         if ((sigHashType.getBaseType() != BaseSigHashType::SINGLE) ||
             (i < mergedTx.vout.size())) {
@@ -678,7 +675,12 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
                              prevPubKey, sigdata);
         }
 
-        UpdateInput(txin, sigdata);
+        // ... and merge in other signatures:
+        sigdata = CombineSignatures(
+            prevPubKey,
+            MutableTransactionSignatureChecker(&mergedTx, i, amount), sigdata,
+            DataFromTransaction(txv, i));
+        UpdateTransaction(mergedTx, i, sigdata);
     }
 
     tx = mergedTx;

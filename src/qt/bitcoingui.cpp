@@ -59,6 +59,8 @@
 #include <QUrlQuery>
 #include <QVBoxLayout>
 
+#include <iostream>
+
 const std::string BitcoinGUI::DEFAULT_UIPLATFORM =
 #if defined(Q_OS_MAC)
     "macosx"
@@ -148,7 +150,6 @@ BitcoinGUI::BitcoinGUI(interfaces::Node &node, const Config *configIn,
     unitDisplayControl = new UnitDisplayStatusBarControl(platformStyle);
     labelWalletEncryptionIcon = new QLabel();
     labelWalletHDStatusIcon = new QLabel();
-    labelProxyIcon = new GUIUtil::ClickableLabel();
     connectionsControl = new GUIUtil::ClickableLabel();
     labelBlocksIcon = new GUIUtil::ClickableLabel();
     if (enableWallet) {
@@ -158,7 +159,6 @@ BitcoinGUI::BitcoinGUI(interfaces::Node &node, const Config *configIn,
         frameBlocksLayout->addWidget(labelWalletEncryptionIcon);
         frameBlocksLayout->addWidget(labelWalletHDStatusIcon);
     }
-    frameBlocksLayout->addWidget(labelProxyIcon);
     frameBlocksLayout->addStretch();
     frameBlocksLayout->addWidget(connectionsControl);
     frameBlocksLayout->addStretch();
@@ -200,10 +200,8 @@ BitcoinGUI::BitcoinGUI(interfaces::Node &node, const Config *configIn,
     // Subscribe to notifications from core
     subscribeToCoreSignals();
 
-    connect(connectionsControl, &GUIUtil::ClickableLabel::clicked,
-            [this] { m_node.setNetworkActive(!m_node.getNetworkActive()); });
-    connect(labelProxyIcon, &GUIUtil::ClickableLabel::clicked,
-            [this] { openOptionsDialogWithTab(OptionsDialog::TAB_NETWORK); });
+    connect(connectionsControl, SIGNAL(clicked(QPoint)), this,
+            SLOT(toggleNetworkActive()));
 
     modalOverlay = new ModalOverlay(this->centralWidget());
 #ifdef ENABLE_WALLET
@@ -507,19 +505,8 @@ void BitcoinGUI::createToolBars() {
         toolbar->addWidget(spacer);
 
         m_wallet_selector = new QComboBox();
-        connect(m_wallet_selector, SIGNAL(currentIndexChanged(int)), this,
-                SLOT(setCurrentWalletBySelectorIndex(int)));
-
-        m_wallet_selector_label = new QLabel();
-        m_wallet_selector_label->setText(tr("Wallet:") + " ");
-        m_wallet_selector_label->setBuddy(m_wallet_selector);
-
-        m_wallet_selector_label_action =
-            appToolBar->addWidget(m_wallet_selector_label);
-        m_wallet_selector_action = appToolBar->addWidget(m_wallet_selector);
-
-        m_wallet_selector_label_action->setVisible(false);
-        m_wallet_selector_action->setVisible(false);
+        connect(m_wallet_selector, SIGNAL(currentIndexChanged(const QString &)),
+                this, SLOT(setCurrentWallet(const QString &)));
 #endif
     }
 }
@@ -557,9 +544,6 @@ void BitcoinGUI::setClientModel(ClientModel *_clientModel) {
                 SLOT(showProgress(QString, int)));
 
         rpcConsole->setClientModel(_clientModel);
-
-        updateProxyIcon();
-
 #ifdef ENABLE_WALLET
         if (walletFrame) {
             walletFrame->setClientModel(_clientModel);
@@ -600,43 +584,22 @@ void BitcoinGUI::setClientModel(ClientModel *_clientModel) {
 bool BitcoinGUI::addWallet(WalletModel *walletModel) {
     if (!walletFrame) return false;
     const QString name = walletModel->getWalletName();
-    QString display_name =
-        name.isEmpty() ? "[" + tr("default wallet") + "]" : name;
     setWalletActionsEnabled(true);
-    m_wallet_selector->addItem(display_name, name);
+    m_wallet_selector->addItem(name);
     if (m_wallet_selector->count() == 2) {
-        m_wallet_selector_label_action->setVisible(true);
-        m_wallet_selector_action->setVisible(true);
+        m_wallet_selector_label = new QLabel();
+        m_wallet_selector_label->setText(tr("Wallet:") + " ");
+        m_wallet_selector_label->setBuddy(m_wallet_selector);
+        appToolBar->addWidget(m_wallet_selector_label);
+        appToolBar->addWidget(m_wallet_selector);
     }
     rpcConsole->addWallet(walletModel);
     return walletFrame->addWallet(walletModel);
 }
 
-bool BitcoinGUI::removeWallet(WalletModel *walletModel) {
-    if (!walletFrame) {
-        return false;
-    }
-    QString name = walletModel->getWalletName();
-    int index = m_wallet_selector->findData(name);
-    m_wallet_selector->removeItem(index);
-    if (m_wallet_selector->count() == 0) {
-        setWalletActionsEnabled(false);
-    } else if (m_wallet_selector->count() == 1) {
-        m_wallet_selector_label_action->setVisible(false);
-        m_wallet_selector_action->setVisible(false);
-    }
-    rpcConsole->removeWallet(walletModel);
-    return walletFrame->removeWallet(name);
-}
-
 bool BitcoinGUI::setCurrentWallet(const QString &name) {
     if (!walletFrame) return false;
     return walletFrame->setCurrentWallet(name);
-}
-
-bool BitcoinGUI::setCurrentWalletBySelectorIndex(int index) {
-    QString internal_name = m_wallet_selector->itemData(index).toString();
-    return setCurrentWallet(internal_name);
 }
 
 void BitcoinGUI::removeAllWallets() {
@@ -721,7 +684,11 @@ void BitcoinGUI::trayIconActivated(QSystemTrayIcon::ActivationReason reason) {
 #endif
 
 void BitcoinGUI::optionsClicked() {
-    openOptionsDialogWithTab(OptionsDialog::TAB_MAIN);
+    if (!clientModel || !clientModel->getOptionsModel()) return;
+
+    OptionsDialog dlg(this, enableWallet);
+    dlg.setModel(clientModel->getOptionsModel());
+    dlg.exec();
 }
 
 void BitcoinGUI::aboutClicked() {
@@ -852,17 +819,6 @@ void BitcoinGUI::updateHeadersSyncProgressLabel() {
                                          headersTipHeight,
                                      'f', 1)));
     }
-}
-
-void BitcoinGUI::openOptionsDialogWithTab(OptionsDialog::Tab tab) {
-    if (!clientModel || !clientModel->getOptionsModel()) {
-        return;
-    }
-
-    OptionsDialog dlg(this, enableWallet);
-    dlg.setCurrentTab(tab);
-    dlg.setModel(clientModel->getOptionsModel());
-    dlg.exec();
 }
 
 void BitcoinGUI::setNumBlocks(int count, const QDateTime &blockDate,
@@ -1212,26 +1168,6 @@ void BitcoinGUI::updateWalletStatus() {
 }
 #endif // ENABLE_WALLET
 
-void BitcoinGUI::updateProxyIcon() {
-    std::string ip_port;
-    bool proxy_enabled = clientModel->getProxyInfo(ip_port);
-
-    if (proxy_enabled) {
-        if (labelProxyIcon->pixmap() == 0) {
-            QString ip_port_q = QString::fromStdString(ip_port);
-            labelProxyIcon->setPixmap(
-                platformStyle->SingleColorIcon(":/icons/proxy")
-                    .pixmap(STATUSBAR_ICONSIZE, STATUSBAR_ICONSIZE));
-            labelProxyIcon->setToolTip(
-                tr("Proxy is <b>enabled</b>: %1").arg(ip_port_q));
-        } else {
-            labelProxyIcon->show();
-        }
-    } else {
-        labelProxyIcon->hide();
-    }
-}
-
 void BitcoinGUI::showNormalIfMinimized(bool fToggleHidden) {
     if (!clientModel) {
         return;
@@ -1331,6 +1267,10 @@ void BitcoinGUI::unsubscribeFromCoreSignals() {
     m_handler_question->disconnect();
 }
 
+void BitcoinGUI::toggleNetworkActive() {
+    m_node.setNetworkActive(!m_node.getNetworkActive());
+}
+
 UnitDisplayStatusBarControl::UnitDisplayStatusBarControl(
     const PlatformStyle *platformStyle)
     : optionsModel(0), menu(0) {
@@ -1357,7 +1297,7 @@ void UnitDisplayStatusBarControl::mousePressEvent(QMouseEvent *event) {
  * mouse events. */
 void UnitDisplayStatusBarControl::createContextMenu() {
     menu = new QMenu(this);
-    for (const BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
+    for (BitcoinUnits::Unit u : BitcoinUnits::availableUnits()) {
         QAction *menuAction = new QAction(QString(BitcoinUnits::name(u)), this);
         menuAction->setData(QVariant(u));
         menu->addAction(menuAction);

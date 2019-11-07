@@ -21,8 +21,7 @@ class CScript;
 class CTransaction;
 class uint256;
 
-template <class T>
-uint256 SignatureHash(const CScript &scriptCode, const T &txTo,
+uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo,
                       unsigned int nIn, SigHashType sigHashType,
                       const Amount amount,
                       const PrecomputedTransactionData *cache = nullptr,
@@ -51,21 +50,20 @@ public:
     virtual ~BaseSignatureChecker() {}
 };
 
-template <class T>
-class GenericTransactionSignatureChecker : public BaseSignatureChecker {
+class TransactionSignatureChecker : public BaseSignatureChecker {
 private:
-    const T *txTo;
+    const CTransaction *txTo;
     unsigned int nIn;
     const Amount amount;
     const PrecomputedTransactionData *txdata;
 
 public:
-    GenericTransactionSignatureChecker(const T *txToIn, unsigned int nInIn,
-                                       const Amount &amountIn)
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn,
+                                const Amount amountIn)
         : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(nullptr) {}
-    GenericTransactionSignatureChecker(
-        const T *txToIn, unsigned int nInIn, const Amount &amountIn,
-        const PrecomputedTransactionData &txdataIn)
+    TransactionSignatureChecker(const CTransaction *txToIn, unsigned int nInIn,
+                                const Amount amountIn,
+                                const PrecomputedTransactionData &txdataIn)
         : txTo(txToIn), nIn(nInIn), amount(amountIn), txdata(&txdataIn) {}
 
     // The overridden functions are now final.
@@ -77,10 +75,16 @@ public:
     bool CheckSequence(const CScriptNum &nSequence) const final override;
 };
 
-using TransactionSignatureChecker =
-    GenericTransactionSignatureChecker<CTransaction>;
-using MutableTransactionSignatureChecker =
-    GenericTransactionSignatureChecker<CMutableTransaction>;
+class MutableTransactionSignatureChecker : public TransactionSignatureChecker {
+private:
+    const CTransaction txTo;
+
+public:
+    MutableTransactionSignatureChecker(const CMutableTransaction *txToIn,
+                                       unsigned int nInIn,
+                                       const Amount amountIn)
+        : TransactionSignatureChecker(&txTo, nInIn, amountIn), txTo(*txToIn) {}
+};
 
 bool EvalScript(std::vector<std::vector<uint8_t>> &stack, const CScript &script,
                 uint32_t flags, const BaseSignatureChecker &checker,

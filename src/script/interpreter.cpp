@@ -1331,10 +1331,10 @@ namespace {
  * Wrapper that serializes like CTransaction, but with the modifications
  *  required for the signature hash done in-place
  */
-template <class T> class CTransactionSignatureSerializer {
+class CTransactionSignatureSerializer {
 private:
     //!< reference to the spending transaction (the one being serialized)
-    const T &txTo;
+    const CTransaction &txTo;
     //!< output script being consumed
     const CScript &scriptCode;
     //!< input index of txTo being signed
@@ -1343,7 +1343,7 @@ private:
     const SigHashType sigHashType;
 
 public:
-    CTransactionSignatureSerializer(const T &txToIn,
+    CTransactionSignatureSerializer(const CTransaction &txToIn,
                                     const CScript &scriptCodeIn,
                                     unsigned int nInIn,
                                     SigHashType sigHashTypeIn)
@@ -1440,7 +1440,7 @@ public:
     }
 };
 
-template <class T> uint256 GetPrevoutHash(const T &txTo) {
+uint256 GetPrevoutHash(const CTransaction &txTo) {
     CHashWriter ss(SER_GETHASH, 0);
     for (const auto &txin : txTo.vin) {
         ss << txin.prevout;
@@ -1448,7 +1448,7 @@ template <class T> uint256 GetPrevoutHash(const T &txTo) {
     return ss.GetHash();
 }
 
-template <class T> uint256 GetSequenceHash(const T &txTo) {
+uint256 GetSequenceHash(const CTransaction &txTo) {
     CHashWriter ss(SER_GETHASH, 0);
     for (const auto &txin : txTo.vin) {
         ss << txin.nSequence;
@@ -1456,7 +1456,7 @@ template <class T> uint256 GetSequenceHash(const T &txTo) {
     return ss.GetHash();
 }
 
-template <class T> uint256 GetOutputsHash(const T &txTo) {
+uint256 GetOutputsHash(const CTransaction &txTo) {
     CHashWriter ss(SER_GETHASH, 0);
     for (const auto &txout : txTo.vout) {
         ss << txout;
@@ -1466,26 +1466,17 @@ template <class T> uint256 GetOutputsHash(const T &txTo) {
 
 } // namespace
 
-template <class T>
-PrecomputedTransactionData::PrecomputedTransactionData(const T &txTo) {
+PrecomputedTransactionData::PrecomputedTransactionData(
+    const CTransaction &txTo) {
     hashPrevouts = GetPrevoutHash(txTo);
     hashSequence = GetSequenceHash(txTo);
     hashOutputs = GetOutputsHash(txTo);
 }
 
-// explicit instantiation
-template PrecomputedTransactionData::PrecomputedTransactionData(
-    const CTransaction &txTo);
-template PrecomputedTransactionData::PrecomputedTransactionData(
-    const CMutableTransaction &txTo);
-
-template <class T>
-uint256 SignatureHash(const CScript &scriptCode, const T &txTo,
+uint256 SignatureHash(const CScript &scriptCode, const CTransaction &txTo,
                       unsigned int nIn, SigHashType sigHashType,
                       const Amount amount,
                       const PrecomputedTransactionData *cache, uint32_t flags) {
-    assert(nIn < txTo.vin.size());
-
     if (flags & SCRIPT_ENABLE_REPLAY_PROTECTION) {
         // Legacy chain's value for fork id must be of the form 0xffxxxx.
         // By xoring with 0xdead, we ensure that the value will be different
@@ -1544,6 +1535,10 @@ uint256 SignatureHash(const CScript &scriptCode, const T &txTo,
 
     static const uint256 one(uint256S(
         "0000000000000000000000000000000000000000000000000000000000000001"));
+    if (nIn >= txTo.vin.size()) {
+        //  nIn out of range
+        return one;
+    }
 
     // Check for invalid use of SIGHASH_SINGLE
     if ((sigHashType.getBaseType() == BaseSigHashType::SINGLE) &&
@@ -1554,8 +1549,7 @@ uint256 SignatureHash(const CScript &scriptCode, const T &txTo,
 
     // Wrapper to serialize only the necessary parts of the transaction being
     // signed
-    CTransactionSignatureSerializer<T> txTmp(txTo, scriptCode, nIn,
-                                             sigHashType);
+    CTransactionSignatureSerializer txTmp(txTo, scriptCode, nIn, sigHashType);
 
     // Serialize and hash
     CHashWriter ss(SER_GETHASH, 0);
@@ -1573,8 +1567,7 @@ bool BaseSignatureChecker::VerifySignature(const std::vector<uint8_t> &vchSig,
     }
 }
 
-template <class T>
-bool GenericTransactionSignatureChecker<T>::CheckSig(
+bool TransactionSignatureChecker::CheckSig(
     const std::vector<uint8_t> &vchSigIn, const std::vector<uint8_t> &vchPubKey,
     const CScript &scriptCode, uint32_t flags) const {
     CPubKey pubkey(vchPubKey);
@@ -1600,8 +1593,7 @@ bool GenericTransactionSignatureChecker<T>::CheckSig(
     return true;
 }
 
-template <class T>
-bool GenericTransactionSignatureChecker<T>::CheckLockTime(
+bool TransactionSignatureChecker::CheckLockTime(
     const CScriptNum &nLockTime) const {
     // There are two kinds of nLockTime: lock-by-blockheight and
     // lock-by-blocktime, distinguished by whether nLockTime <
@@ -1639,8 +1631,7 @@ bool GenericTransactionSignatureChecker<T>::CheckLockTime(
     return true;
 }
 
-template <class T>
-bool GenericTransactionSignatureChecker<T>::CheckSequence(
+bool TransactionSignatureChecker::CheckSequence(
     const CScriptNum &nSequence) const {
     // Relative lock times are supported by comparing the passed in operand to
     // the sequence number of the input.
@@ -1689,10 +1680,6 @@ bool GenericTransactionSignatureChecker<T>::CheckSequence(
 
     return true;
 }
-
-// explicit instantiation
-template class GenericTransactionSignatureChecker<CTransaction>;
-template class GenericTransactionSignatureChecker<CMutableTransaction>;
 
 bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey,
                   uint32_t flags, const BaseSignatureChecker &checker,

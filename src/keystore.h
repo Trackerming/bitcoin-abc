@@ -52,10 +52,10 @@ class CBasicKeyStore : public CKeyStore {
 protected:
     mutable CCriticalSection cs_KeyStore;
 
-    KeyMap mapKeys GUARDED_BY(cs_KeyStore);
-    WatchKeyMap mapWatchKeys GUARDED_BY(cs_KeyStore);
-    ScriptMap mapScripts GUARDED_BY(cs_KeyStore);
-    WatchOnlySet setWatchOnly GUARDED_BY(cs_KeyStore);
+    KeyMap mapKeys;
+    WatchKeyMap mapWatchKeys;
+    ScriptMap mapScripts;
+    WatchOnlySet setWatchOnly;
 
     void ImplicitlyLearnRelatedKeyScripts(const CPubKey &pubkey)
         EXCLUSIVE_LOCKS_REQUIRED(cs_KeyStore);
@@ -87,10 +87,5 @@ typedef std::map<CKeyID, std::pair<CPubKey, std::vector<uint8_t>>>
  * Return the CKeyID of the key involved in a script (if there is a unique one).
  */
 CKeyID GetKeyForDestination(const CKeyStore &store, const CTxDestination &dest);
-
-/**
- * Checks if a CKey is in the given CKeyStore compressed or otherwise
- */
-bool HaveKey(const CKeyStore &store, const CKey &key);
 
 #endif // BITCOIN_KEYSTORE_H

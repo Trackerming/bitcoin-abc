@@ -66,8 +66,6 @@ public:
     QString dataDir() const;
     QString blocksDir() const;
 
-    bool getProxyInfo(std::string &ip_port) const;
-
     // caches for the best header
     mutable std::atomic<int> cachedBestHeaderHeight;
     mutable std::atomic<int64_t> cachedBestHeaderTime;

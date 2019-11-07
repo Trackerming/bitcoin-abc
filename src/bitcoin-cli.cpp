@@ -22,9 +22,6 @@
 #include <univalue.h>
 
 #include <cstdio>
-#include <tuple>
-
-const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
 static const char DEFAULT_RPCCONNECT[] = "127.0.0.1";
 static const int DEFAULT_HTTP_CLIENT_TIMEOUT = 900;
@@ -109,18 +106,6 @@ static void SetupCliArgs() {
     // Hidden
     gArgs.AddArg("-h", "", false, OptionsCategory::HIDDEN);
     gArgs.AddArg("-help", "", false, OptionsCategory::HIDDEN);
-}
-
-/** libevent event log callback */
-static void libevent_log_cb(int severity, const char *msg) {
-#ifndef EVENT_LOG_ERR
-// EVENT_LOG_ERR was added in 2.0.19; but before then _EVENT_LOG_ERR existed.
-#define EVENT_LOG_ERR _EVENT_LOG_ERR
-#endif
-    // Ignore everything other than errors
-    if (severity >= EVENT_LOG_ERR) {
-        throw std::runtime_error(strprintf("libevent error: %s", msg));
-    }
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -618,16 +603,11 @@ static int CommandLineRPC(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
-#ifdef WIN32
-    util::WinCmdLineArgs winArgs;
-    std::tie(argc, argv) = winArgs.get();
-#endif
     SetupEnvironment();
     if (!SetupNetworking()) {
         fprintf(stderr, "Error: Initializing networking failed\n");
         return EXIT_FAILURE;
     }
-    event_set_log_callback(&libevent_log_cb);
 
     try {
         int ret = AppInitRPC(argc, argv);
