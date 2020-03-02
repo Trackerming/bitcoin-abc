@@ -5,7 +5,7 @@
 #include <index/txindex.h>
 
 #include <chain.h>
-#include <init.h>
+#include <shutdown.h>
 #include <ui_interface.h>
 #include <util/system.h>
 #include <validation.h>
@@ -257,7 +257,7 @@ bool TxIndex::WriteBlock(const CBlock &block, const CBlockIndex *pindex) {
     vPos.reserve(block.vtx.size());
     for (const auto &tx : block.vtx) {
         vPos.emplace_back(tx->GetId(), pos);
-        pos.nTxOffset += ::GetSerializeSize(*tx, SER_DISK, CLIENT_VERSION);
+        pos.nTxOffset += ::GetSerializeSize(*tx, CLIENT_VERSION);
     }
     return m_db->WriteTxs(vPos);
 }
@@ -266,7 +266,7 @@ BaseIndex::DB &TxIndex::GetDB() const {
     return *m_db;
 }
 
-bool TxIndex::FindTx(const TxId &txid, uint256 &block_hash,
+bool TxIndex::FindTx(const TxId &txid, BlockHash &block_hash,
                      CTransactionRef &tx) const {
     CDiskTxPos postx;
     if (!m_db->ReadTxPos(txid, postx)) {

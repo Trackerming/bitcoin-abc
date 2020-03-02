@@ -1,4 +1,4 @@
-// Copyright (c) 2018 The Bitcoin developers
+// Copyright (c) 2018-2019 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -223,7 +223,7 @@ bool AvalancheProcessor::registerVotes(
     {
         LOCK(cs_main);
         for (auto &v : votes) {
-            BlockMap::iterator mi = mapBlockIndex.find(v.GetHash());
+            BlockMap::iterator mi = mapBlockIndex.find(BlockHash(v.GetHash()));
             if (mi == mapBlockIndex.end()) {
                 // This should not happen, but just in case...
                 continue;
@@ -414,7 +414,7 @@ void AvalancheProcessor::clearTimedoutRequests() {
 
         {
             LOCK(cs_main);
-            BlockMap::iterator mi = mapBlockIndex.find(inv.hash);
+            BlockMap::iterator mi = mapBlockIndex.find(BlockHash(inv.hash));
             if (mi == mapBlockIndex.end()) {
                 continue;
             }

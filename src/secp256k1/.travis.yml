@@ -1,15 +1,37 @@
 language: c
-sudo: false
+os: linux
+dist: xenial
 addons:
   apt:
-    packages: libgmp-dev
+    sources:
+      - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
+        key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
+    packages:
+      - cmake
+      - libgmp-dev
+      - ninja-build
 compiler:
   - clang
   - gcc
 env:
   global:
-    - FIELD=auto  BIGNUM=auto  SCALAR=auto  ENDOMORPHISM=no  STATICPRECOMPUTATION=yes  ASM=no  BUILD=check  EXTRAFLAGS=  HOST=  ECDH=no  RECOVERY=no  EXPERIMENTAL=no  JNI=no
-  matrix:
+    - FIELD=auto
+    - BIGNUM=auto
+    - SCALAR=auto
+    - ENDOMORPHISM=no
+    - STATICPRECOMPUTATION=yes
+    - ASM=no
+    - AUTOTOOLS_TARGET=check
+    - CMAKE_TARGET=check-secp256k1
+    - AUTOTOOLS_EXTRA_FLAGS=
+    - CMAKE_EXTRA_FLAGS=
+    - HOST=
+    - ECDH=no
+    - RECOVERY=no
+    - SCHNORR=yes
+    - EXPERIMENTAL=no
+    - JNI=no
+  jobs:
     - SCALAR=32bit    RECOVERY=yes
     - SCALAR=32bit    FIELD=32bit       ECDH=yes  EXPERIMENTAL=yes
     - SCALAR=64bit
@@ -22,42 +44,60 @@ env:
     - BIGNUM=no
     - BIGNUM=no       ENDOMORPHISM=yes RECOVERY=yes EXPERIMENTAL=yes
     - BIGNUM=no       STATICPRECOMPUTATION=no
-    - BUILD=distcheck
-    - EXTRAFLAGS=CPPFLAGS=-DDETERMINISTIC
-    - EXTRAFLAGS=CFLAGS=-O0
-    - BUILD=check-java JNI=yes ECDH=yes EXPERIMENTAL=yes
-matrix:
+    - AUTOTOOLS_TARGET=distcheck       CMAKE_TARGET=install
+    - AUTOTOOLS_EXTRA_FLAGS=CPPFLAGS=-DDETERMINISTIC CMAKE_EXTRA_FLAGS=-DCMAKE_C_FLAGS=-DDETERMINISTIC
+    - AUTOTOOLS_EXTRA_FLAGS=CFLAGS=-O0               CMAKE_EXTRA_FLAGS=-DCMAKE_BUILD_TYPE=Debug
+    - AUTOTOOLS_TARGET=check-java      CMAKE_TARGET=check-secp256k1-java JNI=yes ECDH=yes EXPERIMENTAL=yes
+    - SCHNORR=no
+jobs:
   fast_finish: true
   include:
     - compiler: clang
       env: HOST=i686-linux-gnu ENDOMORPHISM=yes
       addons:
         apt:
+          sources:
+            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
+              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
           packages:
+            - cmake
             - gcc-multilib
             - libgmp-dev:i386
+            - ninja-build
     - compiler: clang
+      env: HOST=i686-linux-gnu BIGNUM=no
+      addons:
+        apt:
+          sources:
+            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
+              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
+          packages:
+            - cmake
+            - gcc-multilib
+            - ninja-build
+    - compiler: gcc
+      env: HOST=i686-linux-gnu ENDOMORPHISM=yes BIGNUM=no
+      addons:
+        apt:
+          sources:
+            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
+              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
+          packages:
+            - cmake
+            - gcc-multilib
+            - ninja-build
+    - compiler: gcc
       env: HOST=i686-linux-gnu
       addons:
         apt:
+          sources:
+            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
+              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
           packages:
-            - gcc-multilib
-    - compiler: gcc
-      env: HOST=i686-linux-gnu ENDOMORPHISM=yes
-      addons:
-        apt:
-          packages:
-            - gcc-multilib
-    - compiler: gcc
-      env: HOST=i686-linux-gnu
-      addons:
-        apt:
-          packages:
+            - cmake
             - gcc-multilib
             - libgmp-dev:i386
-before_script: ./autogen.sh
+            - ninja-build
 script:
- - if [ -n "$HOST" ]; then export USE_HOST="--host=$HOST"; fi
- - if [ "x$HOST" = "xi686-linux-gnu" ]; then export CC="$CC -m32"; fi
- - ./configure --enable-experimental=$EXPERIMENTAL --enable-endomorphism=$ENDOMORPHISM --with-field=$FIELD --with-bignum=$BIGNUM --with-scalar=$SCALAR --enable-ecmult-static-precomputation=$STATICPRECOMPUTATION --enable-module-ecdh=$ECDH --enable-module-recovery=$RECOVERY --enable-jni=$JNI $EXTRAFLAGS $USE_HOST && make -j2 $BUILD
-os: linux
+ - ./travis/build_autotools.sh
+ - ./travis/build_cmake.sh

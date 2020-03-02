@@ -1,6 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
-// Copyright (c) 2017 The Bitcoin developers
+// Copyright (c) 2017-2019 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -92,7 +92,6 @@ bool WalletBatch::WriteKey(const CPubKey &vchPubKey, const CPrivKey &vchPrivKey,
 bool WalletBatch::WriteCryptedKey(const CPubKey &vchPubKey,
                                   const std::vector<uint8_t> &vchCryptedSecret,
                                   const CKeyMetadata &keyMeta) {
-
     if (!WriteIC(std::make_pair(std::string("keymeta"), vchPubKey), keyMeta)) {
         return false;
     }
@@ -177,6 +176,10 @@ bool WalletBatch::ReadAccount(const std::string &strAccount,
 bool WalletBatch::WriteAccount(const std::string &strAccount,
                                const CAccount &account) {
     return WriteIC(std::make_pair(std::string("acc"), strAccount), account);
+}
+
+bool WalletBatch::EraseAccount(const std::string &strAccount) {
+    return EraseIC(std::make_pair(std::string("acc"), strAccount));
 }
 
 bool WalletBatch::WriteAccountingEntry(const uint64_t nAccEntryNum,
@@ -501,7 +504,16 @@ static bool ReadKeyValue(CWallet *pwallet, CDataStream &ssKey,
             CHDChain chain;
             ssValue >> chain;
             pwallet->SetHDChain(chain, true);
-        } else if (strType != "bestblock" && strType != "bestblock_nomerkle") {
+        } else if (strType == "flags") {
+            uint64_t flags;
+            ssValue >> flags;
+            if (!pwallet->SetWalletFlags(flags, true)) {
+                strErr = "Error reading wallet database: Unknown non-tolerable "
+                         "wallet flags found";
+                return false;
+            }
+        } else if (strType != "bestblock" && strType != "bestblock_nomerkle" &&
+                   strType != "minversion") {
             wss.m_unknown_records++;
         }
     } catch (...) {
@@ -524,7 +536,7 @@ DBErrors WalletBatch::LoadWallet(CWallet *pwallet) {
     try {
         int nMinVersion = 0;
         if (m_batch.Read((std::string) "minversion", nMinVersion)) {
-            if (nMinVersion > CLIENT_VERSION) {
+            if (nMinVersion > FEATURE_LATEST) {
                 return DBErrors::TOO_NEW;
             }
             pwallet->LoadMinVersion(nMinVersion);
@@ -533,7 +545,7 @@ DBErrors WalletBatch::LoadWallet(CWallet *pwallet) {
         // Get cursor
         Dbc *pcursor = m_batch.GetCursor();
         if (!pcursor) {
-            LogPrintf("Error getting wallet database cursor\n");
+            pwallet->WalletLogPrintf("Error getting wallet database cursor\n");
             return DBErrors::CORRUPT;
         }
 
@@ -547,7 +559,8 @@ DBErrors WalletBatch::LoadWallet(CWallet *pwallet) {
             }
 
             if (ret != 0) {
-                LogPrintf("Error reading next record from wallet database\n");
+                pwallet->WalletLogPrintf(
+                    "Error reading next record from wallet database\n");
                 return DBErrors::CORRUPT;
             }
 
@@ -558,6 +571,10 @@ DBErrors WalletBatch::LoadWallet(CWallet *pwallet) {
                 // we assume the user can live with:
                 if (IsKeyType(strType) || strType == "defaultkey") {
                     result = DBErrors::CORRUPT;
+                } else if (strType == "flags") {
+                    // Reading the wallet flags can only fail if unknown flags
+                    // are present.
+                    result = DBErrors::TOO_NEW;
                 } else {
                     // Leave other errors alone, if we try to fix them we might
                     // make things worse. But do warn the user there is
@@ -570,7 +587,7 @@ DBErrors WalletBatch::LoadWallet(CWallet *pwallet) {
                 }
             }
             if (!strErr.empty()) {
-                LogPrintf("%s\n", strErr);
+                pwallet->WalletLogPrintf("%s\n", strErr);
             }
         }
         pcursor->close();
@@ -590,12 +607,12 @@ DBErrors WalletBatch::LoadWallet(CWallet *pwallet) {
         return result;
     }
 
-    LogPrintf("nFileVersion = %d\n", wss.nFileVersion);
+    pwallet->WalletLogPrintf("nFileVersion = %d\n", wss.nFileVersion);
 
-    LogPrintf("Keys: %u plaintext, %u encrypted, %u w/ metadata, %u total. "
-              "Unknown wallet records: %u\n",
-              wss.nKeys, wss.nCKeys, wss.nKeyMeta, wss.nKeys + wss.nCKeys,
-              wss.m_unknown_records);
+    pwallet->WalletLogPrintf("Keys: %u plaintext, %u encrypted, %u w/ "
+                             "metadata, %u total. Unknown wallet records: %u\n",
+                             wss.nKeys, wss.nCKeys, wss.nKeyMeta,
+                             wss.nKeys + wss.nCKeys, wss.m_unknown_records);
 
     // nTimeFirstKey is only reliable if all keys have metadata
     if ((wss.nKeys + wss.nCKeys + wss.nWatchKeys) != wss.nKeyMeta) {
@@ -638,7 +655,7 @@ DBErrors WalletBatch::FindWalletTx(std::vector<TxId> &txIds,
     try {
         int nMinVersion = 0;
         if (m_batch.Read((std::string) "minversion", nMinVersion)) {
-            if (nMinVersion > CLIENT_VERSION) {
+            if (nMinVersion > FEATURE_LATEST) {
                 return DBErrors::TOO_NEW;
             }
         }
@@ -858,6 +875,10 @@ bool WalletBatch::EraseDestData(const CTxDestination &address,
 
 bool WalletBatch::WriteHDChain(const CHDChain &chain) {
     return WriteIC(std::string("hdchain"), chain);
+}
+
+bool WalletBatch::WriteWalletFlags(const uint64_t flags) {
+    return WriteIC(std::string("flags"), flags);
 }
 
 bool WalletBatch::TxnBegin() {

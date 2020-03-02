@@ -216,6 +216,11 @@ produce better debugging builds.
 
 Run configure with the `--enable-gprof` option, then make.
 
+With `cmake` and `ninja`:
+```
+  cmake -GNinja .. -DENABLE_HARDENING=OFF -DENABLE_PROFIILING=gprof
+```
+
 ### debug.log
 
 If the code is behaving strangely, take a look in the debug.log file in the data directory;
@@ -458,6 +463,10 @@ General C++
   `unique_ptr` for allocations in a function.
 
   - *Rationale*: This avoids memory and resource leaks, and ensures exception safety
+
+- Use `std::make_unique()` to construct objects owned by `unique_ptr`s
+
+  - *Rationale*: `std::make_unique` is concise and ensures exception safety in complex expressions.
 
 C++ data structures
 --------------------

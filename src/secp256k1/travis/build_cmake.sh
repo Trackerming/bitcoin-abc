@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+export LC_ALL=C
+
+set -ex
+
+if [ "x$HOST" = "xi686-linux-gnu" ]; then
+  CMAKE_EXTRA_FLAGS="-DCMAKE_C_FLAGS=-m32"
+fi
+
+mkdir -p buildcmake/install
+pushd buildcmake
+
+# Use the cmake version installed via APT instead of the Travis custom one.
+CMAKE_COMMAND=/usr/bin/cmake
+${CMAKE_COMMAND} --version
+
+${CMAKE_COMMAND} -GNinja .. \
+  -DCMAKE_INSTALL_PREFIX=install \
+  -DSECP256K1_ECMULT_STATIC_PRECOMPUTATION=$STATICPRECOMPUTATION \
+  -DSECP256K1_ENABLE_MODULE_ECDH=$ECDH \
+  -DSECP256K1_ENABLE_MODULE_RECOVERY=$RECOVERY \
+  -DSECP256K1_ENABLE_MODULE_SCHNORR=$SCHNORR \
+  -DSECP256K1_ENABLE_JNI=$JNI \
+  -DSECP256K1_ENABLE_ENDOMORPHISM=$ENDOMORPHISM \
+  -DSECP256K1_ENABLE_BIGNUM=$BIGNUM \
+  -DSECP256K1_USE_ASM=$ASM \
+  -DUSE_FIELD=$FIELD \
+  -DUSE_SCALAR=$SCALAR \
+  $CMAKE_EXTRA_FLAGS
+
+ninja $CMAKE_TARGET
+
+popd

@@ -36,7 +36,11 @@ BOOST_AUTO_TEST_CASE(util_criticalsection) {
 
     do {
         TRY_LOCK(cs, lockTest);
-        if (lockTest) break;
+        if (lockTest) {
+            // Needed to suppress "Test case [...] did not check any assertions"
+            BOOST_CHECK(true);
+            break;
+        }
 
         BOOST_ERROR("break was swallowed!");
     } while (0);
@@ -154,10 +158,6 @@ BOOST_AUTO_TEST_CASE(util_FormatISO8601Date) {
     BOOST_CHECK_EQUAL(FormatISO8601Date(1317425777), "2011-09-30");
 }
 
-BOOST_AUTO_TEST_CASE(util_FormatISO8601Time) {
-    BOOST_CHECK_EQUAL(FormatISO8601Time(1317425777), "23:36:17Z");
-}
-
 struct TestArgsManager : public ArgsManager {
     TestArgsManager() { m_network_only_args.clear(); }
     std::map<std::string, std::vector<std::string>> &GetOverrideArgs() {
@@ -194,15 +194,15 @@ BOOST_AUTO_TEST_CASE(util_ParseParameters) {
 
     std::string error;
     testArgs.SetupArgs(4, avail_args);
-    testArgs.ParseParameters(0, (char **)argv_test, error);
+    BOOST_CHECK(testArgs.ParseParameters(0, (char **)argv_test, error));
     BOOST_CHECK(testArgs.GetOverrideArgs().empty() &&
                 testArgs.GetConfigArgs().empty());
 
-    testArgs.ParseParameters(1, (char **)argv_test, error);
+    BOOST_CHECK(testArgs.ParseParameters(1, (char **)argv_test, error));
     BOOST_CHECK(testArgs.GetOverrideArgs().empty() &&
                 testArgs.GetConfigArgs().empty());
 
-    testArgs.ParseParameters(7, (char **)argv_test, error);
+    BOOST_CHECK(testArgs.ParseParameters(7, (char **)argv_test, error));
     // expectation: -ignored is ignored (program name argument),
     // -a, -b and -ccc end up in map, -d ignored because it is after
     // a non-option argument (non-GNU option parsing)
@@ -225,6 +225,47 @@ BOOST_AUTO_TEST_CASE(util_ParseParameters) {
     BOOST_CHECK(testArgs.GetArgs("-ccc").size() == 2);
 }
 
+BOOST_AUTO_TEST_CASE(util_ParseKeyValue) {
+    {
+        std::string key = "badarg";
+        std::string value;
+        BOOST_CHECK(!ParseKeyValue(key, value));
+    }
+    {
+        std::string key = "badarg=v";
+        std::string value;
+        BOOST_CHECK(!ParseKeyValue(key, value));
+    }
+    {
+        std::string key = "-a";
+        std::string value;
+        BOOST_CHECK(ParseKeyValue(key, value));
+        BOOST_CHECK_EQUAL(key, "-a");
+        BOOST_CHECK_EQUAL(value, "");
+    }
+    {
+        std::string key = "-a=1";
+        std::string value;
+        BOOST_CHECK(ParseKeyValue(key, value));
+        BOOST_CHECK_EQUAL(key, "-a");
+        BOOST_CHECK_EQUAL(value, "1");
+    }
+    {
+        std::string key = "--b";
+        std::string value;
+        BOOST_CHECK(ParseKeyValue(key, value));
+        BOOST_CHECK_EQUAL(key, "-b");
+        BOOST_CHECK_EQUAL(value, "");
+    }
+    {
+        std::string key = "--b=abc";
+        std::string value;
+        BOOST_CHECK(ParseKeyValue(key, value));
+        BOOST_CHECK_EQUAL(key, "-b");
+        BOOST_CHECK_EQUAL(value, "abc");
+    }
+}
+
 BOOST_AUTO_TEST_CASE(util_GetBoolArg) {
     TestArgsManager testArgs;
     const char *avail_args[] = {"-a", "-b", "-c", "-d", "-e", "-f"};
@@ -232,7 +273,7 @@ BOOST_AUTO_TEST_CASE(util_GetBoolArg) {
                                "-d=1",    "-e=false", "-f=true"};
     std::string error;
     testArgs.SetupArgs(6, avail_args);
-    testArgs.ParseParameters(7, (char **)argv_test, error);
+    BOOST_CHECK(testArgs.ParseParameters(7, (char **)argv_test, error));
 
     // Each letter should be set.
     for (const char opt : "abcdef") {
@@ -268,7 +309,7 @@ BOOST_AUTO_TEST_CASE(util_GetBoolArgEdgeCases) {
     const char *argv_test[] = {"ignored", "-nofoo", "-foo", "-nobar=0"};
     testArgs.SetupArgs(2, avail_args);
     std::string error;
-    testArgs.ParseParameters(4, (char **)argv_test, error);
+    BOOST_CHECK(testArgs.ParseParameters(4, (char **)argv_test, error));
 
     // This was passed twice, second one overrides the negative setting.
     BOOST_CHECK(!testArgs.IsArgNegated("-foo"));
@@ -280,7 +321,7 @@ BOOST_AUTO_TEST_CASE(util_GetBoolArgEdgeCases) {
 
     // Config test
     const char *conf_test = "nofoo=1\nfoo=1\nnobar=0\n";
-    testArgs.ParseParameters(1, (char **)argv_test, error);
+    BOOST_CHECK(testArgs.ParseParameters(1, (char **)argv_test, error));
     testArgs.ReadConfigString(conf_test);
 
     // This was passed twice, second one overrides the negative setting,
@@ -295,7 +336,7 @@ BOOST_AUTO_TEST_CASE(util_GetBoolArgEdgeCases) {
     // Combined test
     const char *combo_test_args[] = {"ignored", "-nofoo", "-bar"};
     const char *combo_test_conf = "foo=1\nnobar=1\n";
-    testArgs.ParseParameters(3, (char **)combo_test_args, error);
+    BOOST_CHECK(testArgs.ParseParameters(3, (char **)combo_test_args, error));
     testArgs.ReadConfigString(combo_test_conf);
 
     // Command line overrides, but doesn't erase old setting
@@ -641,38 +682,38 @@ BOOST_AUTO_TEST_CASE(util_GetChainName) {
     const char *testnetconf = "testnet=1\nregtest=0\n[test]\nregtest=1";
     std::string error;
 
-    test_args.ParseParameters(0, (char **)argv_testnet, error);
+    BOOST_CHECK(test_args.ParseParameters(0, (char **)argv_testnet, error));
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "main");
 
-    test_args.ParseParameters(2, (char **)argv_testnet, error);
+    BOOST_CHECK(test_args.ParseParameters(2, (char **)argv_testnet, error));
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(2, (char **)argv_regtest, error);
+    BOOST_CHECK(test_args.ParseParameters(2, (char **)argv_regtest, error));
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "regtest");
 
-    test_args.ParseParameters(3, (char **)argv_test_no_reg, error);
+    BOOST_CHECK(test_args.ParseParameters(3, (char **)argv_test_no_reg, error));
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(3, (char **)argv_both, error);
+    BOOST_CHECK(test_args.ParseParameters(3, (char **)argv_both, error));
     BOOST_CHECK_THROW(test_args.GetChainName(), std::runtime_error);
 
-    test_args.ParseParameters(0, (char **)argv_testnet, error);
+    BOOST_CHECK(test_args.ParseParameters(0, (char **)argv_testnet, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(2, (char **)argv_testnet, error);
+    BOOST_CHECK(test_args.ParseParameters(2, (char **)argv_testnet, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(2, (char **)argv_regtest, error);
+    BOOST_CHECK(test_args.ParseParameters(2, (char **)argv_regtest, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_THROW(test_args.GetChainName(), std::runtime_error);
 
-    test_args.ParseParameters(3, (char **)argv_test_no_reg, error);
+    BOOST_CHECK(test_args.ParseParameters(3, (char **)argv_test_no_reg, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(3, (char **)argv_both, error);
+    BOOST_CHECK(test_args.ParseParameters(3, (char **)argv_both, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_THROW(test_args.GetChainName(), std::runtime_error);
 
@@ -680,23 +721,23 @@ BOOST_AUTO_TEST_CASE(util_GetChainName) {
     // [test] regtest=1 potentially relevant) doesn't break things
     test_args.SelectConfigNetwork("test");
 
-    test_args.ParseParameters(0, (char **)argv_testnet, error);
+    BOOST_CHECK(test_args.ParseParameters(0, (char **)argv_testnet, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(2, (char **)argv_testnet, error);
+    BOOST_CHECK(test_args.ParseParameters(2, (char **)argv_testnet, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(2, (char **)argv_regtest, error);
+    BOOST_CHECK(test_args.ParseParameters(2, (char **)argv_regtest, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_THROW(test_args.GetChainName(), std::runtime_error);
 
-    test_args.ParseParameters(2, (char **)argv_test_no_reg, error);
+    BOOST_CHECK(test_args.ParseParameters(2, (char **)argv_test_no_reg, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_EQUAL(test_args.GetChainName(), "test");
 
-    test_args.ParseParameters(3, (char **)argv_both, error);
+    BOOST_CHECK(test_args.ParseParameters(3, (char **)argv_both, error));
     test_args.ReadConfigString(testnetconf);
     BOOST_CHECK_THROW(test_args.GetChainName(), std::runtime_error);
 }
@@ -883,6 +924,20 @@ BOOST_AUTO_TEST_CASE(strprintf_numbers) {
  */
 BOOST_AUTO_TEST_CASE(gettime) {
     BOOST_CHECK((GetTime() & ~0xFFFFFFFFLL) == 0);
+}
+
+BOOST_AUTO_TEST_CASE(test_IsDigit) {
+    BOOST_CHECK_EQUAL(IsDigit('0'), true);
+    BOOST_CHECK_EQUAL(IsDigit('1'), true);
+    BOOST_CHECK_EQUAL(IsDigit('8'), true);
+    BOOST_CHECK_EQUAL(IsDigit('9'), true);
+
+    BOOST_CHECK_EQUAL(IsDigit('0' - 1), false);
+    BOOST_CHECK_EQUAL(IsDigit('9' + 1), false);
+    BOOST_CHECK_EQUAL(IsDigit(0), false);
+    BOOST_CHECK_EQUAL(IsDigit(1), false);
+    BOOST_CHECK_EQUAL(IsDigit(8), false);
+    BOOST_CHECK_EQUAL(IsDigit(9), false);
 }
 
 BOOST_AUTO_TEST_CASE(test_ParseInt32) {
@@ -1224,7 +1279,14 @@ static void TestOtherProcess(fs::path dirname, std::string lockname, int fd) {
                 break;
             case ExitCommand:
                 close(fd);
-                exit(0);
+                // As an alternative to exit() which runs the exit handlers
+                // (which seem to be flakey with Boost test suite with JUNIT
+                // logging in a forked process), just vanish this process as
+                // fast as possible. `quick_exit()` would also work, but it is
+                // not available on all non glibc platforms.
+                // Using exec also stops valgrind from thinking it needs to
+                // analyze the memory leaks in this forked process.
+                execlp("true", "true", (char *)NULL);
             default:
                 assert(0);
         }

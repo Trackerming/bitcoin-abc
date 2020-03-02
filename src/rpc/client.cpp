@@ -74,6 +74,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"sendmany", 1, "amounts"},
     {"sendmany", 2, "minconf"},
     {"sendmany", 4, "subtractfeefrom"},
+    {"scantxoutset", 1, "scanobjects"},
     {"addmultisigaddress", 0, "nrequired"},
     {"addmultisigaddress", 1, "keys"},
     {"createmultisig", 0, "nrequired"},
@@ -100,6 +101,19 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"testmempoolaccept", 1, "allowhighfees"},
     {"combinerawtransaction", 0, "txs"},
     {"fundrawtransaction", 1, "options"},
+    {"walletcreatefundedpsbt", 0, "inputs"},
+    {"walletcreatefundedpsbt", 1, "outputs"},
+    {"walletcreatefundedpsbt", 2, "locktime"},
+    {"walletcreatefundedpsbt", 3, "options"},
+    {"walletcreatefundedpsbt", 4, "bip32derivs"},
+    {"walletprocesspsbt", 1, "sign"},
+    {"walletprocesspsbt", 3, "bip32derivs"},
+    {"createpsbt", 0, "inputs"},
+    {"createpsbt", 1, "outputs"},
+    {"createpsbt", 2, "locktime"},
+    {"combinepsbt", 0, "txs"},
+    {"finalizepsbt", 1, "extract"},
+    {"converttopsbt", 1, "permitsigdata"},
     {"gettxout", 1, "n"},
     {"gettxout", 2, "include_mempool"},
     {"gettxoutproof", 0, "txids"},
@@ -119,7 +133,7 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"keypoolrefill", 0, "newsize"},
     {"getrawmempool", 0, "verbose"},
     {"estimatefee", 0, "nblocks"},
-    {"prioritisetransaction", 1, "priority_delta"},
+    {"prioritisetransaction", 1, "dummy"},
     {"prioritisetransaction", 2, "fee_delta"},
     {"setban", 2, "bantime"},
     {"setban", 3, "absolute"},
@@ -142,6 +156,10 @@ static const CRPCConvertParam vRPCConvertParams[] = {
     {"echojson", 9, "arg9"},
     {"rescanblockchain", 0, "start_height"},
     {"rescanblockchain", 1, "stop_height"},
+    {"createwallet", 1, "disable_private_keys"},
+    {"createwallet", 2, "blank"},
+    {"getnodeaddresses", 0, "count"},
+    {"stop", 0, "wait"},
 };
 
 class CRPCConvertTable {
@@ -181,8 +199,9 @@ static CRPCConvertTable rpcCvtTable;
 UniValue ParseNonRFCJSONValue(const std::string &strVal) {
     UniValue jVal;
     if (!jVal.read(std::string("[") + strVal + std::string("]")) ||
-        !jVal.isArray() || jVal.size() != 1)
+        !jVal.isArray() || jVal.size() != 1) {
         throw std::runtime_error(std::string("Error parsing JSON:") + strVal);
+    }
     return jVal[0];
 }
 

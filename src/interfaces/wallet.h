@@ -222,6 +222,12 @@ public:
     // Return whether HD enabled.
     virtual bool hdEnabled() = 0;
 
+    // Return whether the wallet is blank.
+    virtual bool canGetAddresses() = 0;
+
+    // Check if a certain wallet flag is set.
+    virtual bool IsWalletFlagSet(uint64_t flag) = 0;
+
     // Get default address type.
     virtual OutputType getDefaultAddressType() = 0;
 
@@ -259,6 +265,11 @@ public:
     using WatchOnlyChangedFn = std::function<void(bool have_watch_only)>;
     virtual std::unique_ptr<Handler>
     handleWatchOnlyChanged(WatchOnlyChangedFn fn) = 0;
+
+    //! Register handler for keypool changed messages.
+    using CanGetAddressesChangedFn = std::function<void()>;
+    virtual std::unique_ptr<Handler>
+    handleCanGetAddressesChanged(CanGetAddressesChangedFn fn) = 0;
 };
 
 //! Tracking object returned by CreateTransaction and passed to

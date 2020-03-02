@@ -1,6 +1,6 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
 // Copyright (c) 2009-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2018 The Bitcoin developers
+// Copyright (c) 2017-2019 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -77,11 +77,12 @@ private:
 
 public:
     bool m_print_to_console = false;
-    bool m_print_to_file = true;
+    bool m_print_to_file = false;
 
     bool m_log_timestamps = DEFAULT_LOGTIMESTAMPS;
     bool m_log_time_micros = DEFAULT_LOGTIMEMICROS;
 
+    fs::path m_file_path;
     std::atomic<bool> m_reopen_file{false};
 
     ~Logger();
@@ -89,7 +90,9 @@ public:
     /** Send a string to the log output */
     void LogPrintStr(const std::string &str);
 
-    fs::path GetDebugLogPath();
+    /** Returns whether logs will be written to any output */
+    bool Enabled() const { return m_print_to_console || m_print_to_file; }
+
     bool OpenDebugLog();
     void ShrinkDebugFile();
 
@@ -109,11 +112,11 @@ public:
 
 } // namespace BCLog
 
-BCLog::Logger &GetLogger();
+BCLog::Logger &LogInstance();
 
 /** Return true if log accepts specified category */
 static inline bool LogAcceptCategory(BCLog::LogFlags category) {
-    return GetLogger().WillLogCategory(category);
+    return LogInstance().WillLogCategory(category);
 }
 
 /** Returns a string with the log categories. */
@@ -128,36 +131,31 @@ bool GetLogCategory(BCLog::LogFlags &flag, const std::string &str);
 // Be conservative when using LogPrintf/error or other things which
 // unconditionally log to debug.log! It should not be the case that an inbound
 // peer can fill up a user's disk with debug.log entries.
-
-static inline void MarkUsed() {}
-template <typename T, typename... Args>
-static inline void MarkUsed(const T &t, const Args &... args) {
-    (void)t;
-    MarkUsed(args...);
+template <typename... Args>
+static inline void LogPrintf(const char *fmt, const Args &... args) {
+    if (LogInstance().Enabled()) {
+        std::string log_msg;
+        try {
+            log_msg = tfm::format(fmt, args...);
+        } catch (tinyformat::format_error &fmterr) {
+            /**
+             * Original format string will have newline so don't add one here
+             */
+            log_msg = "Error \"" + std::string(fmterr.what()) +
+                      "\" while formatting log message: " + fmt;
+        }
+        LogInstance().LogPrintStr(log_msg);
+    }
 }
 
-#ifdef USE_COVERAGE
-#define LogPrintf(...)                                                         \
-    do {                                                                       \
-        MarkUsed(__VA_ARGS__);                                                 \
-    } while (0)
-#define LogPrint(category, ...)                                                \
-    do {                                                                       \
-        MarkUsed(__VA_ARGS__);                                                 \
-    } while (0)
-#else
+// Use a macro instead of a function for conditional logging to prevent
+// evaluating arguments when logging for the category is not enabled.
 #define LogPrint(category, ...)                                                \
     do {                                                                       \
         if (LogAcceptCategory((category))) {                                   \
-            GetLogger().LogPrintStr(tfm::format(__VA_ARGS__));                 \
+            LogPrintf(__VA_ARGS__);                                            \
         }                                                                      \
     } while (0)
-
-#define LogPrintf(...)                                                         \
-    do {                                                                       \
-        GetLogger().LogPrintStr(tfm::format(__VA_ARGS__));                     \
-    } while (0)
-#endif
 
 /**
  * These are aliases used to explicitly state that the message should not end

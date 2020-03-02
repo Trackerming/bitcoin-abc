@@ -1,14 +1,15 @@
 libsecp256k1
 ============
 
-[![Build Status](https://travis-ci.org/bitcoin-core/secp256k1.svg?branch=master)](https://travis-ci.org/bitcoin-core/secp256k1)
+[![Build Status](https://travis-ci.org/bitcoin-abc/secp256k1.svg?branch=master)](https://travis-ci.org/bitcoin-abc/secp256k1)
 
-Optimized C library for EC operations on curve secp256k1.
+Optimized C library for cryptographic operations on curve secp256k1.
 
-This library is a work in progress and is being used to research best practices. Use at your own risk.
+This library is used for consensus critical cryptographic operations on the Bitcoin Cash network. It is maintained within the Bitcoin ABC repository, and is mirrored as a separate repository for ease of reuse in other Bitcoin Cash projects. Developers who want to contribute may do so at [reviews.bitcoinabc.org](https://reviews.bitcoinabc.org/). Use at your own risk.
 
 Features:
 * secp256k1 ECDSA signing/verification and key generation.
+* secp256k1 Schnorr signing/verification ([Bitcoin Cash Schnorr variant](https://www.bitcoincash.org/spec/2019-05-15-schnorr.html)).
 * Adding/multiplying private/public keys.
 * Serialization/parsing of private keys, public keys, signatures.
 * Constant time, constant memory access signing and pubkey generation.
@@ -23,6 +24,7 @@ Implementation details
   * Extensive testing infrastructure.
   * Structured to facilitate review and analysis.
   * Intended to be portable to any system with a C89 compiler and uint64_t support.
+  * No use of floating types, except in benchmarks.
   * Expose only higher level interfaces to minimize the API surface and improve application security. ("Be difficult to use insecurely.")
 * Field operations
   * Optimized implementation of arithmetic modulo the curve's field size (2^256 - 0x1000003D1).
@@ -45,17 +47,34 @@ Implementation details
   * Optionally (off by default) use secp256k1's efficiently-computable endomorphism to split the P multiplicand into 2 half-sized ones.
 * Point multiplication for signing
   * Use a precomputed table of multiples of powers of 16 multiplied with the generator, so general multiplication becomes a series of additions.
-  * Access the table with branch-free conditional moves so memory access is uniform.
-  * No data-dependent branches
+  * Intended to be completely free of timing sidechannels for secret-key operations (on reasonable hardware/toolchains)
+    * Access the table with branch-free conditional moves so memory access is uniform.
+    * No data-dependent branches
+  * Optional runtime blinding which attempts to frustrate differential power analysis.
   * The precomputed tables add and eventually subtract points for which no known scalar (private key) is known, preventing even an attacker with control over the private key used to control the data internally.
 
 Build steps
 -----------
 
-libsecp256k1 is built using autotools:
+libsecp256k1 can be built using autotools:
 
-    $ ./autogen.sh
-    $ ./configure
-    $ make
-    $ ./tests
-    $ sudo make install  # optional
+```bash
+./autogen.sh
+mkdir build
+cd build
+../configure
+make
+make check
+sudo make install  # optional
+```
+
+Or using CMake:
+
+```bash
+mkdir build
+cd build
+cmake -GNinja ..
+ninja
+ninja check-secp256k1
+sudo ninja install  # optional
+```

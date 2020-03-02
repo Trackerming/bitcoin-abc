@@ -1,5 +1,5 @@
 // Copyright (c) 2011-2016 The Bitcoin Core developers
-// Copyright (c) 2017-2018 The Bitcoin developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -48,7 +48,6 @@ static BlockAssembler AssemblerForTest(const CChainParams &params,
                                        const CTxMemPool &mempool) {
     BlockAssembler::Options options;
     options.blockMinFeeRate = blockMinFeeRate;
-    options.nBlockPriorityPercentage = 0;
     return BlockAssembler(params, mempool, options);
 }
 
@@ -102,7 +101,6 @@ static bool TestSequenceLocks(const CTransaction &tx, int flags)
 // Test suite for ancestor feerate transaction selection.
 // Implemented as an additional function, rather than a separate test case, to
 // allow reusing the blockchain created in CreateNewBlock_validity.
-// Note that this test assumes blockprioritypercentage is 0.
 static void TestPackageSelection(const CChainParams &chainparams,
                                  const CScript &scriptPubKey,
                                  const std::vector<CTransactionRef> &txFirst)
@@ -121,29 +119,29 @@ static void TestPackageSelection(const CChainParams &chainparams,
     // This tx has a low fee: 1000 satoshis.
     // Save this txid for later use.
     TxId parentTxId = tx.GetId();
-    g_mempool.addUnchecked(parentTxId, entry.Fee(1000 * SATOSHI)
-                                           .Time(GetTime())
-                                           .SpendsCoinbase(true)
-                                           .FromTx(tx));
+    g_mempool.addUnchecked(entry.Fee(1000 * SATOSHI)
+                               .Time(GetTime())
+                               .SpendsCoinbase(true)
+                               .FromTx(tx));
 
     // This tx has a medium fee: 10000 satoshis.
     tx.vin[0].prevout = COutPoint(txFirst[1]->GetId(), 0);
     tx.vout[0].nValue = int64_t(5000000000LL - 10000) * SATOSHI;
     TxId mediumFeeTxId = tx.GetId();
-    g_mempool.addUnchecked(mediumFeeTxId, entry.Fee(10000 * SATOSHI)
-                                              .Time(GetTime())
-                                              .SpendsCoinbase(true)
-                                              .FromTx(tx));
+    g_mempool.addUnchecked(entry.Fee(10000 * SATOSHI)
+                               .Time(GetTime())
+                               .SpendsCoinbase(true)
+                               .FromTx(tx));
 
     // This tx has a high fee, but depends on the first transaction.
     tx.vin[0].prevout = COutPoint(parentTxId, 0);
     // 50k satoshi fee.
     tx.vout[0].nValue = int64_t(5000000000LL - 1000 - 50000) * SATOSHI;
     TxId highFeeTxId = tx.GetId();
-    g_mempool.addUnchecked(highFeeTxId, entry.Fee(50000 * SATOSHI)
-                                            .Time(GetTime())
-                                            .SpendsCoinbase(false)
-                                            .FromTx(tx));
+    g_mempool.addUnchecked(entry.Fee(50000 * SATOSHI)
+                               .Time(GetTime())
+                               .SpendsCoinbase(false)
+                               .FromTx(tx));
 
     std::unique_ptr<CBlockTemplate> pblocktemplate =
         AssemblerForTest(chainparams, g_mempool).CreateNewBlock(scriptPubKey);
@@ -156,8 +154,8 @@ static void TestPackageSelection(const CChainParams &chainparams,
     // 0 fee.
     tx.vout[0].nValue = int64_t(5000000000LL - 1000 - 50000) * SATOSHI;
     TxId freeTxId = tx.GetId();
-    g_mempool.addUnchecked(freeTxId, entry.Fee(Amount::zero()).FromTx(tx));
-    size_t freeTxSize = GetVirtualTransactionSize(CTransaction(tx));
+    g_mempool.addUnchecked(entry.Fee(Amount::zero()).FromTx(tx));
+    size_t freeTxSize = GetSerializeSize(tx, PROTOCOL_VERSION);
 
     // Calculate a fee on child transaction that will put the package just
     // below the block min tx fee (assuming 1 child tx of the same size).
@@ -167,7 +165,7 @@ static void TestPackageSelection(const CChainParams &chainparams,
     tx.vout[0].nValue =
         int64_t(5000000000LL - 1000 - 50000) * SATOSHI - feeToUse;
     TxId lowFeeTxId = tx.GetId();
-    g_mempool.addUnchecked(lowFeeTxId, entry.Fee(feeToUse).FromTx(tx));
+    g_mempool.addUnchecked(entry.Fee(feeToUse).FromTx(tx));
     pblocktemplate =
         AssemblerForTest(chainparams, g_mempool).CreateNewBlock(scriptPubKey);
     // Verify that the free tx and the low fee tx didn't get selected.
@@ -183,8 +181,7 @@ static void TestPackageSelection(const CChainParams &chainparams,
     // Now we should be just over the min relay fee.
     tx.vout[0].nValue -= 2 * SATOSHI;
     lowFeeTxId = tx.GetId();
-    g_mempool.addUnchecked(lowFeeTxId,
-                           entry.Fee(feeToUse + 2 * SATOSHI).FromTx(tx));
+    g_mempool.addUnchecked(entry.Fee(feeToUse + 2 * SATOSHI).FromTx(tx));
     pblocktemplate =
         AssemblerForTest(chainparams, g_mempool).CreateNewBlock(scriptPubKey);
     BOOST_CHECK(pblocktemplate->block.vtx[4]->GetId() == freeTxId);
@@ -200,7 +197,7 @@ static void TestPackageSelection(const CChainParams &chainparams,
     tx.vout[1].nValue = 100000000 * SATOSHI;
     TxId freeTxId2 = tx.GetId();
     g_mempool.addUnchecked(
-        freeTxId2, entry.Fee(Amount::zero()).SpendsCoinbase(true).FromTx(tx));
+        entry.Fee(Amount::zero()).SpendsCoinbase(true).FromTx(tx));
 
     // This tx can't be mined by itself.
     tx.vin[0].prevout = COutPoint(freeTxId2, 0);
@@ -209,7 +206,7 @@ static void TestPackageSelection(const CChainParams &chainparams,
     tx.vout[0].nValue = int64_t(5000000000LL - 100000000) * SATOSHI - feeToUse;
     TxId lowFeeTxId2 = tx.GetId();
     g_mempool.addUnchecked(
-        lowFeeTxId2, entry.Fee(feeToUse).SpendsCoinbase(false).FromTx(tx));
+        entry.Fee(feeToUse).SpendsCoinbase(false).FromTx(tx));
     pblocktemplate =
         AssemblerForTest(chainparams, g_mempool).CreateNewBlock(scriptPubKey);
 
@@ -224,7 +221,7 @@ static void TestPackageSelection(const CChainParams &chainparams,
     tx.vin[0].prevout = COutPoint(freeTxId2, 1);
     // 10k satoshi fee.
     tx.vout[0].nValue = (100000000 - 10000) * SATOSHI;
-    g_mempool.addUnchecked(tx.GetId(), entry.Fee(10000 * SATOSHI).FromTx(tx));
+    g_mempool.addUnchecked(entry.Fee(10000 * SATOSHI).FromTx(tx));
     pblocktemplate =
         AssemblerForTest(chainparams, g_mempool).CreateNewBlock(scriptPubKey);
     BOOST_CHECK(pblocktemplate->block.vtx[8]->GetId() == lowFeeTxId2);
@@ -280,7 +277,6 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     CScript script;
     TestMemPoolEntryHelper entry;
     entry.nFee = 11 * SATOSHI;
-    entry.dPriority = 111.0;
     entry.nHeight = 11;
 
     fCheckpointsEnabled = false;
@@ -350,10 +346,10 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
         bool spendsCoinbase = i == 0;
         // If we don't set the # of sig ops in the CTxMemPoolEntry, template
         // creation fails.
-        g_mempool.addUnchecked(txid, entry.Fee(LOWFEE)
-                                         .Time(GetTime())
-                                         .SpendsCoinbase(spendsCoinbase)
-                                         .FromTx(tx));
+        g_mempool.addUnchecked(entry.Fee(LOWFEE)
+                                   .Time(GetTime())
+                                   .SpendsCoinbase(spendsCoinbase)
+                                   .FromTx(tx));
         tx.vin[0].prevout = COutPoint(txid, 0);
     }
 
@@ -371,11 +367,11 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
         bool spendsCoinbase = i == 0;
         // If we do set the # of sig ops in the CTxMemPoolEntry, template
         // creation passes.
-        g_mempool.addUnchecked(txid, entry.Fee(LOWFEE)
-                                         .Time(GetTime())
-                                         .SpendsCoinbase(spendsCoinbase)
-                                         .SigOpsCost(80)
-                                         .FromTx(tx));
+        g_mempool.addUnchecked(entry.Fee(LOWFEE)
+                                   .Time(GetTime())
+                                   .SpendsCoinbase(spendsCoinbase)
+                                   .SigOpCount(20)
+                                   .FromTx(tx));
         tx.vin[0].prevout = COutPoint(txid, 0);
     }
 
@@ -399,10 +395,10 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
         const TxId txid = tx.GetId();
         // Only first tx spends coinbase.
         bool spendsCoinbase = i == 0;
-        g_mempool.addUnchecked(txid, entry.Fee(LOWFEE)
-                                         .Time(GetTime())
-                                         .SpendsCoinbase(spendsCoinbase)
-                                         .FromTx(tx));
+        g_mempool.addUnchecked(entry.Fee(LOWFEE)
+                                   .Time(GetTime())
+                                   .SpendsCoinbase(spendsCoinbase)
+                                   .FromTx(tx));
         tx.vin[0].prevout = COutPoint(txid, 0);
     }
 
@@ -411,8 +407,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     g_mempool.clear();
 
     // Orphan in mempool, template creation fails.
-    TxId txid = tx.GetId();
-    g_mempool.addUnchecked(txid, entry.Fee(LOWFEE).Time(GetTime()).FromTx(tx));
+    g_mempool.addUnchecked(entry.Fee(LOWFEE).Time(GetTime()).FromTx(tx));
     BOOST_CHECK_EXCEPTION(
         AssemblerForTest(chainparams, g_mempool).CreateNewBlock(scriptPubKey),
         std::runtime_error, HasReason("bad-txns-inputs-missingorspent"));
@@ -422,9 +417,8 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     tx.vin[0].scriptSig = CScript() << OP_1;
     tx.vin[0].prevout = COutPoint(txFirst[1]->GetId(), 0);
     tx.vout[0].nValue = BLOCKSUBSIDY - HIGHFEE;
-    txid = tx.GetId();
+    TxId txid = tx.GetId();
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(HIGHFEE).Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
     tx.vin[0].prevout = COutPoint(txid, 0);
     tx.vin.resize(2);
@@ -434,7 +428,6 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     tx.vout[0].nValue = tx.vout[0].nValue + BLOCKSUBSIDY - HIGHERFEE;
     txid = tx.GetId();
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(HIGHERFEE).Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
     BOOST_CHECK(pblocktemplate = AssemblerForTest(chainparams, g_mempool)
                                      .CreateNewBlock(scriptPubKey));
@@ -448,7 +441,6 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     txid = tx.GetId();
     // Give it a fee so it'll get mined.
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(LOWFEE).Time(GetTime()).SpendsCoinbase(false).FromTx(tx));
     // Should throw bad-tx-coinbase
     BOOST_CHECK_EXCEPTION(
@@ -463,12 +455,10 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     tx.vout[0].scriptPubKey = CScript() << OP_1;
     txid = tx.GetId();
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(HIGHFEE).Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
     tx.vout[0].scriptPubKey = CScript() << OP_2;
     txid = tx.GetId();
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(HIGHFEE).Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
     BOOST_CHECK_EXCEPTION(
         AssemblerForTest(chainparams, g_mempool).CreateNewBlock(scriptPubKey),
@@ -481,7 +471,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     while (chainActive.Tip()->nHeight < 209999) {
         CBlockIndex *prev = chainActive.Tip();
         CBlockIndex *next = new CBlockIndex();
-        next->phashBlock = new uint256(InsecureRand256());
+        next->phashBlock = new BlockHash(InsecureRand256());
         pcoinsTip->SetBestBlock(next->GetBlockHash());
         next->pprev = prev;
         next->nHeight = prev->nHeight + 1;
@@ -494,7 +484,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     while (chainActive.Tip()->nHeight < 210000) {
         CBlockIndex *prev = chainActive.Tip();
         CBlockIndex *next = new CBlockIndex();
-        next->phashBlock = new uint256(InsecureRand256());
+        next->phashBlock = new BlockHash(InsecureRand256());
         pcoinsTip->SetBestBlock(next->GetBlockHash());
         next->pprev = prev;
         next->nHeight = prev->nHeight + 1;
@@ -513,7 +503,6 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     tx.vout[0].scriptPubKey = GetScriptForDestination(CScriptID(script));
     txid = tx.GetId();
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(LOWFEE).Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
     tx.vin[0].prevout = COutPoint(txid, 0);
     tx.vin[0].scriptSig = CScript()
@@ -521,7 +510,6 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     tx.vout[0].nValue -= LOWFEE;
     txid = tx.GetId();
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(LOWFEE).Time(GetTime()).SpendsCoinbase(false).FromTx(tx));
     // Should throw blk-bad-inputs
     BOOST_CHECK_EXCEPTION(
@@ -560,7 +548,6 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     tx.nLockTime = 0;
     txid = tx.GetId();
     g_mempool.addUnchecked(
-        txid,
         entry.Fee(HIGHFEE).Time(GetTime()).SpendsCoinbase(true).FromTx(tx));
 
     const Consensus::Params &params = chainparams.GetConsensus();
@@ -589,7 +576,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
                            1);
     prevheights[0] = baseheight + 2;
     txid = tx.GetId();
-    g_mempool.addUnchecked(txid, entry.Time(GetTime()).FromTx(tx));
+    g_mempool.addUnchecked(entry.Time(GetTime()).FromTx(tx));
 
     {
         // Locktime passes.
@@ -622,7 +609,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     prevheights[0] = baseheight + 3;
     tx.nLockTime = chainActive.Tip()->nHeight + 1;
     txid = tx.GetId();
-    g_mempool.addUnchecked(txid, entry.Time(GetTime()).FromTx(tx));
+    g_mempool.addUnchecked(entry.Time(GetTime()).FromTx(tx));
 
     {
         // Locktime fails.
@@ -650,7 +637,7 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity) {
     prevheights.resize(1);
     prevheights[0] = baseheight + 4;
     txid = tx.GetId();
-    g_mempool.addUnchecked(txid, entry.Time(GetTime()).FromTx(tx));
+    g_mempool.addUnchecked(entry.Time(GetTime()).FromTx(tx));
 
     {
         // Locktime fails.
@@ -780,11 +767,10 @@ BOOST_AUTO_TEST_CASE(BlockAssembler_construction) {
 BOOST_AUTO_TEST_CASE(TestCBlockTemplateEntry) {
     const CTransaction tx;
     CTransactionRef txRef = MakeTransactionRef(tx);
-    CBlockTemplateEntry txEntry(txRef, 1 * SATOSHI, 200, 10);
+    CBlockTemplateEntry txEntry(txRef, 1 * SATOSHI, 10);
     BOOST_CHECK_MESSAGE(txEntry.tx == txRef, "Transactions did not match");
-    BOOST_CHECK_EQUAL(txEntry.txFee, 1 * SATOSHI);
-    BOOST_CHECK_EQUAL(txEntry.txSize, 200);
-    BOOST_CHECK_EQUAL(txEntry.txSigOps, 10);
+    BOOST_CHECK_EQUAL(txEntry.fees, 1 * SATOSHI);
+    BOOST_CHECK_EQUAL(txEntry.sigOpCount, 10);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
