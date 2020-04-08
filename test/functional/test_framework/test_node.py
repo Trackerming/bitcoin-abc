@@ -57,8 +57,7 @@ class TestNode():
     To make things easier for the test writer, any unrecognised messages will
     be dispatched to the RPC connection."""
 
-    def __init__(self, i, datadir, *, host, rpc_port, p2p_port, timewait, bitcoind,
-                 bitcoin_cli, mocktime, coverage_dir, extra_conf=None, extra_args=None, use_cli=False):
+    def __init__(self, i, datadir, *, host, rpc_port, p2p_port, timewait, bitcoind, bitcoin_cli, mocktime, coverage_dir, extra_conf=None, extra_args=None, use_cli=False):
         self.index = i
         self.datadir = datadir
         self.stdout_dir = os.path.join(self.datadir, "stdout")
@@ -69,9 +68,12 @@ class TestNode():
         self.name = "testnode-{}".format(i)
         self.rpc_timeout = timewait
         self.binary = bitcoind
+        print("Mining blocks...", self.binary)
+        '''
         if not os.path.isfile(self.binary):
             raise FileNotFoundError(
                 "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOIND=<path/to/bitcoind> {}".format(self.binary, sys.argv[0]))
+        '''
         self.coverage_dir = coverage_dir
         if extra_conf is not None:
             append_config(datadir, extra_conf)
@@ -92,10 +94,11 @@ class TestNode():
             "-uacomment=" + self.name,
             "-noprinttoconsole",
         ]
-
+        '''
         if not os.path.isfile(bitcoin_cli):
             raise FileNotFoundError(
                 "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOINCLI=<path/to/bitcoin-cli> {}".format(bitcoin_cli, sys.argv[0]))
+        '''
         self.cli = TestNodeCLI(bitcoin_cli, self.datadir)
         self.use_cli = use_cli
 

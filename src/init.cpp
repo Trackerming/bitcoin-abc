@@ -507,6 +507,33 @@ void SetupServerArgs() {
                  "(activate by default on Jan, 14)",
                  false, OptionsCategory::OPTIONS);
 
+    gArgs.AddArg("-dbmaxopenfiles=<n>",
+                 strprintf("use max open db files (default: %u)",
+                           DEFAULT_DB_MAX_OPEN_FILES),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg(
+        "-dbcompression",
+        strprintf("use db compression (default:%d)", DEFAULT_DB_COMPRESSION),
+        false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-addressindex",
+                 strprintf("Maintain a full address index, used to query for "
+                           "the balance,  txids and"
+                           " unspent outputs for addresses (default: %d)",
+                           DEFAULT_ADDRESS_INDEX),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-spentindex",
+                 strprintf("Maintain a full spent index, used to query the "
+                           "spending txid and input index for "
+                           "an outpoint (default: %d)",
+                           DEFAULT_SPENT_INDEX),
+                 false, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-timestampindex",
+                 strprintf("Maintain a timestamp index for block hashes, "
+                           "used to query blocks hashes"
+                           " by a range of timestamps (default: %d)",
+                           DEFAULT_TIMESTAMP_INDEX),
+                 false, OptionsCategory::OPTIONS);
+
     gArgs.AddArg("-addnode=<ip>",
                  "Add a node to connect to and attempt to keep the connection "
                  "open (see the `addnode` RPC command help for more info)",
@@ -2089,6 +2116,16 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     fReindex = gArgs.GetBoolArg("-reindex", false);
     bool fReindexChainState = gArgs.GetBoolArg("-reindex-chainstate", false);
 
+    // block tree db setting
+    int dbMaxOpenFiles =
+        gArgs.GetArg("-dbmaxopenfiles", DEFAULT_DB_MAX_OPEN_FILES);
+    bool dbCompression =
+        gArgs.GetBoolArg("-dbcompression", DEFAULT_DB_COMPRESSION);
+
+    LogPrintf("block index database configuration:\n");
+    LogPrintf("* Using %d max open files\n", dbMaxOpenFiles);
+    LogPrintf("*Compression is %s\n", dbCompression ? "enabled" : "disabled");
+
     // cache size calculations
     int64_t nTotalCache = (gArgs.GetArg("-dbcache", nDefaultDbCache) << 20);
     // total cache cannot be less than nMinDbCache
@@ -2097,6 +2134,18 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     nTotalCache = std::min(nTotalCache, nMaxDbCache << 20);
     int64_t nBlockTreeDBCache =
         std::min(nTotalCache / 8, nMaxBlockDBCache << 20);
+    if (gArgs.GetBoolArg("-addressindex", DEFAULT_ADDRESS_INDEX) ||
+        gArgs.GetBoolArg("-spentindex", DEFAULT_SPENT_INDEX) ||
+        gArgs.GetBoolArg("-timestampindex", DEFAULT_TIMESTAMP_INDEX)) {
+        // ebable 3/4 of the cache if addressindex and/or spentidnex is enable
+        nBlockTreeDBCache = nTotalCache * 3 / 4;
+    } else {
+        nBlockTreeDBCache = std::min(
+            nBlockTreeDBCache,
+            (gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX) ? nMaxTxIndexCache
+                                                           : nMaxBlockDBCache)
+                << 20);
+    }
     nTotalCache -= nBlockTreeDBCache;
     int64_t nTxIndexCache =
         std::min(nTotalCache / 8, gArgs.GetBoolArg("-txindex", DEFAULT_TXINDEX)
@@ -2176,6 +2225,34 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                         chainparams.GetConsensus().hashGenesisBlock)) {
                     return InitError(_("Incorrect or no genesis block found. "
                                        "Wrong datadir for network?"));
+                }
+
+                // check for changed -addressindex state
+                if (fAddressIndex !=
+                    gArgs.GetBoolArg("-addressindex", DEFAULT_ADDRESS_INDEX)) {
+                    strLoadError =
+                        _("You need to rebuild the database using "
+                          "-reindex-chainstate to change -addressindex");
+                    break;
+                }
+
+                // check for changed -spentindex state
+                if (fSpentIndex !=
+                    gArgs.GetBoolArg("-spentindex", DEFAULT_SPENT_INDEX)) {
+                    strLoadError =
+                        _("You need to rebuild the database using "
+                          "-reindex-chainstate to change -spentindex");
+                    break;
+                }
+
+                // check for changed -timestampindex state
+                if (fTimestampIndex !=
+                    gArgs.GetBoolArg("-timestampindex",
+                                     DEFAULT_TIMESTAMP_INDEX)) {
+                    strLoadError =
+                        _("You need to rebuild the database using "
+                          "-reindex-chainstate to change -timestampindex");
+                    break;
                 }
 
                 // Check for changed -prune state.  What we are concerned about

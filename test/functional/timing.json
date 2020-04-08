@@ -152,6 +152,22 @@
   "time": 3
  },
  {
+    "name": "feature_spentindex.py",
+    "time": 2
+   },
+   {
+    "name": "feature_timestampindex.py",
+    "time": 2
+   },
+   {
+    "name": "feature_txindex.py",
+    "time": 2
+   },
+   {
+    "name": "feature_addressindex.py",
+    "time": 2
+   },
+ {
   "name": "feature_uacomment.py",
   "time": 3
  },

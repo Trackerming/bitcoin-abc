@@ -204,7 +204,8 @@ def mine_big_block(node, utxos=None):
 
 
 def send_big_transactions(node, utxos, num, fee_multiplier):
-    from .cashaddr import decode
+    # from .cashaddr import decode
+    from .address import decode
     txids = []
     padding = "1" * 512
     addrHash = decode(node.getnewaddress())[2]

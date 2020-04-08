@@ -487,6 +487,9 @@ add_library(server
 	validation.cpp
 	validationinterface.cpp
 	versionbits.cpp
+    addressindex.h
+    spentindex.h
+    timestampindex.h
 )
 
 # This require libevent

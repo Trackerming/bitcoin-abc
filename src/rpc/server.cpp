@@ -205,6 +205,16 @@ uint256 ParseHashV(const UniValue &v, std::string strName) {
 uint256 ParseHashO(const UniValue &o, std::string strKey) {
     return ParseHashV(find_value(o, strKey), strKey);
 }
+
+UniValue ValueFromCAmount(const CAmount &amount) {
+    bool sign = amount < 0;
+    int64_t n_abs = (sign ? -amount : amount);
+    int64_t quotient = n_abs / (COIN / SATOSHI);
+    int64_t remainder = n_abs % (COIN / SATOSHI);
+    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
+                                              quotient, remainder));
+}
+
 std::vector<uint8_t> ParseHexV(const UniValue &v, std::string strName) {
     std::string strHex;
     if (v.isStr()) {

@@ -38,6 +38,100 @@
 
 #include <univalue.h>
 
+// TODO pass config param (?)
+void TxToJSONExpanded(const Config &config, const CTransaction &tx,
+                      const uint256 hashBlock, UniValue &entry, int nHeight = 0,
+                      int nConfirmations = 0, int nBlockTime = 0) {
+    uint256 txid = tx.GetHash();
+    entry.pushKV("txid", txid.GetHex());
+    // Witness was removed
+    // entry.push_back(Pair("hash", tx.GetWitnessHash().GetHex()));
+    entry.pushKV("hash", tx.GetHash().GetHex());
+    entry.pushKV("size", (int)::GetSerializeSize(tx, PROTOCOL_VERSION));
+    // Witness was removed
+    // entry.push_back(Pair("vsize", (int)::GetVirtualTransactionSize(tx)));
+    entry.pushKV("vsize", (int)::GetSerializeSize(tx, PROTOCOL_VERSION));
+    entry.pushKV("version", tx.nVersion);
+    entry.pushKV("locktime", (int64_t)tx.nLockTime);
+    UniValue vin(UniValue::VARR);
+    for (unsigned int i = 0; i < tx.vin.size(); i++) {
+        const CTxIn &txin = tx.vin[i];
+        UniValue in(UniValue::VOBJ);
+        if (tx.IsCoinBase())
+            in.pushKV("coinbase",
+                      HexStr(txin.scriptSig.begin(), txin.scriptSig.end()));
+        else {
+            in.pushKV("txid", txin.prevout.GetTxId().GetHex());
+            in.pushKV("vout", (int64_t)txin.prevout.GetN());
+            UniValue o(UniValue::VOBJ);
+            o.pushKV("asm", ScriptToAsmStr(txin.scriptSig, true));
+            o.pushKV("hex",
+                     HexStr(txin.scriptSig.begin(), txin.scriptSig.end()));
+            in.pushKV("scriptSig", o);
+
+            // Add address and value info if spentindex enabled
+            CSpentIndexValue spentInfo;
+            CSpentIndexKey spentKey(txin.prevout.GetTxId(),
+                                    txin.prevout.GetN());
+            if (GetSpentIndex(spentKey, spentInfo)) {
+                in.pushKV("value", ValueFromCAmount(spentInfo.satoshis));
+                in.pushKV("valueSat", spentInfo.satoshis);
+                if (spentInfo.addressType == 1) {
+                    in.pushKV("address",
+                              EncodeLegacyAddr(CKeyID(spentInfo.addressHash),
+                                               config.GetChainParams()));
+                } else if (spentInfo.addressType == 2) {
+                    in.pushKV("address",
+                              EncodeLegacyAddr(CScriptID(spentInfo.addressHash),
+                                               config.GetChainParams()));
+                }
+            }
+        }
+        in.pushKV("sequence", (int64_t)txin.nSequence);
+        vin.push_back(in);
+    }
+    entry.pushKV("vin", vin);
+    UniValue vout(UniValue::VARR);
+    for (unsigned int i = 0; i < tx.vout.size(); i++) {
+        const CTxOut &txout = tx.vout[i];
+        UniValue out(UniValue::VOBJ);
+        out.pushKV("value", ValueFromAmount(txout.nValue));
+        out.pushKV("valueSat", txout.nValue / SATOSHI);
+        out.pushKV("n", (int64_t)i);
+        UniValue o(UniValue::VOBJ);
+        ScriptPubKeyToUniv(txout.scriptPubKey, o, true);
+        out.pushKV("scriptPubKey", o);
+
+        // Add spent information if spentindex is enabled
+        CSpentIndexValue spentInfo;
+        CSpentIndexKey spentKey(txid, i);
+        if (GetSpentIndex(spentKey, spentInfo)) {
+            out.pushKV("spentTxId", spentInfo.txid.GetHex());
+            out.pushKV("spentIndex", (int)spentInfo.inputIndex);
+            out.pushKV("spentHeight", spentInfo.blockHeight);
+        }
+
+        vout.push_back(out);
+    }
+    entry.pushKV("vout", vout);
+
+    if (!hashBlock.IsNull()) {
+        entry.pushKV("blockhash", hashBlock.GetHex());
+
+        if (nConfirmations > 0) {
+            entry.pushKV("height", nHeight);
+            entry.pushKV("confirmations", nConfirmations);
+            entry.pushKV("time", nBlockTime);
+            entry.pushKV("blocktime", nBlockTime);
+        } else {
+            entry.pushKV("height", -1);
+            entry.pushKV("confirmations", 0);
+        }
+    }
+    // 不返回raw
+    // TxToUnivS(tx, uint256(), entry, true, RPCSerializationFlags());
+}
+
 static void TxToJSON(const CTransaction &tx, const BlockHash &hashBlock,
                      UniValue &entry) {
     // Call into TxToUniv() in bitcoin-common to decode the transaction hex.
@@ -58,7 +152,9 @@ static void TxToJSON(const CTransaction &tx, const BlockHash &hashBlock,
                              1 + chainActive.Height() - pindex->nHeight);
                 entry.pushKV("time", pindex->GetBlockTime());
                 entry.pushKV("blocktime", pindex->GetBlockTime());
+                entry.pushKV("height", pindex->nHeight);
             } else {
+                entry.pushKV("height", -1);
                 entry.pushKV("confirmations", 0);
             }
         }
@@ -206,6 +302,9 @@ static UniValue getrawtransaction(const Config &config,
 
     CTransactionRef tx;
     BlockHash hash_block;
+    int nHeight = 0;
+    int nConfirmations = 0;
+    int nBlockTime = 0;
     if (!GetTransaction(txid, tx, params.GetConsensus(), hash_block, true,
                         blockindex)) {
         std::string errmsg;
@@ -228,6 +327,20 @@ static UniValue getrawtransaction(const Config &config,
                                ". Use gettransaction for wallet transactions.");
     }
 
+    BlockMap::iterator mi = mapBlockIndex.find(hash_block);
+    if (mi != mapBlockIndex.end() && (*mi).second) {
+        CBlockIndex *pindex = (*mi).second;
+        if (chainActive.Contains(pindex)) {
+            nHeight = pindex->nHeight;
+            nConfirmations = 1 + chainActive.Height() - pindex->nHeight;
+            nBlockTime = pindex->GetBlockTime();
+        } else {
+            nHeight = -1;
+            nConfirmations = 0;
+            nBlockTime = pindex->GetBlockTime();
+        }
+    }
+
     if (!fVerbose) {
         return EncodeHexTx(*tx, RPCSerializationFlags());
     }
@@ -236,7 +349,9 @@ static UniValue getrawtransaction(const Config &config,
     if (blockindex) {
         result.pushKV("in_active_chain", in_active_chain);
     }
-    TxToJSON(*tx, hash_block, result);
+    TxToJSONExpanded(config, *tx, hash_block, result, nHeight, nConfirmations,
+                     nBlockTime);
+    // TxToJSON(*tx, hash_block, result);
     return result;
 }
 

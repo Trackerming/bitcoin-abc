@@ -23,6 +23,8 @@ std::string EncodeExtKey(const CExtKey &extkey);
 CExtPubKey DecodeExtPubKey(const std::string &str);
 std::string EncodeExtPubKey(const CExtPubKey &extpubkey);
 
+std::pair<uint160, int> VisitDestination(const CTxDestination &dest);
+
 std::string EncodeDestination(const CTxDestination &dest, const Config &config);
 CTxDestination DecodeDestination(const std::string &addr, const CChainParams &);
 bool IsValidDestinationString(const std::string &str,

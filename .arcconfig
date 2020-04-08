@@ -1,5 +1,5 @@
 {
-  "conduit_uri" : "https://reviews.bitcoinabc.org/",
+  "phabricator.uri" : "https://phabricator.coincola.com/",
   "repository.callsign": "ABC",
   "base" : "git:HEAD^, hg:.^",
   "git.default-relative-commit" : "HEAD^",
