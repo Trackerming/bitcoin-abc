@@ -19,7 +19,7 @@ from test_framework.blocktools import (
     create_tx_with_script,
     make_conform_to_ctor,
 )
-from test_framework.key import CECKey
+from test_framework.key import ECKey
 from test_framework.messages import (
     CBlock,
     COutPoint,
@@ -32,7 +32,6 @@ from test_framework.messages import (
 from test_framework.mininode import (
     P2PDataStore,
 )
-from test_framework import schnorr
 from test_framework.script import (
     CScript,
     OP_0,
@@ -70,6 +69,7 @@ class SchnorrMultisigTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.block_heights = {}
+        self.extra_args = [["-acceptnonstdtxn=1"]]
 
     def bootstrap_p2p(self, *, num_connections=1):
         """Add a P2P connection to the node.
@@ -152,11 +152,10 @@ class SchnorrMultisigTest(BitcoinTestFramework):
         fundings = []
 
         # Generate a key pair
-        privkeybytes = b"Schnorr!" * 4
-        private_key = CECKey()
-        private_key.set_secretbytes(privkeybytes)
+        private_key = ECKey()
+        private_key.set(b"Schnorr!" * 4, True)
         # get uncompressed public key serialization
-        public_key = private_key.get_pubkey()
+        public_key = private_key.get_pubkey().get_bytes()
 
         def create_fund_and_spend_tx(dummy=OP_0, sigtype='ecdsa'):
             spendfrom = spendable_outputs.pop()
@@ -183,9 +182,9 @@ class SchnorrMultisigTest(BitcoinTestFramework):
             sighash = SignatureHashForkId(
                 script, txspend, 0, sighashtype, value)
             if sigtype == 'schnorr':
-                txsig = schnorr.sign(privkeybytes, sighash) + hashbyte
+                txsig = private_key.sign_schnorr(sighash) + hashbyte
             elif sigtype == 'ecdsa':
-                txsig = private_key.sign(sighash) + hashbyte
+                txsig = private_key.sign_ecdsa(sighash) + hashbyte
             txspend.vin[0].scriptSig = CScript([dummy, txsig])
             txspend.rehash()
 

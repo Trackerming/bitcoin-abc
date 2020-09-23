@@ -7,6 +7,8 @@
 #include <chain.h>
 #include <chainparams.h>
 #include <config.h>
+#include <primitives/blockhash.h>
+#include <primitives/txid.h>
 #include <rpc/server.h>
 #include <streams.h>
 #include <util/system.h>
@@ -76,7 +78,20 @@ bool CZMQAbstractPublishNotifier::Initialize(void *pcontext) {
             return false;
         }
 
-        int rc = zmq_bind(psocket, address.c_str());
+        LogPrint(BCLog::ZMQ,
+                 "zmq: Outbound message high water mark for %s at %s is %d\n",
+                 type, address, outbound_message_high_water_mark);
+
+        int rc = zmq_setsockopt(psocket, ZMQ_SNDHWM,
+                                &outbound_message_high_water_mark,
+                                sizeof(outbound_message_high_water_mark));
+        if (rc != 0) {
+            zmqError("Failed to set outbound message high water mark");
+            zmq_close(psocket);
+            return false;
+        }
+
+        rc = zmq_bind(psocket, address.c_str());
         if (rc != 0) {
             zmqError("Failed to bind address");
             zmq_close(psocket);
@@ -89,6 +104,9 @@ bool CZMQAbstractPublishNotifier::Initialize(void *pcontext) {
         return true;
     } else {
         LogPrint(BCLog::ZMQ, "zmq: Reusing socket for address %s\n", address);
+        LogPrint(BCLog::ZMQ,
+                 "zmq: Outbound message high water mark for %s at %s is %d\n",
+                 type, address, outbound_message_high_water_mark);
 
         psocket = i->second->psocket;
         mapPublishNotifiers.insert(std::make_pair(address, this));
@@ -98,7 +116,10 @@ bool CZMQAbstractPublishNotifier::Initialize(void *pcontext) {
 }
 
 void CZMQAbstractPublishNotifier::Shutdown() {
-    assert(psocket);
+    // Early return if Initialize was not called
+    if (!psocket) {
+        return;
+    }
 
     int count = mapPublishNotifiers.count(address);
 
@@ -116,7 +137,7 @@ void CZMQAbstractPublishNotifier::Shutdown() {
     }
 
     if (count == 1) {
-        LogPrint(BCLog::ZMQ, "Close socket at address %s\n", address);
+        LogPrint(BCLog::ZMQ, "zmq: Close socket at address %s\n", address);
         int linger = 0;
         zmq_setsockopt(psocket, ZMQ_LINGER, &linger, sizeof(linger));
         zmq_close(psocket);
@@ -145,7 +166,7 @@ bool CZMQAbstractPublishNotifier::SendMessage(const char *command,
 }
 
 bool CZMQPublishHashBlockNotifier::NotifyBlock(const CBlockIndex *pindex) {
-    uint256 hash = pindex->GetBlockHash();
+    BlockHash hash = pindex->GetBlockHash();
     LogPrint(BCLog::ZMQ, "zmq: Publish hashblock %s\n", hash.GetHex());
     char data[32];
     for (unsigned int i = 0; i < 32; i++) {
@@ -156,7 +177,7 @@ bool CZMQPublishHashBlockNotifier::NotifyBlock(const CBlockIndex *pindex) {
 
 bool CZMQPublishHashTransactionNotifier::NotifyTransaction(
     const CTransaction &transaction) {
-    uint256 txid = transaction.GetId();
+    TxId txid = transaction.GetId();
     LogPrint(BCLog::ZMQ, "zmq: Publish hashtx %s\n", txid.GetHex());
     char data[32];
     for (unsigned int i = 0; i < 32; i++) {
@@ -188,7 +209,7 @@ bool CZMQPublishRawBlockNotifier::NotifyBlock(const CBlockIndex *pindex) {
 
 bool CZMQPublishRawTransactionNotifier::NotifyTransaction(
     const CTransaction &transaction) {
-    uint256 txid = transaction.GetId();
+    TxId txid = transaction.GetId();
     LogPrint(BCLog::ZMQ, "zmq: Publish rawtx %s\n", txid.GetHex());
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION | RPCSerializationFlags());
     ss << transaction;

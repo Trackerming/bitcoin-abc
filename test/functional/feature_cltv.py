@@ -84,7 +84,11 @@ def cltv_lock_to_height(node, tx, to_address, amount, height=-1):
 class BIP65Test(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [['-whitelist=127.0.0.1']]
+        self.extra_args = [[
+            '-whitelist=127.0.0.1',
+            '-par=1',  # Use only one script thread to get the exact reject reason for testing
+            '-acceptnonstdtxn=1',  # cltv_invalidate is nonstandard
+        ]]
         self.setup_clean_chain = True
         self.rpc_timeout = 120
 
@@ -164,7 +168,7 @@ class BIP65Test(BitcoinTestFramework):
             [{'txid': spendtx.hash, 'allowed': False,
                 'reject-reason': '64: non-mandatory-script-verify-flag (Negative locktime)'}],
             self.nodes[0].testmempoolaccept(
-                rawtxs=[spendtx.serialize().hex()], allowhighfees=True)
+                rawtxs=[spendtx.serialize().hex()], maxfeerate=0)
         )
 
         rejectedtx_signed = self.nodes[0].signrawtransactionwithwallet(
@@ -182,7 +186,7 @@ class BIP65Test(BitcoinTestFramework):
         block.hashMerkleRoot = block.calc_merkle_root()
         block.solve()
 
-        with self.nodes[0].assert_debug_log(expected_msgs=['ConnectBlock {} failed (blk-bad-inputs'.format(block.hash)]):
+        with self.nodes[0].assert_debug_log(expected_msgs=['ConnectBlock {} failed, blk-bad-inputs'.format(block.hash)]):
             self.nodes[0].p2p.send_and_ping(msg_block(block))
             assert_equal(self.nodes[0].getbestblockhash(), tip)
             self.nodes[0].p2p.sync_with_ping()

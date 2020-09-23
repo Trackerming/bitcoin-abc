@@ -84,10 +84,9 @@ The Bitcoin ABC repo's [root README](/README.md) contains relevant information o
 - [Developer Notes](developer-notes.md)
 - [Release Notes](release-notes.md)
 - [Release Process](release-process.md)
-- [Source Code Documentation (External Link)](https://dev.visucore.com/bitcoin/doxygen/)
+- [Source Code Documentation (External Link)](https://www.bitcoinabc.org/doc/dev/)
 - [Translation Process](translation_process.md)
 - [Translation Strings Policy](translation_strings_policy.md)
-- [Travis CI](travis-ci.md)
 - [Unauthenticated REST Interface](REST-interface.md)
 - [Shared Libraries](shared-libraries.md)
 - [BIPS](bips.md)
@@ -107,3 +106,5 @@ License
 ---------------------
 Distribution is done under the [MIT software license](/COPYING).
 This product includes software developed by the OpenSSL Project for use in the [OpenSSL Toolkit](https://www.openssl.org/), cryptographic software written by Eric Young ([eay@cryptsoft.com](mailto:eay@cryptsoft.com)), and UPnP software written by Thomas Bernard.
+The `gitian-builder` software developed by the Gitian Developers and distributed
+as part of the project is [licenced](../contrib/gitian-builder/LICENSE) under the [GNU General Public License version 3](../contrib/gitian-builder/COPYING).

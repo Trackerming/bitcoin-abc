@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -7,15 +7,17 @@
 #include <checkqueue.h>
 #include <clientversion.h>
 #include <config.h>
+#include <consensus/tx_check.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <key.h>
-#include <keystore.h>
 #include <policy/policy.h>
+#include <policy/settings.h>
 #include <script/script.h>
 #include <script/script_error.h>
 #include <script/sign.h>
+#include <script/signingprovider.h>
 #include <script/standard.h>
 #include <streams.h>
 #include <util/strencodings.h>
@@ -26,7 +28,7 @@
 #include <test/data/tx_valid.json.h>
 #include <test/jsonutil.h>
 #include <test/scriptflags.h>
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -102,7 +104,7 @@ BOOST_AUTO_TEST_CASE(tx_valid) {
                                PROTOCOL_VERSION);
             CTransaction tx(deserialize, stream);
 
-            CValidationState state;
+            TxValidationState state;
             BOOST_CHECK_MESSAGE(tx.IsCoinBase()
                                     ? CheckCoinbase(tx, state)
                                     : CheckRegularTransaction(tx, state),
@@ -204,7 +206,7 @@ BOOST_AUTO_TEST_CASE(tx_invalid) {
                                PROTOCOL_VERSION);
             CTransaction tx(deserialize, stream);
 
-            CValidationState state;
+            TxValidationState state;
             fValid = CheckRegularTransaction(tx, state) && state.IsValid();
 
             PrecomputedTransactionData txdata(tx);
@@ -261,7 +263,7 @@ BOOST_AUTO_TEST_CASE(basic_transaction_tests) {
     CDataStream stream(vch, SER_DISK, CLIENT_VERSION);
     CMutableTransaction tx;
     stream >> tx;
-    CValidationState state;
+    TxValidationState state;
     BOOST_CHECK_MESSAGE(CheckRegularTransaction(CTransaction(tx), state) &&
                             state.IsValid(),
                         "Simple deserialized transaction should be valid.");
@@ -280,7 +282,8 @@ BOOST_AUTO_TEST_CASE(basic_transaction_tests) {
 // paid to a TX_PUBKEYHASH.
 //
 static std::vector<CMutableTransaction>
-SetupDummyInputs(CBasicKeyStore &keystoreRet, CCoinsViewCache &coinsRet) {
+SetupDummyInputs(FillableSigningProvider &keystoreRet,
+                 CCoinsViewCache &coinsRet) {
     std::vector<CMutableTransaction> dummyTransactions;
     dummyTransactions.resize(2);
 
@@ -304,17 +307,17 @@ SetupDummyInputs(CBasicKeyStore &keystoreRet, CCoinsViewCache &coinsRet) {
     dummyTransactions[1].vout.resize(2);
     dummyTransactions[1].vout[0].nValue = 21 * CENT;
     dummyTransactions[1].vout[0].scriptPubKey =
-        GetScriptForDestination(key[2].GetPubKey().GetID());
+        GetScriptForDestination(PKHash(key[2].GetPubKey()));
     dummyTransactions[1].vout[1].nValue = 22 * CENT;
     dummyTransactions[1].vout[1].scriptPubKey =
-        GetScriptForDestination(key[3].GetPubKey().GetID());
+        GetScriptForDestination(PKHash(key[3].GetPubKey()));
     AddCoins(coinsRet, CTransaction(dummyTransactions[1]), 0);
 
     return dummyTransactions;
 }
 
 BOOST_AUTO_TEST_CASE(test_Get) {
-    CBasicKeyStore keystore;
+    FillableSigningProvider keystore;
     CCoinsView coinsDummy;
     CCoinsViewCache coins(&coinsDummy);
     std::vector<CMutableTransaction> dummyTransactions =
@@ -340,7 +343,7 @@ BOOST_AUTO_TEST_CASE(test_Get) {
                       (50 + 21 + 22) * CENT);
 }
 
-static void CreateCreditAndSpend(const CKeyStore &keystore,
+static void CreateCreditAndSpend(const FillableSigningProvider &keystore,
                                  const CScript &outscript,
                                  CTransactionRef &output,
                                  CMutableTransaction &input,
@@ -419,8 +422,8 @@ static void ReplaceRedeemScript(CScript &script, const CScript &redeemScript) {
 BOOST_AUTO_TEST_CASE(test_big_transaction) {
     CKey key;
     key.MakeNewKey(false);
-    CBasicKeyStore keystore;
-    keystore.AddKeyPubKey(key, key.GetPubKey());
+    FillableSigningProvider keystore;
+    BOOST_CHECK(keystore.AddKeyPubKey(key, key.GetPubKey()));
     CScript scriptPubKey = CScript()
                            << ToByteVector(key.GetPubKey()) << OP_CHECKSIG;
 
@@ -485,8 +488,7 @@ BOOST_AUTO_TEST_CASE(test_big_transaction) {
 
     for (size_t i = 0; i < mtx.vin.size(); i++) {
         std::vector<CScriptCheck> vChecks;
-        CTxOut &out = coins[tx.vin[i].prevout.GetN()].GetTxOut();
-        CScriptCheck check(out.scriptPubKey, out.nValue, tx, i,
+        CScriptCheck check(coins[tx.vin[i].prevout.GetN()].GetTxOut(), tx, i,
                            STANDARD_SCRIPT_VERIFY_FLAGS, false, txdata);
         vChecks.push_back(CScriptCheck());
         check.swap(vChecks.back());
@@ -514,7 +516,7 @@ SignatureData CombineSignatures(const CMutableTransaction &input1,
 }
 
 BOOST_AUTO_TEST_CASE(test_witness) {
-    CBasicKeyStore keystore, keystore2;
+    FillableSigningProvider keystore, keystore2;
     CKey key1, key2, key3, key1L, key2L;
     CPubKey pubkey1, pubkey2, pubkey3, pubkey1L, pubkey2L;
     key1.MakeNewKey(true);
@@ -527,10 +529,10 @@ BOOST_AUTO_TEST_CASE(test_witness) {
     pubkey3 = key3.GetPubKey();
     pubkey1L = key1L.GetPubKey();
     pubkey2L = key2L.GetPubKey();
-    keystore.AddKeyPubKey(key1, pubkey1);
-    keystore.AddKeyPubKey(key2, pubkey2);
-    keystore.AddKeyPubKey(key1L, pubkey1L);
-    keystore.AddKeyPubKey(key2L, pubkey2L);
+    BOOST_CHECK(keystore.AddKeyPubKey(key1, pubkey1));
+    BOOST_CHECK(keystore.AddKeyPubKey(key2, pubkey2));
+    BOOST_CHECK(keystore.AddKeyPubKey(key1L, pubkey1L));
+    BOOST_CHECK(keystore.AddKeyPubKey(key2L, pubkey2L));
     CScript scriptPubkey1, scriptPubkey2, scriptPubkey1L, scriptPubkey2L,
         scriptMulti;
     scriptPubkey1 << ToByteVector(pubkey1) << OP_CHECKSIG;
@@ -541,13 +543,13 @@ BOOST_AUTO_TEST_CASE(test_witness) {
     oneandthree.push_back(pubkey1);
     oneandthree.push_back(pubkey3);
     scriptMulti = GetScriptForMultisig(2, oneandthree);
-    keystore.AddCScript(scriptPubkey1);
-    keystore.AddCScript(scriptPubkey2);
-    keystore.AddCScript(scriptPubkey1L);
-    keystore.AddCScript(scriptPubkey2L);
-    keystore.AddCScript(scriptMulti);
-    keystore2.AddCScript(scriptMulti);
-    keystore2.AddKeyPubKey(key3, pubkey3);
+    BOOST_CHECK(keystore.AddCScript(scriptPubkey1));
+    BOOST_CHECK(keystore.AddCScript(scriptPubkey2));
+    BOOST_CHECK(keystore.AddCScript(scriptPubkey1L));
+    BOOST_CHECK(keystore.AddCScript(scriptPubkey2L));
+    BOOST_CHECK(keystore.AddCScript(scriptMulti));
+    BOOST_CHECK(keystore2.AddCScript(scriptMulti));
+    BOOST_CHECK(keystore2.AddKeyPubKey(key3, pubkey3));
 
     CTransactionRef output1, output2;
     CMutableTransaction input1, input2;
@@ -564,10 +566,10 @@ BOOST_AUTO_TEST_CASE(test_witness) {
 
     // P2SH pay-to-compressed-pubkey.
     CreateCreditAndSpend(keystore,
-                         GetScriptForDestination(CScriptID(scriptPubkey1)),
+                         GetScriptForDestination(ScriptHash(scriptPubkey1)),
                          output1, input1);
     CreateCreditAndSpend(keystore,
-                         GetScriptForDestination(CScriptID(scriptPubkey2)),
+                         GetScriptForDestination(ScriptHash(scriptPubkey2)),
                          output2, input2);
     ReplaceRedeemScript(input2.vin[0].scriptSig, scriptPubkey1);
     CheckWithFlag(output1, input1, 0, true);
@@ -589,10 +591,10 @@ BOOST_AUTO_TEST_CASE(test_witness) {
 
     // P2SH pay-to-uncompressed-pubkey.
     CreateCreditAndSpend(keystore,
-                         GetScriptForDestination(CScriptID(scriptPubkey1L)),
+                         GetScriptForDestination(ScriptHash(scriptPubkey1L)),
                          output1, input1);
     CreateCreditAndSpend(keystore,
-                         GetScriptForDestination(CScriptID(scriptPubkey2L)),
+                         GetScriptForDestination(ScriptHash(scriptPubkey2L)),
                          output2, input2);
     ReplaceRedeemScript(input2.vin[0].scriptSig, scriptPubkey1L);
     CheckWithFlag(output1, input1, 0, true);
@@ -613,12 +615,12 @@ BOOST_AUTO_TEST_CASE(test_witness) {
 
     // P2SH 2-of-2 multisig
     CreateCreditAndSpend(keystore,
-                         GetScriptForDestination(CScriptID(scriptMulti)),
+                         GetScriptForDestination(ScriptHash(scriptMulti)),
                          output1, input1, false);
     CheckWithFlag(output1, input1, 0, true);
     CheckWithFlag(output1, input1, SCRIPT_VERIFY_P2SH, false);
     CreateCreditAndSpend(keystore2,
-                         GetScriptForDestination(CScriptID(scriptMulti)),
+                         GetScriptForDestination(ScriptHash(scriptMulti)),
                          output2, input2, false);
     CheckWithFlag(output2, input2, 0, true);
     CheckWithFlag(output2, input2, SCRIPT_VERIFY_P2SH, false);
@@ -630,7 +632,7 @@ BOOST_AUTO_TEST_CASE(test_witness) {
 
 BOOST_AUTO_TEST_CASE(test_IsStandard) {
     LOCK(cs_main);
-    CBasicKeyStore keystore;
+    FillableSigningProvider keystore;
     CCoinsView coinsDummy;
     CCoinsViewCache coins(&coinsDummy);
     std::vector<CMutableTransaction> dummyTransactions =
@@ -644,7 +646,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     t.vout[0].nValue = 90 * CENT;
     CKey key;
     key.MakeNewKey(true);
-    t.vout[0].scriptPubKey = GetScriptForDestination(key.GetPubKey().GetID());
+    t.vout[0].scriptPubKey = GetScriptForDestination(PKHash(key.GetPubKey()));
 
     std::string reason;
     BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
@@ -732,7 +734,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
 
     // Clear custom confirguration.
-    gArgs.ClearArg("-datacarriersize");
+    gArgs.ClearForcedArg("-datacarriersize");
 
     // Data payload can be encoded in any way...
     t.vout[0].scriptPubKey = CScript() << OP_RETURN << ParseHex("");
@@ -793,7 +795,7 @@ BOOST_AUTO_TEST_CASE(txsize_activation_test) {
 
     // A minimaly sized transction.
     CTransaction minTx;
-    CValidationState state;
+    TxValidationState state;
 
     BOOST_CHECK(ContextualCheckTransaction(
         params, minTx, state, magneticAnomalyActivationHeight - 1, 5678, 1234));

@@ -7,12 +7,9 @@
 #include <cashaddrenc.h>
 #include <chain.h>       // For MAX_BLOCK_TIME_GAP
 #include <chainparams.h> // For Params()
-#include <consensus/consensus.h>
 #include <interfaces/wallet.h>
 #include <key_io.h>
-#include <timedata.h>
-#include <validation.h>
-#include <wallet/finaltx.h>
+#include <wallet/ismine.h>
 
 #include <QDateTime>
 

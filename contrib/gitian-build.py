@@ -33,7 +33,7 @@ def setup():
             ['git', 'clone', 'https://github.com/Bitcoin-ABC/bitcoin-abc.git'])
     os.chdir('gitian-builder')
     make_image_prog = ['bin/make-base-vm',
-                       '--suite', 'bionic', '--arch', 'amd64']
+                       '--distro', 'debian', '--suite', 'buster', '--arch', 'amd64']
     if args.docker:
         make_image_prog += ['--docker']
     elif not args.kvm:
@@ -139,8 +139,6 @@ def sign():
                                '--destination', '../gitian.sigs/', '../bitcoin-abc/contrib/gitian-descriptors/gitian-win-signer.yml'])
         subprocess.check_call(
             'mv build/out/bitcoin-*win64-setup.exe ../bitcoin-binaries/' + args.version, shell=True)
-        subprocess.check_call(
-            'mv build/out/bitcoin-*win32-setup.exe ../bitcoin-binaries/' + args.version, shell=True)
 
     if args.macos:
         print('\nSigning ' + args.version + ' MacOS')
@@ -262,7 +260,7 @@ def main():
 
     # Disable for MacOS if no SDK found
     if args.macos and not os.path.isfile(
-            'gitian-builder/inputs/MacOSX10.11.sdk.tar.gz'):
+            'gitian-builder/inputs/MacOSX10.14.sdk.tar.gz'):
         print('Cannot build for MacOS, SDK does not exist. Will build for other OSes')
         args.macos = False
 

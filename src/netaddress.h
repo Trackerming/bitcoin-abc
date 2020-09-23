@@ -11,7 +11,6 @@
 
 #include <compat.h>
 #include <serialize.h>
-#include <span.h>
 
 #include <cstdint>
 #include <string>
@@ -48,14 +47,12 @@ private:
     void SetRaw(Network network, const uint8_t *data);
 
 public:
-    /**
-     * Transform an arbitrary string into a non-routable ipv6 address.
-     * Useful for mapping resolved addresses back to their source.
-     */
     bool SetInternal(const std::string &name);
 
     // for Tor addresses
     bool SetSpecial(const std::string &strName);
+    // INADDR_ANY equivalent
+    bool IsBindAny() const;
     // IPv4 mapped address (::FFFF:0:0/96, 0.0.0.0/0)
     bool IsIPv4() const;
     // IPv6 address (not mapped IPv4, not Tor)
@@ -79,13 +76,16 @@ public:
     bool IsRFC4193() const;
     // IPv6 Teredo tunnelling (2001::/32)
     bool IsRFC4380() const;
-    // IPv6 ORCHID (2001:10::/28)
+    // IPv6 ORCHID (deprecated) (2001:10::/28)
     bool IsRFC4843() const;
+    // IPv6 ORCHIDv2 (2001:20::/28)
+    bool IsRFC7343() const;
     // IPv6 autoconfig (FE80::/64)
     bool IsRFC4862() const;
-    // IPv6 well-known prefix (64:FF9B::/96)
+    // IPv6 well-known prefix for IPv4-embedded address (64:FF9B::/96)
     bool IsRFC6052() const;
-    // IPv6 IPv4-translated address (::FFFF:0:0:0/96)
+    // IPv6 IPv4-translated address (::FFFF:0:0:0/96) (actually defined in
+    // RFC2765)
     bool IsRFC6145() const;
     bool IsTor() const;
     bool IsLocal() const;
@@ -99,6 +99,9 @@ public:
     uint64_t GetHash() const;
     bool GetInAddr(struct in_addr *pipv4Addr) const;
     std::vector<uint8_t> GetGroup() const;
+    std::vector<uint8_t> GetAddrBytes() const {
+        return {std::begin(ip), std::end(ip)};
+    }
     int GetReachabilityFrom(const CNetAddr *paddrPartner = nullptr) const;
 
     explicit CNetAddr(const struct in6_addr &pipv6Addr,
@@ -163,7 +166,7 @@ public:
 class CService : public CNetAddr {
 protected:
     // host order
-    unsigned short port;
+    uint16_t port;
 
 public:
     CService();
@@ -191,11 +194,7 @@ public:
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream &s, Operation ser_action) {
         READWRITE(ip);
-        unsigned short portN = htons(port);
-        READWRITE(Span<uint8_t>((uint8_t *)&portN, 2));
-        if (ser_action.ForRead()) {
-            port = ntohs(portN);
-        }
+        READWRITE(WrapBigEndian(port));
     }
 };
 

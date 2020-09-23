@@ -6,18 +6,20 @@
 #ifndef BITCOIN_UI_INTERFACE_H
 #define BITCOIN_UI_INTERFACE_H
 
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 
-class CWallet;
 class CBlockIndex;
 namespace boost {
 namespace signals2 {
     class connection;
 }
 } // namespace boost
+
+namespace interfaces {
+class Wallet;
+} // namespace interfaces
 
 /** General change type (added, updated, removed). */
 enum ChangeType { CT_NEW, CT_UPDATED, CT_DELETED };
@@ -66,6 +68,9 @@ public:
          */
         MODAL = 0x10000000U,
 
+        /** Do not prepend error/warning prefix */
+        MSG_NOPREFIX = 0x20000000U,
+
         /** Do not print contents of message to debug log */
         SECURE = 0x40000000U,
 
@@ -79,8 +84,7 @@ public:
     rtype signal_name(args);                                                   \
     using signal_name##Sig = rtype(args);                                      \
     boost::signals2::connection signal_name##_connect(                         \
-        std::function<signal_name##Sig> fn);                                   \
-    void signal_name##_disconnect(std::function<signal_name##Sig> fn);
+        std::function<signal_name##Sig> fn);
 
     /** Show message box. */
     ADD_SIGNALS_DECL_WRAPPER(ThreadSafeMessageBox, bool,
@@ -115,7 +119,8 @@ public:
     ADD_SIGNALS_DECL_WRAPPER(NotifyAlertChanged, void, );
 
     /** A wallet has been loaded. */
-    ADD_SIGNALS_DECL_WRAPPER(LoadWallet, void, std::shared_ptr<CWallet> wallet);
+    ADD_SIGNALS_DECL_WRAPPER(LoadWallet, void,
+                             std::unique_ptr<interfaces::Wallet> &wallet);
 
     /**
      * Show progress e.g. for verifychain.
@@ -140,11 +145,6 @@ void InitWarning(const std::string &str);
 
 /** Show error message **/
 bool InitError(const std::string &str);
-
-std::string AmountHighWarn(const std::string &optname);
-
-std::string AmountErrMsg(const char *const optname,
-                         const std::string &strValue);
 
 extern CClientUIInterface uiInterface;
 

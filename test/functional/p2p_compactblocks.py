@@ -47,7 +47,10 @@ from test_framework.mininode import (
 from test_framework.script import CScript, OP_TRUE
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.txtools import pad_tx
-from test_framework.util import assert_equal, sync_blocks, wait_until
+from test_framework.util import (
+    assert_equal,
+    wait_until,
+)
 
 # TestP2PConn: A peer we use to send messages to bitcoind, and store responses.
 
@@ -133,7 +136,8 @@ class CompactBlocksTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
         self.num_nodes = 2
-        self.extra_args = [[], ["-txindex"]]
+        self.extra_args = [["-acceptnonstdtxn=1"],
+                           ["-txindex", "-acceptnonstdtxn=1"]]
         self.utxos = []
 
     def skip_test_if_missing_module(self):
@@ -743,20 +747,20 @@ class CompactBlocksTest(BitcoinTestFramework):
 
         block, _ = self.build_block_with_transactions(node, utxo, 10)
 
-        [l.clear_block_announcement() for l in listeners]
+        [listener.clear_block_announcement() for listener in listeners]
 
         node.submitblock(ToHex(block))
 
-        for l in listeners:
-            wait_until(lambda: l.received_block_announcement(),
+        for listener in listeners:
+            wait_until(lambda: listener.received_block_announcement(),
                        timeout=30, lock=mininode_lock)
         with mininode_lock:
-            for l in listeners:
-                assert "cmpctblock" in l.last_message
-                l.last_message["cmpctblock"].header_and_shortids.header.calc_sha256(
+            for listener in listeners:
+                assert "cmpctblock" in listener.last_message
+                listener.last_message["cmpctblock"].header_and_shortids.header.calc_sha256(
                 )
                 assert_equal(
-                    l.last_message["cmpctblock"].header_and_shortids.header.sha256, block.sha256)
+                    listener.last_message["cmpctblock"].header_and_shortids.header.sha256, block.sha256)
 
     # Test that we don't get disconnected if we relay a compact block with valid header,
     # but invalid transactions.
@@ -854,53 +858,53 @@ class CompactBlocksTest(BitcoinTestFramework):
 
         self.log.info("\tTesting SENDCMPCT p2p message... ")
         self.test_sendcmpct(self.nodes[0], self.test_node, 1)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         self.test_sendcmpct(
             self.nodes[1], self.ex_softfork_node, 1, old_node=self.old_node)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info("\tTesting compactblock construction...")
         self.test_compactblock_construction(self.nodes[0], self.test_node)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         self.test_compactblock_construction(
             self.nodes[1], self.ex_softfork_node)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info("\tTesting compactblock requests... ")
         self.test_compactblock_requests(self.nodes[0], self.test_node, 1)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         self.test_compactblock_requests(
             self.nodes[1], self.ex_softfork_node, 2)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info("\tTesting getblocktxn requests...")
         self.test_getblocktxn_requests(self.nodes[0], self.test_node, 1)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         self.test_getblocktxn_requests(self.nodes[1], self.ex_softfork_node, 2)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info("\tTesting getblocktxn handler...")
         self.test_getblocktxn_handler(self.nodes[0], self.test_node, 1)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         self.test_getblocktxn_handler(self.nodes[1], self.ex_softfork_node, 2)
         self.test_getblocktxn_handler(self.nodes[1], self.old_node, 1)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info(
             "\tTesting compactblock requests/announcements not at chain tip...")
         self.test_compactblocks_not_at_tip(self.nodes[0], self.test_node)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         self.test_compactblocks_not_at_tip(
             self.nodes[1], self.ex_softfork_node)
         self.test_compactblocks_not_at_tip(self.nodes[1], self.old_node)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info("\tTesting handling of incorrect blocktxn responses...")
         self.test_incorrect_blocktxn_response(self.nodes[0], self.test_node, 1)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         self.test_incorrect_blocktxn_response(
             self.nodes[1], self.ex_softfork_node, 2)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         # End-to-end block relay tests
         self.log.info("\tTesting end-to-end block relay...")
@@ -923,7 +927,7 @@ class CompactBlocksTest(BitcoinTestFramework):
             "\tTesting reconstructing compact blocks from all peers...")
         self.test_compactblock_reconstruction_multiple_peers(
             self.nodes[1], self.ex_softfork_node, self.old_node)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info("\tTesting invalid index in cmpctblock message...")
         self.test_invalid_cmpctblock_message()

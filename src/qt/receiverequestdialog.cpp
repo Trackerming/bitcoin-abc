@@ -10,7 +10,6 @@
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
-#include <qt/walletmodel.h>
 
 #include <QClipboard>
 #include <QDrag>
@@ -40,15 +39,24 @@ QRImageWidget::QRImageWidget(QWidget *parent)
     contextMenu->addAction(copyImageAction);
 }
 
+bool QRImageWidget::hasPixmap() const {
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+    return !pixmap(Qt::ReturnByValue).isNull();
+#else
+    return pixmap() != nullptr;
+#endif
+}
+
 QImage QRImageWidget::exportImage() {
-    if (!pixmap()) {
-        return QImage();
-    }
-    return pixmap()->toImage();
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+    return pixmap(Qt::ReturnByValue).toImage();
+#else
+    return hasPixmap() ? pixmap()->toImage() : QImage();
+#endif
 }
 
 void QRImageWidget::mousePressEvent(QMouseEvent *event) {
-    if (event->button() == Qt::LeftButton && pixmap()) {
+    if (event->button() == Qt::LeftButton && hasPixmap()) {
         event->accept();
         QMimeData *mimeData = new QMimeData;
         mimeData->setImageData(exportImage());
@@ -62,7 +70,7 @@ void QRImageWidget::mousePressEvent(QMouseEvent *event) {
 }
 
 void QRImageWidget::saveImage() {
-    if (!pixmap()) {
+    if (!hasPixmap()) {
         return;
     }
     QString fn = GUIUtil::getSaveFileName(this, tr("Save QR Code"), QString(),
@@ -73,14 +81,14 @@ void QRImageWidget::saveImage() {
 }
 
 void QRImageWidget::copyImage() {
-    if (!pixmap()) {
+    if (!hasPixmap()) {
         return;
     }
     QApplication::clipboard()->setImage(exportImage());
 }
 
 void QRImageWidget::contextMenuEvent(QContextMenuEvent *event) {
-    if (!pixmap()) {
+    if (!hasPixmap()) {
         return;
     }
     contextMenu->exec(event->globalPos());
@@ -160,8 +168,6 @@ void ReceiveRequestDialog::update() {
     ui->outUri->setText(html);
 
 #ifdef USE_QRCODE
-    int fontSize = 10;
-
     ui->lblQRCode->setText("");
     if (!uri.isEmpty()) {
         // limit URI length
@@ -194,9 +200,13 @@ void ReceiveRequestDialog::update() {
             painter.drawImage(0, 0,
                               qrImage.scaled(QR_IMAGE_SIZE, QR_IMAGE_SIZE));
             QFont font = GUIUtil::fixedPitchFont();
-            font.setPixelSize(fontSize);
-            painter.setFont(font);
             QRect paddedRect = qrAddrImage.rect();
+
+            // calculate ideal font size
+            qreal font_size = GUIUtil::calculateIdealFontSize(
+                paddedRect.width() - 20, info.address, font);
+            font.setPointSizeF(font_size);
+
             paddedRect.setHeight(QR_IMAGE_SIZE + 12);
             painter.drawText(paddedRect, Qt::AlignBottom | Qt::AlignCenter,
                              info.address);

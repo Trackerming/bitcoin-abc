@@ -1,30 +1,27 @@
-// Copyright (c) 2012-2018 The Bitcoin Core developers
+// Copyright (c) 2012-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <util/system.h>
 #include <util/time.h>
-#include <validation.h>
 
 #include <atomic>
 #include <checkqueue.h>
 #include <condition_variable>
 #include <mutex>
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 #include <thread>
 #include <vector>
 
 #include <boost/test/unit_test.hpp>
 
 #include <memory>
-#include <random.h>
 #include <unordered_set>
 
-// BasicTestingSetup not sufficient because nScriptCheckThreads is not set
-// otherwise.
 BOOST_FIXTURE_TEST_SUITE(checkqueue_tests, TestingSetup)
 
 static const unsigned int QUEUE_BATCH_SIZE = 128;
+static const int SCRIPT_CHECK_THREADS = 3;
 
 struct FakeCheck {
     bool operator()() { return true; }
@@ -129,7 +126,7 @@ typedef CCheckQueue<FrozenCleanupCheck> FrozenCleanup_Queue;
 static void Correct_Queue_range(std::vector<size_t> range) {
     auto small_queue = std::make_unique<Correct_Queue>(QUEUE_BATCH_SIZE);
     boost::thread_group tg;
-    for (auto x = 0; x < nScriptCheckThreads; ++x) {
+    for (auto x = 0; x < SCRIPT_CHECK_THREADS; ++x) {
         tg.create_thread([&] { small_queue->Thread(); });
     }
     // Make vChecks here to save on malloc (this test can be slow...)
@@ -191,7 +188,7 @@ BOOST_AUTO_TEST_CASE(test_CheckQueue_Catches_Failure) {
     auto fail_queue = std::make_unique<Failing_Queue>(QUEUE_BATCH_SIZE);
 
     boost::thread_group tg;
-    for (auto x = 0; x < nScriptCheckThreads; ++x) {
+    for (auto x = 0; x < SCRIPT_CHECK_THREADS; ++x) {
         tg.create_thread([&] { fail_queue->Thread(); });
     }
 
@@ -223,7 +220,7 @@ BOOST_AUTO_TEST_CASE(test_CheckQueue_Catches_Failure) {
 BOOST_AUTO_TEST_CASE(test_CheckQueue_Recovers_From_Failure) {
     auto fail_queue = std::make_unique<Failing_Queue>(QUEUE_BATCH_SIZE);
     boost::thread_group tg;
-    for (auto x = 0; x < nScriptCheckThreads; ++x) {
+    for (auto x = 0; x < SCRIPT_CHECK_THREADS; ++x) {
         tg.create_thread([&] { fail_queue->Thread(); });
     }
 
@@ -250,7 +247,7 @@ BOOST_AUTO_TEST_CASE(test_CheckQueue_Recovers_From_Failure) {
 BOOST_AUTO_TEST_CASE(test_CheckQueue_UniqueCheck) {
     auto queue = std::make_unique<Unique_Queue>(QUEUE_BATCH_SIZE);
     boost::thread_group tg;
-    for (auto x = 0; x < nScriptCheckThreads; ++x) {
+    for (auto x = 0; x < SCRIPT_CHECK_THREADS; ++x) {
         tg.create_thread([&] { queue->Thread(); });
     }
 
@@ -286,7 +283,7 @@ BOOST_AUTO_TEST_CASE(test_CheckQueue_UniqueCheck) {
 BOOST_AUTO_TEST_CASE(test_CheckQueue_Memory) {
     auto queue = std::make_unique<Memory_Queue>(QUEUE_BATCH_SIZE);
     boost::thread_group tg;
-    for (auto x = 0; x < nScriptCheckThreads; ++x) {
+    for (auto x = 0; x < SCRIPT_CHECK_THREADS; ++x) {
         tg.create_thread([&] { queue->Thread(); });
     }
     for (size_t i = 0; i < 1000; ++i) {
@@ -318,7 +315,7 @@ BOOST_AUTO_TEST_CASE(test_CheckQueue_FrozenCleanup) {
     auto queue = std::make_unique<FrozenCleanup_Queue>(QUEUE_BATCH_SIZE);
     boost::thread_group tg;
     bool fails = false;
-    for (auto x = 0; x < nScriptCheckThreads; ++x) {
+    for (auto x = 0; x < SCRIPT_CHECK_THREADS; ++x) {
         tg.create_thread([&] { queue->Thread(); });
     }
     std::thread t0([&]() {
@@ -330,7 +327,9 @@ BOOST_AUTO_TEST_CASE(test_CheckQueue_FrozenCleanup) {
         // would get called twice).
         vChecks[0].should_freeze = true;
         control.Add(vChecks);
-        control.Wait(); // Hangs here
+        // Hangs here
+        bool waitResult = control.Wait();
+        assert(waitResult);
     });
     {
         std::unique_lock<std::mutex> l(FrozenCleanupCheck::m);
@@ -368,7 +367,7 @@ BOOST_AUTO_TEST_CASE(test_CheckQueueControl_Locks) {
                 CCheckQueueControl<FakeCheck> control(queue.get());
                 // While sleeping, no other thread should execute to this point
                 auto observed = ++nThreads;
-                MilliSleep(10);
+                UninterruptibleSleep(std::chrono::milliseconds{10});
                 fails += observed != nThreads;
             });
         }

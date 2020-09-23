@@ -2,8 +2,6 @@ UNIX BUILD NOTES
 ====================
 Some notes on how to build Bitcoin ABC in Unix.
 
-(For FreeBSD specific instructions, see `build-freebsd.md` in this directory.)
-
 To Build
 ---------------------
 
@@ -38,11 +36,12 @@ Optional dependencies:
  ------------|------------------|----------------------
  miniupnpc   | UPnP Support     | Firewall-jumping support
  libdb       | Berkeley DB      | Wallet storage (only needed when wallet enabled)
+ jemalloc    | Memory allocator | Library to enhance the memory allocation and improve performances
  qt          | GUI              | GUI toolkit (only needed when GUI enabled)
- protobuf    | Payments in GUI  | Data interchange format used for payment protocol (only needed when GUI enabled)
+ protobuf    | Payments in GUI  | Data interchange format used for payment protocol (only needed when BIP70 enabled)
  libqrencode | QR codes in GUI  | Optional for generating QR codes (only needed when GUI enabled)
  univalue    | Utility          | JSON parsing and encoding (bundled version will be used unless --with-system-univalue passed to configure)
- libzmq3     | ZMQ notification | Optional, allows generating ZMQ notifications (requires ZMQ version >= 4.x)
+ libzmq3     | ZMQ notification | Optional, allows generating ZMQ notifications (requires ZMQ version >= 4.1.5)
 
 For the versions used, see [dependencies.md](dependencies.md)
 
@@ -61,7 +60,15 @@ Build requirements:
 
     sudo apt-get install bsdmainutils build-essential libssl-dev libevent-dev ninja-build python3
 
-On Debian Buster (10) or Ubuntu 19.04 and later:
+**Installing cmake:**
+
+On Debian Buster (10), `cmake` should be installed from the backports repository:
+
+    echo "deb http://deb.debian.org/debian buster-backports main" | sudo tee -a /etc/apt/sources.list
+    sudo apt-get update
+    sudo apt-get -t buster-backports install cmake
+
+On Ubuntu 20.04 and later:
 
     sudo apt-get install cmake
 
@@ -78,6 +85,9 @@ Then update the package list and install `cmake`:
 
     sudo apt update
     sudo apt install cmake
+
+Now, you can either build from self-compiled [depends](/depends/README.md) or
+install the required dependencies with the following instructions.
 
 Options when installing required Boost library files:
 
@@ -101,9 +111,13 @@ Minipupnc dependencies (can be disabled by passing `-DENABLE_UPNP=OFF` on the cm
 
     sudo apt-get install libminiupnpc-dev
 
-ZMQ dependencies (provides ZMQ API 4.x, can be disabled by passing `-BUILD_BITCOIN_ZMQ=OFF` on the cmake command line):
+ZMQ dependencies (provides ZMQ API, can be disabled by passing `-DBUILD_BITCOIN_ZMQ=OFF` on the cmake command line):
 
     sudo apt-get install libzmq3-dev
+
+jemalloc dependencies (provides the jemalloc library, can be disabled by passing `-DUSE_JEMALLOC=OFF` on the cmake command line):
+
+    sudo apt-get install libjemalloc-dev
 
 Dependencies for the GUI: Ubuntu & Debian
 -----------------------------------------
@@ -130,7 +144,7 @@ Minipupnc dependencies (can be disabled by passing `-DENABLE_UPNP=OFF` on the cm
 
     sudo dnf install miniupnpc-devel
 
-ZMQ dependencies (can be disabled by passing `-BUILD_BITCOIN_ZMQ=OFF` on the cmake command line):
+ZMQ dependencies (can be disabled by passing `-DBUILD_BITCOIN_ZMQ=OFF` on the cmake command line):
 
     sudo dnf install zeromq-devel
 
@@ -218,14 +232,15 @@ From the build subdirectory (see above), run `cmake -LH ..`.
 
 Setup and Build Example: Arch Linux
 -----------------------------------
-This example lists the steps necessary to setup and build a command line only, non-wallet distribution of the latest changes on Arch Linux:
+This example lists the steps necessary to setup and build a command line only,
+non-wallet distribution of the latest changes on Arch Linux:
 
-    pacman -S boost cmake git libevent ninja python
+    pacman -S base-devel boost cmake git libevent ninja python
     git clone https://github.com/Bitcoin-ABC/bitcoin-abc.git
     cd bitcoin-abc/
     mkdir build
     cd build
-    cmake -GNinja .. -DBUILD_BITCOIN_WALLET=OFF -DBUILD_BITCOIN_QT=OFF -DENABLE_UPNP=OFF -DBUILD_BITCOIN_ZMQ=OFF
+    cmake -GNinja .. -DBUILD_BITCOIN_WALLET=OFF -DBUILD_BITCOIN_QT=OFF -DENABLE_UPNP=OFF -DBUILD_BITCOIN_ZMQ=OFF -DUSE_JEMALLOC=OFF
     ninja
 
 

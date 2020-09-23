@@ -26,11 +26,6 @@ public:
 
     virtual void SetExcessUTXOCharge(Amount amt) = 0;
     virtual Amount GetExcessUTXOCharge() const = 0;
-
-    virtual void SetRPCUserAndPassword(std::string userAndPassword) = 0;
-    virtual std::string GetRPCUserAndPassword() const = 0;
-    virtual void SetRPCCORSDomain(std::string corsDomain) = 0;
-    virtual std::string GetRPCCORSDomain() const = 0;
 };
 
 class GlobalConfig final : public Config {
@@ -45,22 +40,9 @@ public:
     void SetExcessUTXOCharge(Amount) override;
     Amount GetExcessUTXOCharge() const override;
 
-    void SetRPCUserAndPassword(std::string userAndPassword) override;
-    std::string GetRPCUserAndPassword() const override;
-    void SetRPCCORSDomain(std::string corsDomain) override;
-    std::string GetRPCCORSDomain() const override;
-
 private:
     bool useCashAddr;
     Amount excessUTXOCharge;
-
-    /** RPC authentication configs */
-
-    // Pre-base64-encoded authentication token, with user and password separated
-    // by a colon.
-    std::string rpcUserAndPassword;
-    // CORS domain, the allowed Origin
-    std::string rpcCORSDomain;
 
     /** The largest block size this node will accept. */
     uint64_t nMaxBlockSize;
@@ -70,8 +52,8 @@ private:
 class DummyConfig : public Config {
 public:
     DummyConfig();
-    DummyConfig(std::string net);
-    DummyConfig(std::unique_ptr<CChainParams> chainParamsIn);
+    explicit DummyConfig(std::string net);
+    explicit DummyConfig(std::unique_ptr<CChainParams> chainParamsIn);
     bool SetMaxBlockSize(uint64_t maxBlockSize) override { return false; }
     uint64_t GetMaxBlockSize() const override { return 0; }
 
@@ -83,11 +65,6 @@ public:
 
     void SetExcessUTXOCharge(Amount amt) override {}
     Amount GetExcessUTXOCharge() const override { return Amount::zero(); }
-
-    void SetRPCUserAndPassword(std::string userAndPassword) override{};
-    std::string GetRPCUserAndPassword() const override { return ""; };
-    void SetRPCCORSDomain(std::string corsDomain) override{};
-    std::string GetRPCCORSDomain() const override { return ""; };
 
 private:
     std::unique_ptr<CChainParams> chainParams;

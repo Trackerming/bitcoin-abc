@@ -5,6 +5,7 @@
 #ifndef BITCOIN_MINERFUND_H
 #define BITCOIN_MINERFUND_H
 
+#include <amount.h>
 #include <script/standard.h>
 
 #include <vector>
@@ -15,7 +16,7 @@ namespace Consensus {
 struct Params;
 }
 
-static constexpr int MINER_FUND_RATIO = 20;
+Amount GetMinerFundAmount(const Amount &coinbaseValue);
 
 std::vector<CTxDestination>
 GetMinerFundWhitelist(const Consensus::Params &params,

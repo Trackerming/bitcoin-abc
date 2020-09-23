@@ -80,7 +80,7 @@ const char *ScriptErrorString(const ScriptError serror) {
         case ScriptError::MINIMALDATA:
             return "Data push larger than necessary";
         case ScriptError::SIG_PUSHONLY:
-            return "Only push operators allowed in signature scripts";
+            return "Only push operators allowed in signatures";
         case ScriptError::SIG_HIGH_S:
             return "Non-canonical signature: S value is unnecessarily high";
         case ScriptError::MINIMALIF:
@@ -97,7 +97,7 @@ const char *ScriptErrorString(const ScriptError serror) {
         case ScriptError::PUBKEYTYPE:
             return "Public key is neither compressed or uncompressed";
         case ScriptError::CLEANSTACK:
-            return "Script did not clean its stack";
+            return "Extra items left on stack after execution";
         case ScriptError::ILLEGAL_FORKID:
             return "Illegal use of SIGHASH_FORKID";
         case ScriptError::MUST_USE_FORKID:

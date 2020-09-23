@@ -26,11 +26,9 @@
 #include <wallet/fees.h>
 #include <wallet/wallet.h>
 
-#include <QMessageBox>
 #include <QScrollBar>
 #include <QSettings>
 #include <QTextDocument>
-#include <QTimer>
 
 SendCoinsDialog::SendCoinsDialog(const PlatformStyle *_platformStyle,
                                  WalletModel *_model, QWidget *parent)
@@ -190,18 +188,21 @@ void SendCoinsDialog::setModel(WalletModel *_model) {
         coinControlUpdateLabels();
 
         // fee section
-        connect(ui->groupFee,
-                static_cast<void (QButtonGroup::*)(int)>(
-                    &QButtonGroup::buttonClicked),
-                this, &SendCoinsDialog::updateFeeSectionControls);
-        connect(ui->groupFee,
-                static_cast<void (QButtonGroup::*)(int)>(
-                    &QButtonGroup::buttonClicked),
-                this, &SendCoinsDialog::coinControlUpdateLabels);
-        connect(ui->groupCustomFee,
-                static_cast<void (QButtonGroup::*)(int)>(
-                    &QButtonGroup::buttonClicked),
-                this, &SendCoinsDialog::coinControlUpdateLabels);
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+        const auto buttonClickedEvent =
+            QOverload<int>::of(&QButtonGroup::idClicked);
+#else
+        /* QOverload in introduced from Qt 5.7, but we support down to 5.5.1 */
+        const auto buttonClickedEvent =
+            static_cast<void (QButtonGroup::*)(int)>(
+                &QButtonGroup::buttonClicked);
+#endif
+        connect(ui->groupFee, buttonClickedEvent, this,
+                &SendCoinsDialog::updateFeeSectionControls);
+        connect(ui->groupFee, buttonClickedEvent, this,
+                &SendCoinsDialog::coinControlUpdateLabels);
+        connect(ui->groupCustomFee, buttonClickedEvent, this,
+                &SendCoinsDialog::coinControlUpdateLabels);
         connect(ui->customFee, &BitcoinAmountField::valueChanged, this,
                 &SendCoinsDialog::coinControlUpdateLabels);
         connect(ui->checkBoxMinimumFee, &QCheckBox::stateChanged, this,
@@ -293,25 +294,16 @@ void SendCoinsDialog::on_sendButton_clicked() {
     // Format confirmation message
     QStringList formatted;
     for (const SendCoinsRecipient &rcp : currentTransaction.getRecipients()) {
-        // generate bold amount string with wallet name in case of multiwallet
-        QString amount =
-            "<b>" + BitcoinUnits::formatHtmlWithUnit(
-                        model->getOptionsModel()->getDisplayUnit(), rcp.amount);
+        // generate amount string with wallet name in case of multiwallet
+        QString amount = BitcoinUnits::formatWithUnit(
+            model->getOptionsModel()->getDisplayUnit(), rcp.amount);
         if (model->isMultiwallet()) {
-            amount.append(
-                " <u>" +
-                tr("from wallet %1")
-                    .arg(GUIUtil::HtmlEscape(model->getWalletName())) +
-                "</u> ");
+            amount.append(tr(" from wallet '%1'").arg(model->getWalletName()));
         }
-        amount.append("</b>");
-        // generate monospace address string
-        QString address =
-            "<span style='font-family: monospace;'>" + rcp.address;
-        address.append("</span>");
+        // generate address string
+        QString address = rcp.address;
 
         QString recipientElement;
-        recipientElement = "<br />";
 
 #ifdef ENABLE_BIP70
         // normal payment
@@ -321,7 +313,7 @@ void SendCoinsDialog::on_sendButton_clicked() {
             if (rcp.label.length() > 0) {
                 // label with address
                 recipientElement.append(
-                    tr("%1 to %2").arg(amount, GUIUtil::HtmlEscape(rcp.label)));
+                    tr("%1 to '%2'").arg(amount, rcp.label));
                 recipientElement.append(QString(" (%1)").arg(address));
             } else {
                 // just address
@@ -332,9 +324,7 @@ void SendCoinsDialog::on_sendButton_clicked() {
         // authenticated payment request
         else if (!rcp.authenticatedMerchant.isEmpty()) {
             recipientElement.append(
-                tr("%1 to %2")
-                    .arg(amount,
-                         GUIUtil::HtmlEscape(rcp.authenticatedMerchant)));
+                tr("%1 to '%2'").arg(amount, rcp.authenticatedMerchant));
         } else {
             // unauthenticated payment request
             recipientElement.append(tr("%1 to %2").arg(amount, address));
@@ -347,7 +337,7 @@ void SendCoinsDialog::on_sendButton_clicked() {
     QString questionString = tr("Are you sure you want to send?");
     questionString.append("<br /><span style='font-size:10pt;'>");
     questionString.append(tr("Please, review your transaction."));
-    questionString.append("</span><br />%1");
+    questionString.append("</span>%1");
 
     if (txFee > Amount::zero()) {
         // append fee string if a fee is required
@@ -390,9 +380,20 @@ void SendCoinsDialog::on_sendButton_clicked() {
                 "font-weight:normal;'>(=%1)</span>")
             .arg(alternativeUnits.join(" " + tr("or") + " ")));
 
+    QString informative_text;
+    QString detailed_text;
+    if (formatted.size() > 1) {
+        questionString = questionString.arg("");
+        informative_text =
+            tr("To review recipient list click \"Show Details...\"");
+        detailed_text = formatted.join("\n\n");
+    } else {
+        questionString = questionString.arg("<br /><br />" + formatted.at(0));
+    }
+
     SendConfirmationDialog confirmationDialog(
-        tr("Confirm send coins"), questionString.arg(formatted.join("<br />")),
-        SEND_CONFIRM_DELAY, this);
+        tr("Confirm send coins"), questionString, informative_text,
+        detailed_text, SEND_CONFIRM_DELAY, this);
     confirmationDialog.exec();
     QMessageBox::StandardButton retval =
         static_cast<QMessageBox::StandardButton>(confirmationDialog.result());
@@ -412,7 +413,7 @@ void SendCoinsDialog::on_sendButton_clicked() {
         accept();
         CoinControlDialog::coinControl()->UnSelectAll();
         coinControlUpdateLabels();
-        Q_EMIT coinsSent(currentTransaction.getWtx()->get().GetId());
+        Q_EMIT coinsSent(currentTransaction.getWtx()->GetId());
     }
     fNewRecipientAllowed = true;
 }
@@ -568,9 +569,7 @@ void SendCoinsDialog::processSendCoinsReturn(
 
     // This comment is specific to SendCoinsDialog usage of
     // WalletModel::SendCoinsReturn.
-    // WalletModel::TransactionCommitFailed is used only in
-    // WalletModel::sendCoins() all others are used only in
-    // WalletModel::prepareTransaction()
+    // All status values are used only in WalletModel::prepareTransaction()
     switch (sendCoinsReturn.status) {
         case WalletModel::InvalidAddress:
             msgParams.first =
@@ -595,18 +594,12 @@ void SendCoinsDialog::processSendCoinsReturn(
             msgParams.first = tr("Transaction creation failed!");
             msgParams.second = CClientUIInterface::MSG_ERROR;
             break;
-        case WalletModel::TransactionCommitFailed:
-            msgParams.first =
-                tr("The transaction was rejected with the following reason: %1")
-                    .arg(sendCoinsReturn.reasonCommitFailed);
-            msgParams.second = CClientUIInterface::MSG_ERROR;
-            break;
         case WalletModel::AbsurdFee:
             msgParams.first =
                 tr("A fee higher than %1 is considered an absurdly high fee.")
                     .arg(BitcoinUnits::formatWithUnit(
                         model->getOptionsModel()->getDisplayUnit(),
-                        model->node().getMaxTxFee()));
+                        model->wallet().getDefaultMaxTxFee()));
             break;
         case WalletModel::PaymentRequestExpired:
             msgParams.first = tr("Payment request expired.");
@@ -926,10 +919,18 @@ void SendCoinsDialog::coinControlUpdateLabels() {
 
 SendConfirmationDialog::SendConfirmationDialog(const QString &title,
                                                const QString &text,
+                                               const QString &informative_text,
+                                               const QString &detailed_text,
                                                int _secDelay, QWidget *parent)
-    : QMessageBox(QMessageBox::Question, title, text,
-                  QMessageBox::Yes | QMessageBox::Cancel, parent),
-      secDelay(_secDelay) {
+    : QMessageBox(parent), secDelay(_secDelay) {
+    setIcon(QMessageBox::Question);
+    // On macOS, the window title is ignored (as required by the macOS
+    // Guidelines).
+    setWindowTitle(title);
+    setText(text);
+    setInformativeText(informative_text);
+    setDetailedText(detailed_text);
+    setStandardButtons(QMessageBox::Yes | QMessageBox::Cancel);
     setDefaultButton(QMessageBox::Cancel);
     yesButton = button(QMessageBox::Yes);
     updateYesButton();
@@ -955,9 +956,9 @@ void SendConfirmationDialog::countDown() {
 void SendConfirmationDialog::updateYesButton() {
     if (secDelay > 0) {
         yesButton->setEnabled(false);
-        yesButton->setText(tr("Yes") + " (" + QString::number(secDelay) + ")");
+        yesButton->setText(tr("Send") + " (" + QString::number(secDelay) + ")");
     } else {
         yesButton->setEnabled(true);
-        yesButton->setText(tr("Yes"));
+        yesButton->setText(tr("Send"));
     }
 }

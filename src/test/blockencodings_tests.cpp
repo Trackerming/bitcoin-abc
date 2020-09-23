@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,22 +7,17 @@
 #include <chainparams.h>
 #include <config.h>
 #include <consensus/merkle.h>
-#include <pow.h>
-#include <random.h>
+#include <pow/pow.h>
 #include <streams.h>
 #include <txmempool.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
 static std::vector<std::pair<TxHash, CTransactionRef>> extra_txn;
 
-struct RegtestingSetup : public TestingSetup {
-    RegtestingSetup() : TestingSetup(CBaseChainParams::REGTEST) {}
-};
-
-BOOST_FIXTURE_TEST_SUITE(blockencodings_tests, RegtestingSetup)
+BOOST_FIXTURE_TEST_SUITE(blockencodings_tests, RegTestingSetup)
 
 static COutPoint InsecureRandOutPoint() {
     return COutPoint(TxId(InsecureRand256()), 0);
@@ -67,7 +62,7 @@ static CBlock BuildBlockTestCase() {
 // BOOST_CHECK_EXCEPTION predicates to check the exception message
 class HasReason {
 public:
-    HasReason(const std::string &reason) : m_reason(reason) {}
+    explicit HasReason(const std::string &reason) : m_reason(reason) {}
     bool operator()(const std::exception &e) const {
         return std::string(e.what()).find(m_reason) != std::string::npos;
     };
@@ -113,7 +108,7 @@ BOOST_AUTO_TEST_CASE(SimpleRoundTripTest) {
             SHARED_TX_OFFSET + 1);
 
         size_t poolSize = pool.size();
-        pool.removeRecursive(*block.vtx[2]);
+        pool.removeRecursive(*block.vtx[2], MemPoolRemovalReason::REPLACED);
         BOOST_CHECK_EQUAL(pool.size(), poolSize - 1);
 
         CBlock block2;

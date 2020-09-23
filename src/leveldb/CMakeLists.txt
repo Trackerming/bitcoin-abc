@@ -2,14 +2,21 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.16)
 project(Leveldb VERSION 0.1.0 LANGUAGES C CXX)
 
 # This project can take advantage of C++11.
 set(CMAKE_CXX_STANDARD 11)
 
 # Remove some warnings for leveldb as they can get noisy.
-add_compiler_flags(-Wno-sign-compare -Wno-implicit-fallthrough)
+add_compiler_flags(
+	-Wno-implicit-fallthrough
+	-Wno-inconsistent-missing-override
+	-Wno-maybe-uninitialized
+	-Wno-shadow
+	-Wno-sign-compare
+	-Wno-unused-const-variable
+)
 add_c_compiler_flags(-Wno-strict-prototypes)
 
 include(CheckIncludeFileCXX)
@@ -82,8 +89,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	)
 
 	find_package(SHLWAPI REQUIRED)
-	target_link_libraries(leveldb ${SHLWAPI_LIBRARY})
-	target_include_directories(leveldb PUBLIC ${SHLWAPI_INCLUDE_DIR})
+	target_link_libraries(leveldb SHLWAPI::shlwapi)
 else()
 	set(LEVELDB_PLATFORM POSIX)
 	target_sources(leveldb PRIVATE port/port_posix.cc)
@@ -173,6 +179,9 @@ option(LEVELDB_BUILD_TESTS "Build LevelDB's unit tests" ON)
 if(LEVELDB_BUILD_TESTS)
 	include(TestSuite)
 	create_test_suite(leveldb)
+	# Create a single job pool for the test suite in order to make the tests run
+	# serially.
+	test_suite_create_pool(leveldb 1)
 
 	add_library(leveldb_test_base
 		EXCLUDE_FROM_ALL

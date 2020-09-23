@@ -3,23 +3,30 @@ os: linux
 dist: xenial
 addons:
   apt:
-    sources:
-      - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
-        key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
     packages:
-      - cmake
+      - gcc-multilib
+      - libc6-dbg:i386
       - libgmp-dev
+      - libgmp-dev:i386
+      - libtool-bin
       - ninja-build
+      - valgrind
+install:
+  - ./travis/install_cmake.sh
+cache:
+  directories:
+    - /opt/cmake
 compiler:
   - clang
   - gcc
 env:
   global:
     - FIELD=auto
-    - BIGNUM=auto
+    - BIGNUM=gmp
     - SCALAR=auto
     - ENDOMORPHISM=no
     - STATICPRECOMPUTATION=yes
+    - ECMULTGENPRECISION=auto
     - ASM=no
     - AUTOTOOLS_TARGET=check
     - CMAKE_TARGET=check-secp256k1
@@ -31,73 +38,65 @@ env:
     - SCHNORR=yes
     - EXPERIMENTAL=no
     - JNI=no
+    - OPENSSL_TESTS=auto
+    - MULTISET=no
+    - CTIMETEST=yes
+    - BENCH=yes
+    - SECP256K1_BENCH_ITERS=2
   jobs:
     - SCALAR=32bit    RECOVERY=yes
-    - SCALAR=32bit    FIELD=32bit       ECDH=yes  EXPERIMENTAL=yes
+    - SCALAR=32bit    FIELD=32bit       ECDH=yes  EXPERIMENTAL=yes  MULTISET=yes
     - SCALAR=64bit
     - FIELD=64bit     RECOVERY=yes
     - FIELD=64bit     ENDOMORPHISM=yes
-    - FIELD=64bit     ENDOMORPHISM=yes  ECDH=yes EXPERIMENTAL=yes
+    - FIELD=64bit     ENDOMORPHISM=yes  ECDH=yes  EXPERIMENTAL=yes  MULTISET=yes
     - FIELD=64bit                       ASM=x86_64
     - FIELD=64bit     ENDOMORPHISM=yes  ASM=x86_64
     - FIELD=32bit     ENDOMORPHISM=yes
     - BIGNUM=no
-    - BIGNUM=no       ENDOMORPHISM=yes RECOVERY=yes EXPERIMENTAL=yes
+    - BIGNUM=no       ENDOMORPHISM=yes  RECOVERY=yes  EXPERIMENTAL=yes  MULTISET=yes
     - BIGNUM=no       STATICPRECOMPUTATION=no
-    - AUTOTOOLS_TARGET=distcheck       CMAKE_TARGET=install
+    - AUTOTOOLS_TARGET=distcheck       CMAKE_TARGET=install    CTIMETEST= BENCH=
     - AUTOTOOLS_EXTRA_FLAGS=CPPFLAGS=-DDETERMINISTIC CMAKE_EXTRA_FLAGS=-DCMAKE_C_FLAGS=-DDETERMINISTIC
     - AUTOTOOLS_EXTRA_FLAGS=CFLAGS=-O0               CMAKE_EXTRA_FLAGS=-DCMAKE_BUILD_TYPE=Debug
-    - AUTOTOOLS_TARGET=check-java      CMAKE_TARGET=check-secp256k1-java JNI=yes ECDH=yes EXPERIMENTAL=yes
+    - AUTOTOOLS_TARGET=check-java      CMAKE_TARGET=check-secp256k1-java JNI=yes ECDH=yes EXPERIMENTAL=yes CTIMETEST= BENCH=
+    - ECMULTGENPRECISION=2
+    - ECMULTGENPRECISION=8
     - SCHNORR=no
 jobs:
   fast_finish: true
   include:
     - compiler: clang
-      env: HOST=i686-linux-gnu ENDOMORPHISM=yes
-      addons:
-        apt:
-          sources:
-            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
-              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
-          packages:
-            - cmake
-            - gcc-multilib
-            - libgmp-dev:i386
-            - ninja-build
+      env: HOST=i686-linux-gnu ENDOMORPHISM=yes OPENSSL_TESTS=no
     - compiler: clang
-      env: HOST=i686-linux-gnu BIGNUM=no
-      addons:
-        apt:
-          sources:
-            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
-              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
-          packages:
-            - cmake
-            - gcc-multilib
-            - ninja-build
+      env: HOST=i686-linux-gnu BIGNUM=no OPENSSL_TESTS=no
     - compiler: gcc
-      env: HOST=i686-linux-gnu ENDOMORPHISM=yes BIGNUM=no
-      addons:
-        apt:
-          sources:
-            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
-              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
-          packages:
-            - cmake
-            - gcc-multilib
-            - ninja-build
+      env: HOST=i686-linux-gnu ENDOMORPHISM=yes BIGNUM=no OPENSSL_TESTS=no
     - compiler: gcc
-      env: HOST=i686-linux-gnu
-      addons:
-        apt:
-          sources:
-            - sourceline: 'deb https://apt.kitware.com/ubuntu/ xenial main'
-              key_url: 'https://apt.kitware.com/keys/kitware-archive-latest.asc'
-          packages:
-            - cmake
-            - gcc-multilib
-            - libgmp-dev:i386
-            - ninja-build
+      env: HOST=i686-linux-gnu OPENSSL_TESTS=no
+    - compiler: gcc
+      env:
+        - VALGRIND=yes
+        - BIGNUM=no  ENDOMORPHISM=yes  ASM=x86_64  EXPERIMENTAL=yes  ECDH=yes  RECOVERY=yes  OPENSSL_TESTS=no  MULTISET=yes
+        - AUTOTOOLS_EXTRA_FLAGS=CPPFLAGS=-DVALGRIND  AUTOTOOLS_TARGET=
+        - CMAKE_EXTRA_FLAGS=-DCMAKE_C_FLAGS=-DVALGRIND  CMAKE_TARGET="secp256k1-tests secp256k1-exhaustive_tests"
+    - compiler: gcc
+      env: # The same as above but without endomorphism.
+        - VALGRIND=yes
+        - BIGNUM=no  ENDOMORPHISM=no  ASM=x86_64  EXPERIMENTAL=yes  ECDH=yes  RECOVERY=yes  OPENSSL_TESTS=no  MULTISET=yes
+        - AUTOTOOLS_EXTRA_FLAGS=CPPFLAGS=-DVALGRIND  AUTOTOOLS_TARGET=
+        - CMAKE_EXTRA_FLAGS=-DCMAKE_C_FLAGS=-DVALGRIND  CMAKE_TARGET="secp256k1-tests secp256k1-exhaustive_tests"
+
 script:
- - ./travis/build_autotools.sh
- - ./travis/build_cmake.sh
+  - ./travis/build_autotools.sh
+  - ./travis/build_cmake.sh
+  - # travis_wait extends the 10 minutes without output allowed (https://docs.travis-ci.com/user/common-build-problems/#build-times-out-because-no-output-was-received)
+  - # the `--error-exitcode` is required to make the test fail if valgrind found errors, otherwise it'll return 0 (http://valgrind.org/docs/manual/manual-core.html)
+  - if [ -n "$VALGRIND" ]; then
+    travis_wait 30 valgrind --error-exitcode=42 ./buildautotools/tests 16 &&
+    travis_wait 30 valgrind --error-exitcode=42 ./buildautotools/exhaustive_tests;
+    fi
+  - if [ -n "$VALGRIND" ]; then
+    travis_wait 30 valgrind --error-exitcode=42 ./buildcmake/secp256k1-tests 16 &&
+    travis_wait 30 valgrind --error-exitcode=42 ./buildcmake/secp256k1-exhaustive_tests;
+    fi

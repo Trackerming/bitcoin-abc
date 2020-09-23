@@ -52,6 +52,7 @@ NODE_BLOOM = (1 << 2)
 NODE_XTHIN = (1 << 4)
 NODE_BITCOIN_CASH = (1 << 5)
 NODE_NETWORK_LIMITED = (1 << 10)
+NODE_AVALANCHE = (1 << 24)
 
 MSG_TX = 1
 MSG_BLOCK = 2
@@ -73,16 +74,16 @@ def hash256(s):
     return sha256(sha256(s))
 
 
-def ser_compact_size(l):
+def ser_compact_size(size):
     r = b""
-    if l < 253:
-        r = struct.pack("B", l)
-    elif l < 0x10000:
-        r = struct.pack("<BH", 253, l)
-    elif l < 0x100000000:
-        r = struct.pack("<BI", 254, l)
+    if size < 253:
+        r = struct.pack("B", size)
+    elif size < 0x10000:
+        r = struct.pack("<BH", 253, size)
+    elif size < 0x100000000:
+        r = struct.pack("<BI", 254, size)
     else:
-        r = struct.pack("<BQ", 255, l)
+        r = struct.pack("<BQ", 255, size)
     return r
 
 
@@ -148,9 +149,9 @@ def deser_vector(f, c):
 
 # ser_function_name: Allow for an alternate serialization function on the
 # entries in the vector.
-def ser_vector(l, ser_function_name=None):
-    r = ser_compact_size(len(l))
-    for i in l:
+def ser_vector(v, ser_function_name=None):
+    r = ser_compact_size(len(v))
+    for i in v:
         if ser_function_name:
             r += getattr(i, ser_function_name)()
         else:
@@ -167,9 +168,9 @@ def deser_uint256_vector(f):
     return r
 
 
-def ser_uint256_vector(l):
-    r = ser_compact_size(len(l))
-    for i in l:
+def ser_uint256_vector(v):
+    r = ser_compact_size(len(v))
+    for i in v:
         r += ser_uint256(i)
     return r
 
@@ -183,9 +184,9 @@ def deser_string_vector(f):
     return r
 
 
-def ser_string_vector(l):
-    r = ser_compact_size(len(l))
-    for sv in l:
+def ser_string_vector(v):
+    r = ser_compact_size(len(v))
+    for sv in v:
         r += ser_string(sv)
     return r
 
@@ -501,7 +502,7 @@ class CBlockHeader:
     def __repr__(self):
         return "CBlockHeader(nVersion={} hashPrevBlock={:064x} hashMerkleRoot={:064x} nTime={} nBits={:08x} nNonce={:08x})".format(
             self.nVersion, self.hashPrevBlock, self.hashMerkleRoot,
-            time.ctime(self.nTime), self.nBits, self.nNonce)
+            self.nTime, self.nBits, self.nNonce)
 
 
 class CBlock(CBlockHeader):
@@ -560,7 +561,7 @@ class CBlock(CBlockHeader):
     def __repr__(self):
         return "CBlock(nVersion={} hashPrevBlock={:064x} hashMerkleRoot={:064x} nTime={} nBits={:08x} nNonce={:08x} vtx={})".format(
             self.nVersion, self.hashPrevBlock, self.hashMerkleRoot,
-            time.ctime(self.nTime), self.nBits, self.nNonce, repr(self.vtx))
+            self.nTime, self.nBits, self.nNonce, repr(self.vtx))
 
 
 class PrefilledTransaction:
@@ -764,6 +765,100 @@ class BlockTransactions:
             self.blockhash, repr(self.transactions))
 
 
+class AvalanchePoll():
+    __slots__ = ("round", "invs")
+
+    def __init__(self, round=0, invs=None):
+        self.round = round
+        self.invs = invs if invs is not None else []
+
+    def deserialize(self, f):
+        self.round = struct.unpack("<q", f.read(8))[0]
+        self.invs = deser_vector(f, CInv)
+
+    def serialize(self):
+        r = b""
+        r += struct.pack("<q", self.round)
+        r += ser_vector(self.invs)
+        return r
+
+    def __repr__(self):
+        return "AvalanchePoll(round={}, invs={})".format(
+            self.round, repr(self.invs))
+
+
+class AvalancheVote():
+    __slots__ = ("error", "hash")
+
+    def __init__(self, e=0, h=0):
+        self.error = e
+        self.hash = h
+
+    def deserialize(self, f):
+        self.error = struct.unpack("<i", f.read(4))[0]
+        self.hash = deser_uint256(f)
+
+    def serialize(self):
+        r = b""
+        r += struct.pack("<i", self.error)
+        r += ser_uint256(self.hash)
+        return r
+
+    def __repr__(self):
+        return "AvalancheVote(error={}, hash={:064x})".format(
+            self.error, self.hash)
+
+
+class AvalancheResponse():
+    __slots__ = ("round", "cooldown", "votes")
+
+    def __init__(self, round=0, cooldown=0, votes=None):
+        self.round = round
+        self.cooldown = cooldown
+        self.votes = votes if votes is not None else []
+
+    def deserialize(self, f):
+        self.round = struct.unpack("<q", f.read(8))[0]
+        self.cooldown = struct.unpack("<i", f.read(4))[0]
+        self.votes = deser_vector(f, AvalancheVote)
+
+    def serialize(self):
+        r = b""
+        r += struct.pack("<q", self.round)
+        r += struct.pack("<i", self.cooldown)
+        r += ser_vector(self.votes)
+        return r
+
+    def get_hash(self):
+        return hash256(self.serialize())
+
+    def __repr__(self):
+        return "AvalancheResponse(round={}, cooldown={}, votes={})".format(
+            self.round, self.cooldown, repr(self.votes))
+
+
+class TCPAvalancheResponse():
+    __slots__ = ("response", "sig")
+
+    def __init__(self, response=AvalancheResponse(), sig=b"\0" * 64):
+        self.response = response
+        self.sig = sig
+
+    def deserialize(self, f):
+        self.response.deserialize(f)
+        self.sig = f.read(64)
+
+    def serialize(self):
+        r = b""
+        r += self.response.serialize()
+        r += self.sig
+        return r
+
+    def __repr__(self):
+        return "TCPAvalancheResponse(response={}, sig={})".format(
+            repr(self.response), self.sig)
+
+
 class CPartialMerkleTree:
     __slots__ = ("fBad", "nTransactions", "vBits", "vHash")
 
@@ -875,7 +970,7 @@ class msg_version:
 
     def __repr__(self):
         return 'msg_version(nVersion={} nServices={} nTime={} addrTo={} addrFrom={} nNonce=0x{:016X} strSubVer={} nStartingHeight={} nRelay={})'.format(
-            self.nVersion, self.nServices, time.ctime(self.nTime),
+            self.nVersion, self.nServices, self.nTime,
             repr(self.addrTo), repr(self.addrFrom), self.nNonce,
             self.strSubVer, self.nStartingHeight, self.nRelay)
 
@@ -1322,3 +1417,60 @@ class msg_blocktxn:
     def __repr__(self):
         return "msg_blocktxn(block_transactions={})".format(
             repr(self.block_transactions))
+
+
+class msg_avapoll():
+    __slots__ = ("poll",)
+    command = b"avapoll"
+
+    def __init__(self):
+        self.poll = AvalanchePoll()
+
+    def deserialize(self, f):
+        self.poll.deserialize(f)
+
+    def serialize(self):
+        r = b""
+        r += self.poll.serialize()
+        return r
+
+    def __repr__(self):
+        return "msg_avapoll(poll={})".format(repr(self.poll))
+
+
+class msg_avaresponse():
+    __slots__ = ("response",)
+    command = b"avaresponse"
+
+    def __init__(self):
+        self.response = AvalancheResponse()
+
+    def deserialize(self, f):
+        self.response.deserialize(f)
+
+    def serialize(self):
+        r = b""
+        r += self.response.serialize()
+        return r
+
+    def __repr__(self):
+        return "msg_avaresponse(response={})".format(repr(self.response))
+
+
+class msg_tcpavaresponse():
+    __slots__ = ("response",)
+    command = b"avaresponse"
+
+    def __init__(self):
+        self.response = TCPAvalancheResponse()
+
+    def deserialize(self, f):
+        self.response.deserialize(f)
+
+    def serialize(self):
+        r = b""
+        r += self.response.serialize()
+        return r
+
+    def __repr__(self):
+        return "msg_tcpavaresponse(response={})".format(repr(self.response))

@@ -16,8 +16,17 @@ static inline unsigned short GetDefaultPort() {
     return Params().GetDefaultPort();
 }
 
+// After the 1000th addr, the seeder will only add one more address per addr
+// message.
+static const unsigned int ADDR_SOFT_CAP = 1000;
+
 // The network magic to use.
 extern CMessageHeader::MessageMagic netMagic;
+
+enum class PeerMessagingState {
+    AwaitingMessages,
+    Finished,
+};
 
 class CSeederNode {
 private:
@@ -49,7 +58,8 @@ private:
     bool ProcessMessages();
 
 protected:
-    bool ProcessMessage(std::string strCommand, CDataStream &recv);
+    PeerMessagingState ProcessMessage(std::string strCommand,
+                                      CDataStream &recv);
 
 public:
     CSeederNode(const CService &ip, std::vector<CAddress> *vAddrIn);
@@ -64,8 +74,5 @@ public:
 
     int GetStartingHeight() { return nStartingHeight; }
 };
-
-bool TestNode(const CService &cip, int &ban, int &client, std::string &clientSV,
-              int &blocks, std::vector<CAddress> *vAddr);
 
 #endif // BITCOIN_SEEDER_BITCOIN_H

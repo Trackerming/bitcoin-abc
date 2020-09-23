@@ -13,8 +13,6 @@ EXPECTED_BOOST_INCLUDES=(
     boost/algorithm/string/classification.hpp
     boost/algorithm/string/replace.hpp
     boost/algorithm/string/split.hpp
-    boost/assign/std/vector.hpp
-    boost/chrono/chrono.hpp
     boost/date_time/posix_time/posix_time.hpp
     boost/filesystem.hpp
     boost/filesystem/fstream.hpp
@@ -30,7 +28,6 @@ EXPECTED_BOOST_INCLUDES=(
     boost/preprocessor/stringize.hpp
     boost/range/iterator.hpp
     boost/range/adaptor/sliced.hpp
-    boost/scoped_array.hpp
     boost/signals2/connection.hpp
     boost/signals2/last_value.hpp
     boost/signals2/signal.hpp

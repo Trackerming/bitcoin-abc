@@ -8,7 +8,10 @@
 
 #include <consensus/params.h>
 #include <net.h>
+#include <sync.h>
 #include <validationinterface.h>
+
+extern RecursiveMutex cs_main;
 
 class Config;
 
@@ -24,7 +27,7 @@ static const unsigned int DEFAULT_MAX_ORPHAN_TRANSACTIONS = 100;
 static const unsigned int DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN = 100;
 
 /** Default for BIP61 (sending reject messages) */
-static constexpr bool DEFAULT_ENABLE_BIP61 = true;
+static constexpr bool DEFAULT_ENABLE_BIP61{false};
 
 class PeerLogicValidation final : public CValidationInterface,
                                   public NetEventsInterface {
@@ -56,7 +59,7 @@ public:
      * Overridden from CValidationInterface.
      */
     void BlockChecked(const CBlock &block,
-                      const CValidationState &state) override;
+                      const BlockValidationState &state) override;
     /**
      * Overridden from CValidationInterface.
      */
@@ -106,7 +109,8 @@ public:
      * If we have extra outbound peers, try to disconnect the one with the
      * oldest block announcement.
      */
-    void EvictExtraOutboundPeers(int64_t time_in_seconds);
+    void EvictExtraOutboundPeers(int64_t time_in_seconds)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
 private:
     //! Next time to check for stale tip
@@ -127,5 +131,8 @@ struct CNodeStateStats {
 bool GetNodeStateStats(NodeId nodeid, CNodeStateStats &stats);
 /** Increase a node's misbehavior score. */
 void Misbehaving(NodeId nodeid, int howmuch, const std::string &reason = "");
+
+/** Relay transaction to every node */
+void RelayTransaction(const TxId &txid, const CConnman &connman);
 
 #endif // BITCOIN_NET_PROCESSING_H

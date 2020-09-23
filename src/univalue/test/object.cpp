@@ -19,9 +19,10 @@
 #define BOOST_CHECK_THROW(stmt, excMatch) { \
         try { \
             (stmt); \
+            assert(0 && "No exception caught"); \
         } catch (excMatch & e) { \
 	} catch (...) { \
-	    assert(0); \
+	    assert(0 && "Wrong exception caught"); \
 	} \
     }
 #define BOOST_CHECK_NO_THROW(stmt) { \
@@ -141,6 +142,8 @@ BOOST_AUTO_TEST_CASE(univalue_set)
     BOOST_CHECK(v.isArray());
     BOOST_CHECK_EQUAL(v.size(), 0);
 
+    BOOST_CHECK(v.setStr(""));
+    v.reserve(3);
     BOOST_CHECK(v.setStr("zum"));
     BOOST_CHECK(v.isStr());
     BOOST_CHECK_EQUAL(v.getValStr(), "zum");
@@ -186,6 +189,7 @@ BOOST_AUTO_TEST_CASE(univalue_set)
 BOOST_AUTO_TEST_CASE(univalue_array)
 {
     UniValue arr(UniValue::VARR);
+    arr.reserve(9);
 
     UniValue v((int64_t)1023LL);
     BOOST_CHECK(arr.push_back(v));
@@ -235,6 +239,8 @@ BOOST_AUTO_TEST_CASE(univalue_object)
     UniValue obj(UniValue::VOBJ);
     std::string strKey, strVal;
     UniValue v;
+
+    obj.reserve(11);
 
     strKey = "age";
     v.setInt(100);

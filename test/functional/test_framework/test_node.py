@@ -19,10 +19,12 @@ import tempfile
 import time
 import urllib.parse
 import collections
+import shlex
 
 from .authproxy import JSONRPCException
 from .messages import COIN, CTransaction, FromHex
 from .util import (
+    MAX_NODES,
     append_config,
     delete_cookie_file,
     get_rpc_proxy,
@@ -57,12 +59,20 @@ class TestNode():
     To make things easier for the test writer, any unrecognised messages will
     be dispatched to the RPC connection."""
 
-    def __init__(self, i, datadir, *, host, rpc_port, p2p_port, timewait, bitcoind,
-                 bitcoin_cli, mocktime, coverage_dir, extra_conf=None, extra_args=None, use_cli=False):
+    def __init__(self, i, datadir, *, chain, host, rpc_port, p2p_port, timewait, bitcoind, bitcoin_cli,
+                 coverage_dir, cwd, extra_conf=None, extra_args=None, use_cli=False, emulator=None, start_perf=False, use_valgrind=False):
+        """
+        Kwargs:
+            start_perf (bool): If True, begin profiling the node with `perf` as soon as
+                the node starts.
+        """
+
         self.index = i
         self.datadir = datadir
+        self.bitcoinconf = os.path.join(self.datadir, "bitcoin.conf")
         self.stdout_dir = os.path.join(self.datadir, "stdout")
         self.stderr_dir = os.path.join(self.datadir, "stderr")
+        self.chain = chain
         self.host = host
         self.rpc_port = rpc_port
         self.p2p_port = p2p_port
@@ -73,6 +83,7 @@ class TestNode():
             raise FileNotFoundError(
                 "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOIND=<path/to/bitcoind> {}".format(self.binary, sys.argv[0]))
         self.coverage_dir = coverage_dir
+        self.cwd = cwd
         if extra_conf is not None:
             append_config(datadir, extra_conf)
         # Most callers will just need to add extra args to the default list
@@ -82,22 +93,44 @@ class TestNode():
         # Note that common args are set in the config file (see
         # initialize_datadir)
         self.extra_args = extra_args
+        # Configuration for logging is set as command-line args rather than in the bitcoin.conf file.
+        # This means that starting a bitcoind using the temp dir to debug a failed test won't
+        # spam debug.log.
         self.default_args = [
             "-datadir=" + self.datadir,
             "-logtimemicros",
+            "-logthreadnames",
             "-debug",
             "-debugexclude=libevent",
             "-debugexclude=leveldb",
-            "-mocktime=" + str(mocktime),
             "-uacomment=" + self.name,
             "-noprinttoconsole",
         ]
 
-        if not os.path.isfile(bitcoin_cli):
+        if use_valgrind:
+            default_suppressions_file = os.path.join(
+                os.path.dirname(os.path.realpath(__file__)),
+                "..", "..", "..", "contrib", "valgrind.supp")
+            suppressions_file = os.getenv("VALGRIND_SUPPRESSIONS_FILE",
+                                          default_suppressions_file)
+            self.binary = "valgrind"
+            self.bitcoind_args = [bitcoind] + self.default_args
+            self.default_args = ["--suppressions={}".format(suppressions_file),
+                                 "--gen-suppressions=all", "--exit-on-first-error=yes",
+                                 "--error-exitcode=1", "--quiet"] + self.bitcoind_args
+
+        if emulator is not None:
+            if not os.path.isfile(emulator):
+                raise FileNotFoundError(
+                    "Emulator '{}' could not be found.".format(emulator))
+        self.emulator = emulator
+
+        if use_cli and not os.path.isfile(bitcoin_cli):
             raise FileNotFoundError(
                 "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOINCLI=<path/to/bitcoin-cli> {}".format(bitcoin_cli, sys.argv[0]))
-        self.cli = TestNodeCLI(bitcoin_cli, self.datadir)
+        self.cli = TestNodeCLI(bitcoin_cli, self.datadir, self.emulator)
         self.use_cli = use_cli
+        self.start_perf = start_perf
 
         self.running = False
         self.process = None
@@ -108,34 +141,56 @@ class TestNode():
         self.log = logging.getLogger('TestFramework.node{}'.format(i))
         # Whether to kill the node when this object goes away
         self.cleanup_on_exit = True
+        # Cache perf subprocesses here by their data output filename.
+        self.perf_subprocesses = {}
         self.p2ps = []
+
+    AddressKeyPair = collections.namedtuple(
+        'AddressKeyPair', ['address', 'key'])
+    PRIV_KEYS = [
+        # address , privkey
+        AddressKeyPair(
+            'mjTkW3DjgyZck4KbiRusZsqTgaYTxdSz6z',
+            'cVpF924EspNh8KjYsfhgY96mmxvT6DgdWiTYMtMjuM74hJaU5psW'),
+        AddressKeyPair(
+            'msX6jQXvxiNhx3Q62PKeLPrhrqZQdSimTg',
+            'cUxsWyKyZ9MAQTaAhUQWJmBbSvHMwSmuv59KgxQV7oZQU3PXN3KE'),
+        AddressKeyPair(
+            'mnonCMyH9TmAsSj3M59DsbH8H63U3RKoFP',
+            'cTrh7dkEAeJd6b3MRX9bZK8eRmNqVCMH3LSUkE3dSFDyzjU38QxK'),
+        AddressKeyPair(
+            'mqJupas8Dt2uestQDvV2NH3RU8uZh2dqQR',
+            'cVuKKa7gbehEQvVq717hYcbE9Dqmq7KEBKqWgWrYBa2CKKrhtRim'),
+        AddressKeyPair(
+            'msYac7Rvd5ywm6pEmkjyxhbCDKqWsVeYws',
+            'cQDCBuKcjanpXDpCqacNSjYfxeQj8G6CAtH1Dsk3cXyqLNC4RPuh'),
+        AddressKeyPair(
+            'n2rnuUnwLgXqf9kk2kjvVm8R5BZK1yxQBi',
+            'cQakmfPSLSqKHyMFGwAqKHgWUiofJCagVGhiB4KCainaeCSxeyYq'),
+        AddressKeyPair(
+            'myzuPxRwsf3vvGzEuzPfK9Nf2RfwauwYe6',
+            'cQMpDLJwA8DBe9NcQbdoSb1BhmFxVjWD5gRyrLZCtpuF9Zi3a9RK'),
+        AddressKeyPair(
+            'mumwTaMtbxEPUswmLBBN3vM9oGRtGBrys8',
+            'cSXmRKXVcoouhNNVpcNKFfxsTsToY5pvB9DVsFksF1ENunTzRKsy'),
+        AddressKeyPair(
+            'mpV7aGShMkJCZgbW7F6iZgrvuPHjZjH9qg',
+            'cSoXt6tm3pqy43UMabY6eUTmR3eSUYFtB2iNQDGgb3VUnRsQys2k'),
+        AddressKeyPair(
+            'mq4fBNdckGtvY2mijd9am7DRsbRB4KjUkf',
+            'cN55daf1HotwBAgAKWVgDcoppmUNDtQSfb7XLutTLeAgVc3u8hik'),
+        AddressKeyPair(
+            'mpFAHDjX7KregM3rVotdXzQmkbwtbQEnZ6',
+            'cT7qK7g1wkYEMvKowd2ZrX1E5f6JQ7TM246UfqbCiyF7kZhorpX3'),
+        AddressKeyPair(
+            'mzRe8QZMfGi58KyWCse2exxEFry2sfF2Y7',
+            'cPiRWE8KMjTRxH1MWkPerhfoHFn5iHPWVK5aPqjW8NxmdwenFinJ'),
+    ]
 
     def get_deterministic_priv_key(self):
         """Return a deterministic priv key in base58, that only depends on the node's index"""
-        AddressKeyPair = collections.namedtuple(
-            'AddressKeyPair', ['address', 'key'])
-        PRIV_KEYS = [
-            # address , privkey
-            AddressKeyPair('mjTkW3DjgyZck4KbiRusZsqTgaYTxdSz6z',
-                           'cVpF924EspNh8KjYsfhgY96mmxvT6DgdWiTYMtMjuM74hJaU5psW'),
-            AddressKeyPair('msX6jQXvxiNhx3Q62PKeLPrhrqZQdSimTg',
-                           'cUxsWyKyZ9MAQTaAhUQWJmBbSvHMwSmuv59KgxQV7oZQU3PXN3KE'),
-            AddressKeyPair('mnonCMyH9TmAsSj3M59DsbH8H63U3RKoFP',
-                           'cTrh7dkEAeJd6b3MRX9bZK8eRmNqVCMH3LSUkE3dSFDyzjU38QxK'),
-            AddressKeyPair('mqJupas8Dt2uestQDvV2NH3RU8uZh2dqQR',
-                           'cVuKKa7gbehEQvVq717hYcbE9Dqmq7KEBKqWgWrYBa2CKKrhtRim'),
-            AddressKeyPair('msYac7Rvd5ywm6pEmkjyxhbCDKqWsVeYws',
-                           'cQDCBuKcjanpXDpCqacNSjYfxeQj8G6CAtH1Dsk3cXyqLNC4RPuh'),
-            AddressKeyPair('n2rnuUnwLgXqf9kk2kjvVm8R5BZK1yxQBi',
-                           'cQakmfPSLSqKHyMFGwAqKHgWUiofJCagVGhiB4KCainaeCSxeyYq'),
-            AddressKeyPair('myzuPxRwsf3vvGzEuzPfK9Nf2RfwauwYe6',
-                           'cQMpDLJwA8DBe9NcQbdoSb1BhmFxVjWD5gRyrLZCtpuF9Zi3a9RK'),
-            AddressKeyPair('mumwTaMtbxEPUswmLBBN3vM9oGRtGBrys8',
-                           'cSXmRKXVcoouhNNVpcNKFfxsTsToY5pvB9DVsFksF1ENunTzRKsy'),
-            AddressKeyPair('mpV7aGShMkJCZgbW7F6iZgrvuPHjZjH9qg',
-                           'cSoXt6tm3pqy43UMabY6eUTmR3eSUYFtB2iNQDGgb3VUnRsQys2k'),
-        ]
-        return PRIV_KEYS[self.index]
+        assert len(self.PRIV_KEYS) == MAX_NODES
+        return self.PRIV_KEYS[self.index]
 
     def _node_msg(self, msg: str) -> str:
         """Return a modified msg that identifies this node by its index as a debugging aid."""
@@ -182,8 +237,8 @@ class TestNode():
             self.default_args = [def_arg for def_arg in self.default_args
                                  if rm_arg != def_arg and not def_arg.startswith(rm_arg + '=')]
 
-    def start(self, extra_args=None, stdout=None,
-              stderr=None, *args, **kwargs):
+    def start(self, extra_args=None, *, cwd=None, stdout=None,
+              stderr=None, **kwargs):
         """Start the node."""
         if extra_args is None:
             extra_args = self.extra_args
@@ -198,20 +253,34 @@ class TestNode():
         self.stderr = stderr
         self.stdout = stdout
 
+        if cwd is None:
+            cwd = self.cwd
+
         # Delete any existing cookie file -- if such a file exists (eg due to
         # unclean shutdown), it will get overwritten anyway by bitcoind, and
         # potentially interfere with our attempt to authenticate
-        delete_cookie_file(self.datadir)
+        delete_cookie_file(self.datadir, self.chain)
 
         # add environment variable LIBC_FATAL_STDERR_=1 so that libc errors are
         # written to stderr and not the terminal
         subp_env = dict(os.environ, LIBC_FATAL_STDERR_="1")
 
+        p_args = [self.binary] + self.default_args + extra_args
+        if self.emulator is not None:
+            p_args = [self.emulator] + p_args
         self.process = subprocess.Popen(
-            [self.binary] + self.default_args + extra_args, env=subp_env, stdout=stdout, stderr=stderr, *args, **kwargs)
+            p_args,
+            env=subp_env,
+            stdout=stdout,
+            stderr=stderr,
+            cwd=cwd,
+            **kwargs)
 
         self.running = True
         self.log.debug("bitcoind started, waiting for RPC to come up")
+
+        if self.start_perf:
+            self._start_perf()
 
     def wait_for_rpc_connection(self):
         """Sets up an RPC connection to the bitcoind process. Returns False if unable to connect."""
@@ -222,8 +291,15 @@ class TestNode():
                 raise FailedToStartError(self._node_msg(
                     'bitcoind exited with status {} during initialization'.format(self.process.returncode)))
             try:
-                rpc = get_rpc_proxy(rpc_url(self.datadir, self.host, self.rpc_port),
-                                    self.index, timeout=self.rpc_timeout, coveragedir=self.coverage_dir)
+                rpc = get_rpc_proxy(
+                    rpc_url(
+                        self.datadir,
+                        self.chain,
+                        self.host,
+                        self.rpc_port),
+                    self.index,
+                    timeout=self.rpc_timeout,
+                    coveragedir=self.coverage_dir)
                 rpc.getblockcount()
                 # If the call to getblockcount() succeeds then the RPC
                 # connection is up
@@ -234,19 +310,29 @@ class TestNode():
                 self.rpc_connected = True
                 self.url = self.rpc.url
                 return
-            except IOError as e:
-                if e.errno != errno.ECONNREFUSED:  # Port not yet open?
-                    raise  # unknown IO error
             except JSONRPCException as e:  # Initialization phase
                 # -28 RPC in warmup
                 # -342 Service unavailable, RPC server started but is shutting down due to error
                 if e.error['code'] != -28 and e.error['code'] != -342:
                     raise  # unknown JSON RPC exception
+            except ConnectionResetError:
+                # This might happen when the RPC server is in warmup, but shut down before the call to getblockcount
+                # succeeds. Try again to properly raise the FailedToStartError
+                pass
+            except OSError as e:
+                if e.errno != errno.ECONNREFUSED:  # Port not yet open?
+                    raise  # unknown OS error
             except ValueError as e:  # cookie file not found and no rpcuser or rpcassword. bitcoind still starting
                 if "No RPC credentials" not in str(e):
                     raise
             time.sleep(1.0 / poll_per_s)
         self._raise_assertion_error("Unable to connect to bitcoind")
+
+    def generate(self, nblocks, maxtries=1000000):
+        self.log.debug(
+            "TestNode.generate() dispatches `generate` call to `generatetoaddress`")
+        return self.generatetoaddress(
+            nblocks=nblocks, address=self.get_deterministic_priv_key().address, maxtries=maxtries)
 
     def get_wallet_rpc(self, wallet_name):
         if self.use_cli:
@@ -269,12 +355,19 @@ class TestNode():
         except http.client.CannotSendRequest:
             self.log.exception("Unable to stop node.")
 
+        # If there are any running perf processes, stop them.
+        for profile_name in tuple(self.perf_subprocesses.keys()):
+            self._stop_perf(profile_name)
+
         # Check that stderr is as expected
         self.stderr.seek(0)
         stderr = self.stderr.read().decode('utf-8').strip()
         if stderr != expected_stderr:
             raise AssertionError(
                 "Unexpected stderr {} != {}".format(stderr, expected_stderr))
+
+        self.stdout.close()
+        self.stderr.close()
 
         del self.p2ps[:]
 
@@ -303,23 +396,138 @@ class TestNode():
         wait_until(self.is_node_stopped, timeout=timeout)
 
     @contextlib.contextmanager
-    def assert_debug_log(self, expected_msgs):
-        debug_log = os.path.join(self.datadir, 'regtest', 'debug.log')
+    def assert_debug_log(self, expected_msgs, unexpected_msgs=None, timeout=2):
+        """Assert that some debug messages are present within some timeout.
+        Unexpected debug messages may be optionally provided to fail a test
+        if they appear before expected messages.
+
+        Note: expected_msgs must always be non-empty even if the goal is to check
+        for unexpected_msgs. This provides a bounded scenario such that "we expect
+        to reach some target resulting in expected_msgs without seeing unexpected_msgs.
+        Otherwise, we are testing that something never happens, which is fundamentally
+        not robust test logic.
+        """
+        if not expected_msgs:
+            raise AssertionError("Expected debug messages is empty")
+        if unexpected_msgs is None:
+            unexpected_msgs = []
+        time_end = time.time() + timeout
+        debug_log = os.path.join(self.datadir, self.chain, 'debug.log')
         with open(debug_log, encoding='utf-8') as dl:
             dl.seek(0, 2)
             prev_size = dl.tell()
-        try:
-            yield
-        finally:
+
+        yield
+
+        while True:
+            found = True
             with open(debug_log, encoding='utf-8') as dl:
                 dl.seek(prev_size)
                 log = dl.read()
             print_log = " - " + "\n - ".join(log.splitlines())
+            for unexpected_msg in unexpected_msgs:
+                if re.search(re.escape(unexpected_msg),
+                             log, flags=re.MULTILINE):
+                    self._raise_assertion_error(
+                        'Unexpected message "{}" partially matches log:\n\n{}\n\n'.format(
+                            unexpected_msg, print_log))
             for expected_msg in expected_msgs:
                 if re.search(re.escape(expected_msg), log,
                              flags=re.MULTILINE) is None:
-                    self._raise_assertion_error(
-                        'Expected message "{}" does not partially match log:\n\n{}\n\n'.format(expected_msg, print_log))
+                    found = False
+            if found:
+                return
+            if time.time() >= time_end:
+                break
+            time.sleep(0.05)
+        self._raise_assertion_error(
+            'Expected messages "{}" does not partially match log:\n\n{}\n\n'.format(
+                str(expected_msgs), print_log))
+
+    @contextlib.contextmanager
+    def profile_with_perf(self, profile_name):
+        """
+        Context manager that allows easy profiling of node activity using `perf`.
+
+        See `test/functional/README.md` for details on perf usage.
+
+        Args:
+            profile_name (str): This string will be appended to the
+                profile data filename generated by perf.
+        """
+        subp = self._start_perf(profile_name)
+
+        yield
+
+        if subp:
+            self._stop_perf(profile_name)
+
+    def _start_perf(self, profile_name=None):
+        """Start a perf process to profile this node.
+
+        Returns the subprocess running perf."""
+        subp = None
+
+        def test_success(cmd):
+            return subprocess.call(
+                # shell=True required for pipe use below
+                cmd, shell=True,
+                stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL) == 0
+
+        if not sys.platform.startswith('linux'):
+            self.log.warning(
+                "Can't profile with perf; only availabe on Linux platforms")
+            return None
+
+        if not test_success('which perf'):
+            self.log.warning(
+                "Can't profile with perf; must install perf-tools")
+            return None
+
+        if not test_success(
+                'readelf -S {} | grep .debug_str'.format(shlex.quote(self.binary))):
+            self.log.warning(
+                "perf output won't be very useful without debug symbols compiled into bitcoind")
+
+        output_path = tempfile.NamedTemporaryFile(
+            dir=self.datadir,
+            prefix="{}.perf.data.".format(profile_name or 'test'),
+            delete=False,
+        ).name
+
+        cmd = [
+            'perf', 'record',
+            '-g',                     # Record the callgraph.
+            # Compatibility for gcc's --fomit-frame-pointer.
+            '--call-graph', 'dwarf',
+            '-F', '101',              # Sampling frequency in Hz.
+            '-p', str(self.process.pid),
+            '-o', output_path,
+        ]
+        subp = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        self.perf_subprocesses[profile_name] = subp
+
+        return subp
+
+    def _stop_perf(self, profile_name):
+        """Stop (and pop) a perf subprocess."""
+        subp = self.perf_subprocesses.pop(profile_name)
+        output_path = subp.args[subp.args.index('-o') + 1]
+
+        subp.terminate()
+        subp.wait(timeout=10)
+
+        stderr = subp.stderr.read().decode()
+        if 'Consider tweaking /proc/sys/kernel/perf_event_paranoid' in stderr:
+            self.log.warning(
+                "perf couldn't collect data! Try "
+                "'sudo sysctl -w kernel.perf_event_paranoid=-1'")
+        else:
+            report_cmd = "perf report -i {}".format(output_path)
+            self.log.info("See perf output by running '{}'".format(report_cmd))
 
     def assert_start_raises_init_error(
             self, extra_args=None, expected_msg=None, match=ErrorMatch.FULL_TEXT, *args, **kwargs):
@@ -400,10 +608,23 @@ class TestNode():
         if 'dstaddr' not in kwargs:
             kwargs['dstaddr'] = '127.0.0.1'
 
-        p2p_conn.peer_connect(**kwargs)()
+        p2p_conn.peer_connect(**kwargs, net=self.chain)()
         self.p2ps.append(p2p_conn)
         if wait_for_verack:
+            # Wait for the node to send us the version and verack
             p2p_conn.wait_for_verack()
+            # At this point we have sent our version message and received the version and verack, however the full node
+            # has not yet received the verack from us (in reply to their version). So, the connection is not yet fully
+            # established (fSuccessfullyConnected).
+            #
+            # This shouldn't lead to any issues when sending messages, since the verack will be in-flight before the
+            # message we send. However, it might lead to races where we are expecting to receive a message. E.g. a
+            # transaction that will be added to the mempool as soon as we return here.
+            #
+            # So syncing here is redundant when we only want to send a message, but the cost is low (a few milliseconds)
+            # in comparision to the upside of making tests less fragile and
+            # unexpected intermittent errors less likely.
+            p2p_conn.sync_with_ping()
 
         return p2p_conn
 
@@ -447,16 +668,17 @@ def arg_to_cli(arg):
 class TestNodeCLI():
     """Interface to bitcoin-cli for an individual node"""
 
-    def __init__(self, binary, datadir):
+    def __init__(self, binary, datadir, emulator=None):
         self.options = []
         self.binary = binary
         self.datadir = datadir
         self.input = None
         self.log = logging.getLogger('TestFramework.bitcoincli')
+        self.emulator = emulator
 
     def __call__(self, *options, input=None):
         # TestNodeCLI is callable with bitcoin-cli command-line options
-        cli = TestNodeCLI(self.binary, self.datadir)
+        cli = TestNodeCLI(self.binary, self.datadir, self.emulator)
         cli.options = [str(o) for o in options]
         cli.input = input
         return cli
@@ -486,6 +708,8 @@ class TestNodeCLI():
         if command is not None:
             p_args += [command]
         p_args += pos_args + named_args
+        if self.emulator is not None:
+            p_args = [self.emulator] + p_args
         self.log.debug("Running bitcoin-cli command: {}".format(command))
         process = subprocess.Popen(p_args, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
@@ -502,5 +726,5 @@ class TestNodeCLI():
                 returncode, self.binary, output=cli_stderr)
         try:
             return json.loads(cli_stdout, parse_float=decimal.Decimal)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, decimal.InvalidOperation):
             return cli_stdout.rstrip("\n")

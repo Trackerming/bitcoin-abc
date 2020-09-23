@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,13 +7,13 @@
 
 #include <txmempool.h>
 #include <uint256.h>
-#include <util/system.h>
+#include <util/time.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
-BOOST_FIXTURE_TEST_SUITE(policyestimator_tests, BasicTestingSetup)
+BOOST_FIXTURE_TEST_SUITE(policyestimator_tests, TestingSetup)
 
 BOOST_AUTO_TEST_CASE(MempoolMinimumFeeEstimate) {
     CTxMemPool mpool;
@@ -84,15 +84,13 @@ BOOST_AUTO_TEST_CASE(MempoolMinimumFeeEstimate) {
                                .FromTx(tx));
     }
 
-    // Trim to size.  GetMinFee should be more than 10000 *
-    // DEFAULT_BLOCK_MIN_TX_FEE_PER_KB But the estimateFee should be
+    // Trim to size. GetMinFee should be more than 10000 *
+    // DEFAULT_BLOCK_MIN_TX_FEE_PER_KB, but the estimateFee should remain
     // unchanged.
     mpool.TrimToSize(1);
-
     BOOST_CHECK(mpool.GetMinFee(1) >=
                 CFeeRate(10000 * DEFAULT_BLOCK_MIN_TX_FEE_PER_KB,
                          CTransaction(tx).GetTotalSize()));
-
     BOOST_CHECK_MESSAGE(mpool.estimateFee() == mpool.GetMinFee(1),
                         "Confirm blocks has failed");
 }

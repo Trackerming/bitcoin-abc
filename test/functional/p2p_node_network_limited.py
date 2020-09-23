@@ -23,9 +23,8 @@ from test_framework.mininode import (
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
-    connect_nodes_bi,
+    connect_nodes,
     disconnect_nodes,
-    sync_blocks,
     wait_until,
 )
 
@@ -65,8 +64,8 @@ class NodeNetworkLimitedTest(BitcoinTestFramework):
         disconnect_nodes(self.nodes[1], self.nodes[2])
 
     def setup_network(self):
-        super(NodeNetworkLimitedTest, self).setup_network()
-        self.disconnect_all()
+        self.add_nodes(self.num_nodes, self.extra_args)
+        self.start_nodes()
 
     def run_test(self):
         node = self.nodes[0].add_p2p_connection(P2PIgnoreInv())
@@ -82,10 +81,10 @@ class NodeNetworkLimitedTest(BitcoinTestFramework):
 
         self.log.info(
             "Mine enough blocks to reach the NODE_NETWORK_LIMITED range.")
-        connect_nodes_bi(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[0], self.nodes[1])
         blocks = self.nodes[1].generatetoaddress(
             292, self.nodes[1].get_deterministic_priv_key().address)
-        sync_blocks([self.nodes[0], self.nodes[1]])
+        self.sync_blocks([self.nodes[0], self.nodes[1]])
 
         self.log.info("Make sure we can max retrieve block at tip-288.")
         # last block in valid range
@@ -113,9 +112,9 @@ class NodeNetworkLimitedTest(BitcoinTestFramework):
         # connect unsynced node 2 with pruned NODE_NETWORK_LIMITED peer
         # because node 2 is in IBD and node 0 is a NODE_NETWORK_LIMITED peer,
         # sync must not be possible
-        connect_nodes_bi(self.nodes[0], self.nodes[2])
+        connect_nodes(self.nodes[0], self.nodes[2])
         try:
-            sync_blocks([self.nodes[0], self.nodes[2]], timeout=5)
+            self.sync_blocks([self.nodes[0], self.nodes[2]], timeout=5)
         except Exception:
             pass
         # node2 must remain at heigh 0
@@ -123,10 +122,10 @@ class NodeNetworkLimitedTest(BitcoinTestFramework):
             self.nodes[2].getbestblockhash())['height'], 0)
 
         # now connect also to node 1 (non pruned)
-        connect_nodes_bi(self.nodes[1], self.nodes[2])
+        connect_nodes(self.nodes[1], self.nodes[2])
 
         # sync must be possible
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         # disconnect all peers
         self.disconnect_all()
@@ -137,11 +136,11 @@ class NodeNetworkLimitedTest(BitcoinTestFramework):
 
         # connect node1 (non pruned) with node0 (pruned) and check if the can
         # sync
-        connect_nodes_bi(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[0], self.nodes[1])
 
         # sync must be possible, node 1 is no longer in IBD and should
         # therefore connect to node 0 (NODE_NETWORK_LIMITED)
-        sync_blocks([self.nodes[0], self.nodes[1]])
+        self.sync_blocks([self.nodes[0], self.nodes[1]])
 
 
 if __name__ == '__main__':

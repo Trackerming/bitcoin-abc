@@ -32,6 +32,7 @@ class QAbstractItemView;
 class QDateTime;
 class QFont;
 class QLineEdit;
+class QProgressDialog;
 class QUrl;
 class QWidget;
 QT_END_NAMESPACE
@@ -152,6 +153,9 @@ void openDebugLogfile();
 // Open the config file
 bool openBitcoinConf();
 
+// Split a QString using given separator, skipping the empty parts
+QStringList splitSkipEmptyParts(const QString &s, const QString &separator);
+
 /** Qt event filter that intercepts ToolTipChange events, and replaces the
  * tooltip with a rich text representation if needed.  This assures that Qt can
  * word-wrap long tooltip messages. Tooltips longer than the provided size
@@ -227,9 +231,11 @@ QString formatDurationStr(int secs);
 /* Format CNodeStats.nServices bitmask into a user-readable string */
 QString formatServicesStr(quint64 mask);
 
-/* Format a CNodeCombinedStats.dPingTime into a user-readable string or display
- * N/A, if 0*/
-QString formatPingTime(double dPingTime);
+/*
+ * Format a CNodeStats.m_ping_usec into a user-readable string or display N/A,
+ * if 0.
+ */
+QString formatPingTime(int64_t ping_usec);
 
 /* Format a CNodeCombinedStats.nTimeOffset into a user-readable string. */
 QString formatTimeOffset(int64_t nTimeOffset);
@@ -238,8 +244,14 @@ QString formatNiceTimeOffset(qint64 secs);
 
 QString formatBytes(uint64_t bytes);
 
+qreal calculateIdealFontSize(int width, const QString &text, QFont font,
+                             qreal minPointSize = 4, qreal startPointSize = 14);
+
 class ClickableLabel : public QLabel {
     Q_OBJECT
+
+public:
+    bool hasPixmap() const;
 
 Q_SIGNALS:
     /** Emitted when the label is clicked. The relative mouse coordinates of the
@@ -287,6 +299,9 @@ private:
  * introduced.
  */
 int TextWidth(const QFontMetrics &fm, const QString &text);
+
+// Fix known bugs in QProgressDialog class.
+void PolishProgressDialog(QProgressDialog *dialog);
 } // namespace GUIUtil
 
 #endif // BITCOIN_QT_GUIUTIL_H

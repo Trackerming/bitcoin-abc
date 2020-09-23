@@ -150,7 +150,7 @@ directory is never deleted after a failed test.
 A python debugger can be attached to tests at any point. Just add the line:
 
 ```py
-import pdb; pdb.set_trace() 
+import pdb; pdb.set_trace()
 ```
 
 anywhere in the test. You will then be able to inspect variables, as well as
@@ -180,6 +180,39 @@ Note: gdb attach step may require `sudo`. To get rid of this, you can run:
 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 ```
 
+### Benchmarking and profiling with perf
+
+An easy way to profile node performance during functional tests is provided
+for Linux platforms using `perf`.
+
+Perf will sample the running node and will generate profile data in the node's
+datadir. The profile data can then be presented using `perf report` or a graphical
+tool like [hotspot](https://github.com/KDAB/hotspot).
+
+There are two ways of invoking perf: one is to use the `--perf` flag when
+running tests, which will profile each node during the entire test run: perf
+begins to profile when the node starts and ends when it shuts down. The other
+way is the use the `profile_with_perf` context manager, e.g.
+
+```python
+with node.profile_with_perf("send-big-msgs"):
+    # Perform activity on the node you're interested in profiling, e.g.:
+    for _ in range(10000):
+        node.p2p.send_message(some_large_message)
+```
+
+To see useful textual output, run
+
+```sh
+perf report -i /path/to/datadir/send-big-msgs.perf.data.xxxx --stdio | c++filt | less
+```
+
+#### See also:
+
+- [Installing perf](https://askubuntu.com/q/50145)
+- [Perf examples](http://www.brendangregg.com/perf.html)
+- [Hotspot](https://github.com/KDAB/hotspot): a GUI for perf output analysis
+
 ##### Prevent using deprecated features
 
 Python will issue a `DeprecationWarning` when a deprecated feature is
@@ -200,9 +233,9 @@ Use the `-v` option for verbose output.
 
 #### Example test
 
-The [example_test.py](example_test.py) is a heavily commented example of a test
-case that uses both the RPC and P2P interfaces. If you are writing your first
-test, copy that file and modify to fit your needs.
+The [example_test.py](/test/functional/example_test.py) is a heavily commented
+example of a test case that uses both the RPC and P2P interfaces. If you are
+writing your first test, copy that file and modify to fit your needs.
 
 #### Coverage
 
@@ -223,6 +256,20 @@ don't have test cases for.
 - When subclassing the BitcoinTestFramwork, place overrides for the
   `set_test_params()`, `add_options()` and `setup_xxxx()` methods at the top of
   the subclass, then locally-defined helper methods, then the `run_test()` method.
+
+#### Naming guidelines
+
+- Name the test `<area>_test.py`, where area can be one of the following:
+    - `feature` for tests for full features that aren't wallet/mining/mempool, eg `feature_rbf.py`
+    - `interface` for tests for other interfaces (REST, ZMQ, etc), eg `interface_rest.py`
+    - `mempool` for tests for mempool behaviour, eg `mempool_reorg.py`
+    - `mining` for tests for mining features, eg `mining_prioritisetransaction.py`
+    - `p2p` for tests that explicitly test the p2p interface, eg `p2p_disconnect_ban.py`
+    - `rpc` for tests for individual RPC methods or features, eg `rpc_listtransactions.py`
+    - `wallet` for tests for wallet features, eg `wallet_keypool.py`
+- use an underscore to separate words
+    - exception: for tests for specific RPCs or command line options which don't include underscores, name the test after the exact RPC or argument name, eg `rpc_decodescript.py`, not `rpc_decode_script.py`
+- Don't use the redundant word `test` in the name, eg `interface_zmq.py`, not `interface_zmq_test.py`
 
 #### General test-writing advice
 
@@ -271,30 +318,30 @@ the Bitcoin Core node application logic. For custom behaviour, subclass the
 P2PInterface object and override the callback methods.
 
 - Can be used to write tests where specific P2P protocol behavior is tested.
-Examples tests are `p2p_unrequested_blocks.py`, `p2p_compactblocks.py`.
+Examples tests are `p2p-acceptblock.py`, `p2p-compactblocks.py`.
 
 ### test-framework modules
 
-#### [test_framework/authproxy.py](test_framework/authproxy.py)
+#### [test_framework/authproxy.py](/test/functional/test_framework/authproxy.py)
 Taken from the [python-bitcoinrpc repository](https://github.com/jgarzik/python-bitcoinrpc).
 
-#### [test_framework/test_framework.py](test_framework/test_framework.py)
+#### [test_framework/test_framework.py](/test/functional/test_framework/test_framework.py)
 Base class for functional tests.
 
-#### [test_framework/util.py](test_framework/util.py)
+#### [test_framework/util.py](/test/functional/test_framework/util.py)
 Generally useful functions.
 
-#### [test_framework/mininode.py](test_framework/mininode.py)
+#### [test_framework/mininode.py](/test/functional/test_framework/mininode.py)
 Basic code to support P2P connectivity to a bitcoind.
 
-#### [test_framework/script.py](test_framework/script.py)
+#### [test_framework/script.py](/test/functional/test_framework/script.py)
 Utilities for manipulating transaction scripts (originally from python-bitcoinlib)
 
-#### [test_framework/key.py](test_framework/key.py)
+#### [test_framework/key.py](/test/functional/test_framework/key.py)
 Wrapper around OpenSSL EC_Key (originally from python-bitcoinlib)
 
-#### [test_framework/bignum.py](test_framework/bignum.py)
+#### [test_framework/bignum.py](/test/functional/test_framework/bignum.py)
 Helpers for script.py
 
-#### [test_framework/blocktools.py](test_framework/blocktools.py)
+#### [test_framework/blocktools.py](/test/functional/test_framework/blocktools.py)
 Helper functions for creating blocks and transactions.

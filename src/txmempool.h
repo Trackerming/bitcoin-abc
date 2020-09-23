@@ -8,10 +8,11 @@
 
 #include <amount.h>
 #include <coins.h>
-#include <crypto/siphash.h>
+#include <core_memusage.h>
 #include <indirectmap.h>
+#include <optional.h>
 #include <primitives/transaction.h>
-#include <random.h>
+#include <salteduint256hasher.h>
 #include <sync.h>
 
 #include <boost/multi_index/hashed_index.hpp>
@@ -29,7 +30,7 @@
 class CBlockIndex;
 class Config;
 
-extern CCriticalSection cs_main;
+extern RecursiveMutex cs_main;
 
 /**
  * Fake height value used in Coins to signify they are only in the memory
@@ -121,7 +122,7 @@ public:
     size_t GetTxSize() const { return nTxSize; }
     size_t GetTxVirtualSize() const;
 
-    int64_t GetTime() const { return nTime; }
+    std::chrono::seconds GetTime() const { return std::chrono::seconds{nTime}; }
     unsigned int GetHeight() const { return entryHeight; }
     int64_t GetSigOpCount() const { return sigOpCount; }
     Amount GetModifiedFee() const { return nFee + feeDelta; }
@@ -133,7 +134,7 @@ public:
                                int64_t modifyCount, int64_t modifySigOpCount);
     // Adjusts the ancestor state
     void UpdateAncestorState(int64_t modifySize, Amount modifyFee,
-                             int64_t modifyCount, int modifySigOps);
+                             int64_t modifyCount, int64_t modifySigOps);
     // Updates the fee delta used for mining priority score, and the
     // modified fees with descendants.
     void UpdateFeeDelta(Amount feeDelta);
@@ -354,7 +355,7 @@ struct TxMempoolInfo {
     CTransactionRef tx;
 
     /** Time the transaction entered the mempool. */
-    int64_t nTime;
+    std::chrono::seconds m_time;
 
     /** Feerate of the transaction. */
     CFeeRate feeRate;
@@ -368,8 +369,6 @@ struct TxMempoolInfo {
  * notification signal.
  */
 enum class MemPoolRemovalReason {
-    //! Manually removed or unknown reason
-    UNKNOWN = 0,
     //! Expired from mempool
     EXPIRY,
     //! Removed in size limiting
@@ -384,17 +383,11 @@ enum class MemPoolRemovalReason {
     REPLACED
 };
 
-class SaltedTxidHasher {
-private:
-    /** Salt */
-    const uint64_t k0, k1;
-
+class SaltedTxIdHasher : private SaltedUint256Hasher {
 public:
-    SaltedTxidHasher();
+    SaltedTxIdHasher() : SaltedUint256Hasher() {}
 
-    size_t operator()(const TxId &txid) const {
-        return SipHashUint256(k0, k1, txid);
-    }
+    size_t operator()(const TxId &txid) const { return hash(txid); }
 };
 
 /**
@@ -500,7 +493,7 @@ public:
         CTxMemPoolEntry, boost::multi_index::indexed_by<
                              // sorted by txid
                              boost::multi_index::hashed_unique<
-                                 mempoolentry_txid, SaltedTxidHasher>,
+                                 mempoolentry_txid, SaltedTxIdHasher>,
                              // sorted by fee rate
                              boost::multi_index::ordered_non_unique<
                                  boost::multi_index::tag<descendant_score>,
@@ -527,7 +520,7 @@ public:
      * By design, it is guaranteed that:
      *
      * 1. Locking both `cs_main` and `mempool.cs` will give a view of mempool
-     *    that is consistent with current chain tip (`chainActive` and
+     *    that is consistent with current chain tip (`::ChainActive()` and
      *    `pcoinsTip`) and is fully populated. Fully populated means that if the
      *    current active chain is missing transactions that were present in a
      *    previously active chain, all the missing transactions will have been
@@ -557,7 +550,7 @@ public:
     mutable RecursiveMutex cs;
     indexed_transaction_set mapTx GUARDED_BY(cs);
 
-    typedef indexed_transaction_set::nth_index<0>::type::iterator txiter;
+    using txiter = indexed_transaction_set::nth_index<0>::type::const_iterator;
     //! All tx hashes/entries in mapTx, in random order
     std::vector<std::pair<TxHash, txiter>> vTxHashes;
 
@@ -626,9 +619,7 @@ public:
     void addUnchecked(const CTxMemPoolEntry &entry, setEntries &setAncestors)
         EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
 
-    void removeRecursive(
-        const CTransaction &tx,
-        MemPoolRemovalReason reason = MemPoolRemovalReason::UNKNOWN);
+    void removeRecursive(const CTransaction &tx, MemPoolRemovalReason reason);
     void removeForReorg(const Config &config, const CCoinsViewCache *pcoins,
                         unsigned int nMemPoolHeight, int flags)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
@@ -661,7 +652,7 @@ public:
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /** Returns an iterator to the given txid, if found */
-    boost::optional<txiter> GetIter(const TxId &txid) const
+    Optional<txiter> GetIter(const TxId &txid) const
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /**
@@ -678,10 +669,8 @@ public:
      * updateDescendants to true when removing a tx that was in a block, so that
      * any in-mempool descendants have their ancestor state updated.
      */
-    void
-    RemoveStaged(setEntries &stage, bool updateDescendants,
-                 MemPoolRemovalReason reason = MemPoolRemovalReason::UNKNOWN)
-        EXCLUSIVE_LOCKS_REQUIRED(cs);
+    void RemoveStaged(setEntries &stage, bool updateDescendants,
+                      MemPoolRemovalReason reason) EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /**
      * When adding transactions from a disconnected block back to the mempool,
@@ -746,12 +735,12 @@ public:
      * Expire all transaction (and their dependencies) in the mempool older than
      * time. Return the number of removed transactions.
      */
-    int Expire(int64_t time);
+    int Expire(std::chrono::seconds time);
 
     /**
      * Reduce the size of the mempool by expiring and then trimming the mempool.
      */
-    void LimitSize(size_t limit, unsigned long age);
+    void LimitSize(size_t limit, std::chrono::seconds age);
 
     /**
      * Calculate the ancestor and descendant count for the given transaction.
@@ -837,9 +826,7 @@ private:
      * transaction that is removed, so we can't remove intermediate transactions
      * in a chain before we've updated all the state for the removal.
      */
-    void
-    removeUnchecked(txiter entry,
-                    MemPoolRemovalReason reason = MemPoolRemovalReason::UNKNOWN)
+    void removeUnchecked(txiter entry, MemPoolRemovalReason reason)
         EXCLUSIVE_LOCKS_REQUIRED(cs);
 };
 
@@ -893,7 +880,7 @@ private:
                              // sorted by txid
                              boost::multi_index::hashed_unique<
                                  boost::multi_index::tag<txid_index>,
-                                 mempoolentry_txid, SaltedTxidHasher>,
+                                 mempoolentry_txid, SaltedTxIdHasher>,
                              // sorted by order in the blockchain
                              boost::multi_index::sequenced<
                                  boost::multi_index::tag<insertion_order>>>>

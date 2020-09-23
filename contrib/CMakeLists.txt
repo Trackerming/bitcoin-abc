@@ -1,15 +1,18 @@
-option(BUILD_SOURCE_CONTROL_TOOLS "Build the source control tools" OFF)
-if(BUILD_SOURCE_CONTROL_TOOLS)
+option(ENABLE_SOURCE_CONTROL_TOOLS_TESTS "Enable testing of the source control tools" OFF)
+if(ENABLE_SOURCE_CONTROL_TOOLS_TESTS)
 	add_subdirectory(source-control-tools)
 endif()
 
+add_subdirectory(buildbot)
 add_subdirectory(devtools)
 
 include(PackageHelper)
 exclude_from_source_package(
 	# Subdirectories
+	"aur/"
 	"debian/"
 	"gitian/"
+	"gitian-builder/"
 	"gitian-descriptors/"
 	"qos/"
 	"seeds/"

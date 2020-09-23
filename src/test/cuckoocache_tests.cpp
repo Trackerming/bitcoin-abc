@@ -1,4 +1,4 @@
-// Copyright (c) 2012-2016 The Bitcoin Core developers
+// Copyright (c) 2012-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -7,7 +7,7 @@
 #include <random.h>
 #include <script/sigcache.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 #include <boost/thread/shared_mutex.hpp>
@@ -185,7 +185,7 @@ static double normalize_hit_rate(double hits, double load) {
     return hits * std::max(load, 1.0);
 }
 
-/** Check the hit rate on loads ranging from 0.1 to 2.0 */
+/** Check the hit rate on loads ranging from 0.1 to 1.6 */
 BOOST_AUTO_TEST_CASE(cuckoocache_hit_rate_ok) {
     /**
      * Arbitrarily selected Hit Rate threshold that happens to work for this
@@ -233,7 +233,7 @@ template <typename Cache> static void test_cache_erase(size_t megabytes) {
     }
     /** Erase the first quarter */
     for (uint32_t i = 0; i < (n_insert / 4); ++i) {
-        set.contains(hashes[i], true);
+        BOOST_CHECK(set.contains(hashes[i], true));
     }
     /** Insert the second half */
     for (uint32_t i = (n_insert / 2); i < n_insert; ++i) {
@@ -318,7 +318,8 @@ static void test_cache_erase_parallel(size_t megabytes) {
             size_t start = ntodo * x;
             size_t end = ntodo * (x + 1);
             for (uint32_t i = start; i < end; ++i) {
-                set.contains(hashes[i], true);
+                bool contains = set.contains(hashes[i], true);
+                assert(contains);
             }
         });
     }

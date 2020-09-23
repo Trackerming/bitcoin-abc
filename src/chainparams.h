@@ -66,12 +66,22 @@ public:
     bool DefaultConsistencyChecks() const { return fDefaultConsistencyChecks; }
     /** Policy: Filter transactions that do not match well-defined patterns */
     bool RequireStandard() const { return fRequireStandard; }
+    /** If this chain is exclusively used for testing */
+    bool IsTestChain() const { return m_is_test_chain; }
+    /** If this chain allows time to be mocked */
+    bool IsMockableChain() const { return m_is_mockable_chain; }
     uint64_t PruneAfterHeight() const { return nPruneAfterHeight; }
+    /** Minimum free space (in GB) needed for data directory */
+    uint64_t AssumedBlockchainSize() const { return m_assumed_blockchain_size; }
     /**
-     * Make miner stop after a block is found. In RPC, don't return until
-     * nGenProcLimit blocks are generated.
+     * Minimum free space (in GB) needed for data directory when pruned; Does
+     * not include prune target
      */
-    bool MineBlocksOnDemand() const { return fMineBlocksOnDemand; }
+    uint64_t AssumedChainStateSize() const {
+        return m_assumed_chain_state_size;
+    }
+    /** Whether it is possible to mine blocks on demand (no retargeting) */
+    bool MineBlocksOnDemand() const { return consensus.fPowNoRetargeting; }
     /** Return the BIP70 network string (main, test or regtest) */
     std::string NetworkIDString() const { return strNetworkID; }
     /** Return the list of hostnames to look up for DNS seeds */
@@ -92,6 +102,8 @@ protected:
     CMessageHeader::MessageMagic netMagic;
     int nDefaultPort;
     uint64_t nPruneAfterHeight;
+    uint64_t m_assumed_blockchain_size;
+    uint64_t m_assumed_chain_state_size;
     std::vector<std::string> vSeeds;
     std::vector<uint8_t> base58Prefixes[MAX_BASE58_TYPES];
     std::string cashaddrPrefix;
@@ -100,7 +112,8 @@ protected:
     std::vector<SeedSpec6> vFixedSeeds;
     bool fDefaultConsistencyChecks;
     bool fRequireStandard;
-    bool fMineBlocksOnDemand;
+    bool m_is_test_chain;
+    bool m_is_mockable_chain;
     CCheckpointData checkpointData;
     ChainTxData chainTxData;
 };

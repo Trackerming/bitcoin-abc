@@ -1,27 +1,32 @@
-Source: bitcoin
+Source: bitcoinabc
 Section: utils
 Priority: optional
-Maintainer: Jonas Smedegaard <dr@jones.dk>
-Uploaders: Micah Anderson <micah@debian.org>
-Build-Depends: debhelper,
+Maintainer: Bitcoin ABC Package Maintainers <package-maintainers@bitcoinabc.org>
+Uploaders: Jason B. Cox <jasonbcox@bitcoinabc.org>
+Build-Depends: cmake (>= 3.16),
+ debhelper (>=12.1),
  devscripts,
- automake,
- libtool,
- bash-completion,
- libboost-system-dev (>> 1.35) | libboost-system1.35-dev,
- libdb4.8++-dev,
- libssl-dev,
- pkg-config,
- libminiupnpc8-dev | libminiupnpc-dev (>> 1.6),
- libboost-filesystem-dev (>> 1.35) | libboost-filesystem1.35-dev,
- libboost-program-options-dev (>> 1.35) | libboost-program-options1.35-dev,
- libboost-thread-dev (>> 1.35) | libboost-thread1.35-dev,
- libboost-test-dev (>> 1.35) | libboost-test1.35-dev,
- qt4-qmake,
- libqt4-dev,
+ git,
+ help2man,
+ libdb5.3++-dev,
+ libevent-dev,
+ libjemalloc-dev,
+ libminiupnpc-dev,
+ libboost-filesystem-dev,
+ libboost-chrono-dev,
+ libboost-system-dev,
+ libboost-thread-dev,
+ libboost-test-dev,
+ libprotobuf-dev,
  libqrencode-dev,
- libprotobuf-dev, protobuf-compiler,
- python
+ libssl-dev,
+ libzmq3-dev,
+ ninja-build,
+ protobuf-compiler,
+ python3,
+ qttools5-dev,
+ qttools5-dev-tools,
+ xvfb
 Standards-Version: 3.9.2
 Homepage: https://bitcoinabc.org/
 Vcs-Git: ssh://vcs@reviews.bitcoinabc.org:2221/source/bitcoin-abc.git

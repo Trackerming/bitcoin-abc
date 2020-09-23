@@ -3,20 +3,21 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <key_io.h>
-#include <script/sign.h>
+#include <util/bip32.h>
+#include <util/error.h>
 #include <util/strencodings.h>
+#include <wallet/psbtwallet.h>
 #include <wallet/test/wallet_test_fixture.h>
 #include <wallet/wallet.h>
 
-#include <test/test_bitcoin.h>
-
-#include <univalue.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
 BOOST_FIXTURE_TEST_SUITE(psbt_wallet_tests, WalletTestingSetup)
 
 BOOST_AUTO_TEST_CASE(psbt_updater_test) {
+    auto spk_man = m_wallet.GetLegacyScriptPubKeyMan();
     LOCK(m_wallet.cs_wallet);
 
     // Create prevtxs and add to wallet
@@ -55,7 +56,7 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
                  "dae4dba2fbfef536d752ae"),
         SER_NETWORK, PROTOCOL_VERSION);
     s_rs1 >> rs1;
-    m_wallet.AddCScript(rs1);
+    spk_man->AddCScript(rs1);
 
     CScript rs2;
     CDataStream s_rs2(
@@ -64,16 +65,16 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
                  "6151926860221f0e7352ae"),
         SER_NETWORK, PROTOCOL_VERSION);
     s_rs2 >> rs2;
-    m_wallet.AddCScript(rs2);
+    spk_man->AddCScript(rs2);
 
     // Add hd seed
     // Mainnet and uncompressed form of
     // cUkG8i1RFfWGWy5ziR11zJ5V4U4W3viSFCfyJmZnvQaUsd1xuF3T
     CKey key =
         DecodeSecret("5KSSJQ7UNfFGwVgpCZDSHm5rVNhMFcFtvWM3zQ8mW4qNDEN7LFd");
-    CPubKey master_pub_key = m_wallet.DeriveNewSeed(key);
-    m_wallet.SetHDSeed(master_pub_key);
-    m_wallet.NewKeyPool();
+    CPubKey master_pub_key = spk_man->DeriveNewSeed(key);
+    spk_man->SetHDSeed(master_pub_key);
+    spk_man->NewKeyPool();
 
     // Call FillPSBT
     PartiallySignedTransaction psbtx;
@@ -87,15 +88,14 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
         SER_NETWORK, PROTOCOL_VERSION);
     ssData >> psbtx;
 
-    // Use CTransaction for the constant parts of the
-    // transaction to avoid rehashing.
-    const CTransaction txConst(*psbtx.tx);
-
     // FIXME: input 2 hd path is missing.
     // The path missing comes from the HD masterkey.
 
     // Fill transaction with our data
-    FillPSBT(&m_wallet, psbtx, &txConst, SigHashType(), false, true);
+    bool complete = true;
+    BOOST_REQUIRE_EQUAL(
+        FillPSBT(&m_wallet, psbtx, complete, SigHashType(), false, true),
+        TransactionError::OK);
 
     // Get the final tx
     CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);

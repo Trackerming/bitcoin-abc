@@ -7,6 +7,7 @@
 #include <chainparams.h>
 #include <config.h>
 #include <httprpc.h>
+#include <key.h>
 #include <qt/bitcoin.h>
 #include <qt/bitcoingui.h>
 #include <qt/networkstyle.h>
@@ -18,9 +19,10 @@
 #if defined(HAVE_CONFIG_H)
 #include <config/bitcoin-config.h>
 #endif
-#ifdef ENABLE_WALLET
-#include <wallet/db.h>
-#endif
+
+#include <test/util/setup_common.h>
+
+#include <univalue.h>
 
 #include <QAction>
 #include <QEventLoop>
@@ -29,25 +31,8 @@
 #include <QTest>
 #include <QTextEdit>
 #include <QtGlobal>
-/*
- * FIXME: <QtTest/QtTestGui> requires QT_WIDGETS_LIB to be defined prior
- * inclusion to export the QtTest::keyClicks symbol.
- * On some older Qt versions the definition end up being set by the inclusion of
- * <QtTest/QtTestWidgets>.
- * This only occurs when building with autotools, as QMake and CMake define
- * QT_WIDGETS_LIB on the command line. As a workaround for autotools,
- * <QtTest/QtTestWidgets> should be included before <QtTest/QtTestGui>.
- * Also prevent the linter from sorting the includes.
- */
-// clang-format off
-#include <QtTest/QtTestWidgets>
 #include <QtTest/QtTestGui>
-// clang-format on
-
-#include <univalue.h>
-
-#include <new>
-#include <string>
+#include <QtTest/QtTestWidgets>
 
 namespace {
 //! Call getblockchaininfo RPC and check first field of JSON output.
@@ -90,10 +75,17 @@ void AppTests::appTests() {
 
     Config &config = const_cast<Config &>(GetConfig());
 
+    // Create a temp data directory to backup the gui settings to
+    BasicTestingSetup test{CBaseChainParams::REGTEST};
+    // Already started by the common test setup, so stop it to avoid
+    // interference
+    ECC_Stop();
+    LogInstance().DisconnectTestLogger();
+
     m_app.parameterSetup();
     m_app.createOptionsModel(true /* reset settings */);
-    QScopedPointer<const NetworkStyle> style(NetworkStyle::instantiate(
-        QString::fromStdString(Params().NetworkIDString())));
+    QScopedPointer<const NetworkStyle> style(
+        NetworkStyle::instantiate(Params().NetworkIDString()));
     m_app.setupPlatformStyle();
     m_app.createWindow(&config, style.data());
     connect(&m_app, &BitcoinApplication::windowShown, this,

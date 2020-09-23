@@ -8,7 +8,6 @@
 #include <amount.h>                 // For Amount
 #include <primitives/transaction.h> // For CTxOut
 #include <pubkey.h> // For CKeyID and CScriptID (definitions needed in CTxDestination instantiation)
-#include <script/ismine.h>             // For isminefilter, isminetype
 #include <script/standard.h>           // For CTxDestination
 #include <support/allocators/secure.h> // For SecureString
 #include <ui_interface.h>              // For ChangeType
@@ -29,6 +28,10 @@ class CMutableTransaction;
 class COutPoint;
 class CTransaction;
 class CWallet;
+enum isminetype : unsigned int;
+enum class FeeReason;
+typedef uint8_t isminefilter;
+
 enum class OutputType;
 struct CRecipient;
 struct TxId;
@@ -36,7 +39,6 @@ struct TxId;
 namespace interfaces {
 
 class Handler;
-class PendingWalletTx;
 struct WalletAddress;
 struct WalletBalances;
 struct WalletTx;
@@ -87,8 +89,10 @@ public:
     virtual std::set<CTxDestination>
     getLabelAddresses(const std::string &label) = 0;
 
-    //! Get key from pool.
-    virtual bool getKeyFromPool(bool internal, CPubKey &pub_key) = 0;
+    // Get a new address.
+    virtual bool getNewDestination(const OutputType type,
+                                   const std::string label,
+                                   CTxDestination &dest) = 0;
 
     //! Get public key.
     virtual bool getPubKey(const CKeyID &address, CPubKey &pub_key) = 0;
@@ -146,11 +150,15 @@ public:
     virtual void listLockedCoins(std::vector<COutPoint> &outputs) = 0;
 
     //! Create transaction.
-    virtual std::unique_ptr<PendingWalletTx>
+    virtual CTransactionRef
     createTransaction(const std::vector<CRecipient> &recipients,
                       const CCoinControl &coin_control, bool sign,
                       int &change_pos, Amount &fee,
                       std::string &fail_reason) = 0;
+
+    //! Commit transaction.
+    virtual void commitTransaction(CTransactionRef tx, WalletValueMap value_map,
+                                   WalletOrderForm order_form) = 0;
 
     //! Return whether transaction can be abandoned.
     virtual bool transactionCanBeAbandoned(const TxId &txid) = 0;
@@ -234,6 +242,12 @@ public:
     // Get default change type.
     virtual OutputType getDefaultChangeType() = 0;
 
+    //! Get max tx fee.
+    virtual Amount getDefaultMaxTxFee() = 0;
+
+    // Remove wallet.
+    virtual void remove() = 0;
+
     //! Register handler for unload message.
     using UnloadFn = std::function<void()>;
     virtual std::unique_ptr<Handler> handleUnload(UnloadFn fn) = 0;
@@ -270,21 +284,6 @@ public:
     using CanGetAddressesChangedFn = std::function<void()>;
     virtual std::unique_ptr<Handler>
     handleCanGetAddressesChanged(CanGetAddressesChangedFn fn) = 0;
-};
-
-//! Tracking object returned by CreateTransaction and passed to
-//! CommitTransaction.
-class PendingWalletTx {
-public:
-    virtual ~PendingWalletTx() {}
-
-    //! Get transaction data.
-    virtual const CTransaction &get() = 0;
-
-    //! Send pending transaction and commit to wallet.
-    virtual bool commit(WalletValueMap value_map, WalletOrderForm order_form,
-                        std::string from_account,
-                        std::string &reject_reason) = 0;
 };
 
 //! Information about one wallet address.
@@ -358,8 +357,8 @@ struct WalletTxOut {
     bool is_spent = false;
 };
 
-//! Return implementation of Wallet interface. This function will be undefined
-//! in builds where ENABLE_WALLET is false.
+//! Return implementation of Wallet interface. This function is defined in
+//! dummywallet.cpp and throws if the wallet component is not compiled.
 std::unique_ptr<Wallet> MakeWallet(const std::shared_ptr<CWallet> &wallet);
 
 } // namespace interfaces

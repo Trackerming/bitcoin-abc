@@ -10,13 +10,14 @@
 #include <coins.h>
 #include <compressor.h>
 #include <consensus/consensus.h>
+#include <disconnectresult.h>
 #include <serialize.h>
 #include <version.h>
 
 class CBlock;
 class CBlockIndex;
 class CCoinsViewCache;
-class CValidationState;
+class BlockValidationState;
 
 /**
  * Undo information for a CTxIn
@@ -58,7 +59,7 @@ public:
             // Old versions stored the version number for the last spend of a
             // transaction's outputs. Non-final spends were indicated with
             // height = 0.
-            unsigned int nVersionDummy;
+            unsigned int nVersionDummy = 0;
             ::Unserialize(s, VARINT(nVersionDummy));
         }
 
@@ -113,15 +114,6 @@ public:
     inline void SerializationOp(Stream &s, Operation ser_action) {
         READWRITE(vtxundo);
     }
-};
-
-enum DisconnectResult {
-    // All good.
-    DISCONNECT_OK,
-    // Rolled back, but UTXO set was inconsistent with block.
-    DISCONNECT_UNCLEAN,
-    // Something else went wrong.
-    DISCONNECT_FAILED,
 };
 
 /**

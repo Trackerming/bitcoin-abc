@@ -9,12 +9,13 @@
 
 #include <chainparamsbase.h>
 #include <clientversion.h>
-#include <fs.h>
 #include <rpc/client.h>
 #include <rpc/protocol.h>
+#include <rpc/request.h>
 #include <support/events.h>
 #include <util/strencodings.h>
 #include <util/system.h>
+#include <util/translation.h>
 
 #include <event2/buffer.h>
 #include <event2/keyvalq_struct.h>
@@ -22,6 +23,7 @@
 #include <univalue.h>
 
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <tuple>
 
@@ -37,17 +39,20 @@ static void SetupCliArgs() {
         CreateBaseChainParams(CBaseChainParams::MAIN);
     const auto testnetBaseParams =
         CreateBaseChainParams(CBaseChainParams::TESTNET);
+    const auto regtestBaseParams =
+        CreateBaseChainParams(CBaseChainParams::REGTEST);
 
-    gArgs.AddArg("-?", "This help message", false, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-version", "Print version and exit", false,
+    gArgs.AddArg("-?", "This help message", ArgsManager::ALLOW_ANY,
+                 OptionsCategory::OPTIONS);
+    gArgs.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY,
                  OptionsCategory::OPTIONS);
     gArgs.AddArg("-conf=<file>",
                  strprintf("Specify configuration file. Relative paths will be "
                            "prefixed by datadir location. (default: %s)",
                            BITCOIN_CONF_FILENAME),
-                 false, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-datadir=<dir>", _("Specify data directory"), false,
-                 OptionsCategory::OPTIONS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-datadir=<dir>", "Specify data directory",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg(
         "-getinfo",
         "Get general information from the remote server. Note that unlike "
@@ -55,58 +60,61 @@ static void SetupCliArgs() {
         "multiple non-atomic requests. Some entries in the result may "
         "represent results from different states (e.g. wallet balance may be "
         "as of a different block from the chain state reported)",
-        false, OptionsCategory::OPTIONS);
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     SetupChainParamsBaseOptions();
     gArgs.AddArg(
         "-named",
         strprintf("Pass named instead of positional arguments (default: %s)",
                   DEFAULT_NAMED),
-        false, OptionsCategory::OPTIONS);
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg(
         "-rpcconnect=<ip>",
         strprintf("Send commands to node running on <ip> (default: %s)",
                   DEFAULT_RPCCONNECT),
-        false, OptionsCategory::OPTIONS);
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-rpccookiefile=<loc>",
                  "Location of the auth cookie. Relative paths will be prefixed "
                  "by a net-specific datadir location. (default: data dir)",
-                 false, OptionsCategory::OPTIONS);
-    gArgs.AddArg(
-        "-rpcport=<port>",
-        strprintf("Connect to JSON-RPC on <port> (default: %u or testnet: %u)",
-                  defaultBaseParams->RPCPort(), testnetBaseParams->RPCPort()),
-        false, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpcwait", "Wait for RPC server to start", false,
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-rpcport=<port>",
+                 strprintf("Connect to JSON-RPC on <port> (default: %u, "
+                           "testnet: %u, regtest: %u)",
+                           defaultBaseParams->RPCPort(),
+                           testnetBaseParams->RPCPort(),
+                           regtestBaseParams->RPCPort()),
+                 ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
                  OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections", false,
-                 OptionsCategory::OPTIONS);
+    gArgs.AddArg("-rpcwait", "Wait for RPC server to start",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    gArgs.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-rpcpassword=<pw>", "Password for JSON-RPC connections",
-                 false, OptionsCategory::OPTIONS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-rpcclienttimeout=<n>",
                  strprintf("Timeout in seconds during HTTP requests, or 0 for "
                            "no timeout. (default: %d)",
                            DEFAULT_HTTP_CLIENT_TIMEOUT),
-                 false, OptionsCategory::OPTIONS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 
     gArgs.AddArg("-stdinrpcpass",
                  strprintf("Read RPC password from standard input as a single "
                            "line. When combined with -stdin, the first line "
                            "from standard input is used for the RPC password."),
-                 false, OptionsCategory::OPTIONS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg("-stdin",
                  "Read extra arguments from standard input, one per line until "
                  "EOF/Ctrl-D (recommended for sensitive information such as "
                  "passphrases)",
-                 false, OptionsCategory::OPTIONS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     gArgs.AddArg(
         "-rpcwallet=<walletname>",
         "Send RPC for non-default wallet on RPC server (needs to exactly match "
         "corresponding -wallet option passed to bitcoind)",
-        false, OptionsCategory::OPTIONS);
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 
     // Hidden
-    gArgs.AddArg("-h", "", false, OptionsCategory::HIDDEN);
-    gArgs.AddArg("-help", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-h", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-help", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
 }
 
 /** libevent event log callback */
@@ -147,8 +155,8 @@ static int AppInitRPC(int argc, char *argv[]) {
     SetupCliArgs();
     std::string error;
     if (!gArgs.ParseParameters(argc, argv, error)) {
-        fprintf(stderr, "Error parsing command line arguments: %s\n",
-                error.c_str());
+        tfm::format(std::cerr, "Error parsing command line arguments: %s\n",
+                    error);
         return EXIT_FAILURE;
     }
     if (argc < 2 || HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
@@ -169,35 +177,29 @@ static int AppInitRPC(int argc, char *argv[]) {
             strUsage += "\n" + gArgs.GetHelpMessage();
         }
 
-        fprintf(stdout, "%s", strUsage.c_str());
+        tfm::format(std::cout, "%s", strUsage);
         if (argc < 2) {
-            fprintf(stderr, "Error: too few parameters\n");
+            tfm::format(std::cerr, "Error: too few parameters\n");
             return EXIT_FAILURE;
         }
         return EXIT_SUCCESS;
     }
-    if (!fs::is_directory(GetDataDir(false))) {
-        fprintf(stderr,
-                "Error: Specified data directory \"%s\" does not exist.\n",
-                gArgs.GetArg("-datadir", "").c_str());
+    if (!CheckDataDirOption()) {
+        tfm::format(std::cerr,
+                    "Error: Specified data directory \"%s\" does not exist.\n",
+                    gArgs.GetArg("-datadir", ""));
         return EXIT_FAILURE;
     }
     if (!gArgs.ReadConfigFiles(error, true)) {
-        fprintf(stderr, "Error reading configuration file: %s\n",
-                error.c_str());
+        tfm::format(std::cerr, "Error reading configuration file: %s\n", error);
         return EXIT_FAILURE;
     }
-    // Check for -testnet or -regtest parameter (BaseParams() calls are only
-    // valid after this clause)
+    // Check for -chain, -testnet or -regtest parameter (BaseParams() calls are
+    // only valid after this clause)
     try {
         SelectBaseParams(gArgs.GetChainName());
     } catch (const std::exception &e) {
-        fprintf(stderr, "Error: %s\n", e.what());
-        return EXIT_FAILURE;
-    }
-    if (gArgs.GetBoolArg("-rpcssl", false)) {
-        fprintf(stderr,
-                "Error: SSL mode for RPC (-rpcssl) is no longer supported.\n");
+        tfm::format(std::cerr, "Error: %s\n", e.what());
         return EXIT_FAILURE;
     }
     return CONTINUE_EXECUTION;
@@ -440,7 +442,7 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
     if (!gArgs.GetArgs("-rpcwallet").empty()) {
         std::string walletName = gArgs.GetArg("-rpcwallet", "");
         char *encodedURI =
-            evhttp_uriencode(walletName.c_str(), walletName.size(), false);
+            evhttp_uriencode(walletName.data(), walletName.size(), false);
         if (encodedURI) {
             endpoint = "/wallet/" + std::string(encodedURI);
             free(encodedURI);
@@ -477,8 +479,7 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
                 "could be found, and RPC password is not set.  See "
                 "-rpcpassword and -stdinrpcpass.  Configuration file: (%s)",
                 GetConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME))
-                    .string()
-                    .c_str()));
+                    .string()));
         } else {
             throw std::runtime_error(
                 "Authorization failed: Incorrect rpcuser or rpcpassword");
@@ -599,7 +600,7 @@ static int CommandLineRPC(int argc, char *argv[]) {
                 break;
             } catch (const CConnectionFailed &) {
                 if (fWait) {
-                    MilliSleep(1000);
+                    UninterruptibleSleep(std::chrono::milliseconds{1000});
                 } else {
                     throw;
                 }
@@ -614,7 +615,7 @@ static int CommandLineRPC(int argc, char *argv[]) {
     }
 
     if (strPrint != "") {
-        fprintf((nRet == 0 ? stdout : stderr), "%s\n", strPrint.c_str());
+        tfm::format(nRet == 0 ? std::cout : std::cerr, "%s\n", strPrint);
     }
     return nRet;
 }
@@ -626,7 +627,7 @@ int main(int argc, char *argv[]) {
 #endif
     SetupEnvironment();
     if (!SetupNetworking()) {
-        fprintf(stderr, "Error: Initializing networking failed\n");
+        tfm::format(std::cerr, "Error: Initializing networking failed\n");
         return EXIT_FAILURE;
     }
     event_set_log_callback(&libevent_log_cb);

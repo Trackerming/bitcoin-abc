@@ -6,8 +6,6 @@ suites:
 - "buster"
 architectures:
 - "amd64"
-multiarch:
-- "i386"
 packages:
 - "autoconf"
 - "automake"
@@ -17,7 +15,6 @@ packages:
 - "bsdmainutils"
 - "build-essential"
 - "ca-certificates"
-- "cmake"
 - "curl"
 - "faketime"
 - "g++-aarch64-linux-gnu"
@@ -26,8 +23,6 @@ packages:
 - "gcc-arm-linux-gnueabihf"
 - "git"
 - "gperf"
-- "lib32stdc++-8-dev"
-- "libc6-dev:i386"
 - "libtool"
 - "ninja-build"
 - "pkg-config"
@@ -38,6 +33,11 @@ packages:
 - "libboost-all-dev"
 - "libevent-dev"
 - "libssl-dev"
+repositories:
+- "distribution": "buster-backports"
+  "source": "deb http://deb.debian.org/debian/ buster-backports main"
+  packages:
+  - "cmake"
 remotes:
 - "url": "https://github.com/Bitcoin-ABC/bitcoin-abc.git"
   "dir": "bitcoin"
@@ -45,16 +45,18 @@ files: []
 script: |
 
   WRAP_DIR=$HOME/wrapped
-  HOSTS="i686-pc-linux-gnu x86_64-linux-gnu arm-linux-gnueabihf aarch64-linux-gnu"
+  HOSTS="x86_64-linux-gnu arm-linux-gnueabihf aarch64-linux-gnu"
 
   # CMake toolchain file name differ from host name
   declare -A CMAKE_TOOLCHAIN_FILE
-  CMAKE_TOOLCHAIN_FILE[i686-pc-linux-gnu]=Linux32.cmake
   CMAKE_TOOLCHAIN_FILE[x86_64-linux-gnu]=Linux64.cmake
   CMAKE_TOOLCHAIN_FILE[arm-linux-gnueabihf]=LinuxARM.cmake
   CMAKE_TOOLCHAIN_FILE[aarch64-linux-gnu]=LinuxAArch64.cmake
 
-  INSTALL_COMPONENTS="bitcoind bitcoin-qt bitcoin-seeder"
+  # Allow extra cmake option to be specified for each host
+  declare -A CMAKE_EXTRA_OPTIONS
+  # ARM assembly is supported but experimental, disable it for the release
+  CMAKE_EXTRA_OPTIONS[arm-linux-gnueabihf]="-DSECP256K1_USE_ASM=OFF"
 
   FAKETIME_HOST_PROGS=""
   FAKETIME_PROGS="date ar ranlib nm"
@@ -131,7 +133,8 @@ script: |
     -DBUILD_LIBBITCOINCONSENSUS=OFF \
     -DENABLE_CLANG_TIDY=OFF \
     -DENABLE_QRCODE=OFF \
-    -DENABLE_UPNP=OFF
+    -DENABLE_UPNP=OFF \
+    -DUSE_JEMALLOC=OFF
 
   ninja package_source
   SOURCEDIST=`echo bitcoin-abc-*.tar.gz`
@@ -163,19 +166,17 @@ script: |
       -DENABLE_STATIC_LIBSTDCXX=ON \
       -DENABLE_GLIBC_BACK_COMPAT=ON \
       -DCMAKE_INSTALL_PREFIX=${INSTALLPATH} \
-      -DCCACHE=OFF
+      -DCCACHE=OFF \
+      -DUSE_LD_GOLD=OFF \
+      ${CMAKE_EXTRA_OPTIONS[${i}]}
 
     ninja
-    ninja check-security
-    ninja check-symbols
+    ninja security-check
+    ninja symbol-check
 
-    for _component in ${INSTALL_COMPONENTS}; do
-       cmake -DCOMPONENT=${_component} -P cmake_install.cmake
-    done
+    ninja install-debug
 
     cd installed
-    find ${DISTNAME}/bin -type f -executable -exec ../contrib/devtools/split-debug.sh {} {} {}.dbg \;
-    find ${DISTNAME}/lib -type f -exec ../contrib/devtools/split-debug.sh {} {} {}.dbg \;
     find ${DISTNAME} -not -name "*.dbg" | sort | tar --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ${OUTDIR}/${DISTNAME}-${i}.tar.gz
     find ${DISTNAME} -name "*.dbg" | sort | tar --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ${OUTDIR}/${DISTNAME}-${i}-debug.tar.gz
     cd ../../

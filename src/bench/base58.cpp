@@ -5,10 +5,8 @@
 #include <bench/bench.h>
 
 #include <base58.h>
-#include <validation.h>
 
 #include <array>
-#include <string>
 #include <vector>
 
 static void Base58Encode(benchmark::State &state) {

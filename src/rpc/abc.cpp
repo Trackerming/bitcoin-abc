@@ -5,6 +5,8 @@
 #include <config.h>
 #include <consensus/consensus.h>
 #include <rpc/server.h>
+#include <rpc/util.h>
+#include <sync.h>
 #include <util/strencodings.h>
 #include <validation.h>
 
@@ -12,16 +14,15 @@
 
 static UniValue getexcessiveblock(const Config &config,
                                   const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() != 0) {
-        throw std::runtime_error(
-            "getexcessiveblock\n"
-            "\nReturn the excessive block size."
-            "\nResult\n"
-            "  excessiveBlockSize (integer) block size in bytes\n"
-            "\nExamples:\n" +
-            HelpExampleCli("getexcessiveblock", "") +
-            HelpExampleRpc("getexcessiveblock", ""));
+    RPCHelpMan{
+        "getexcessiveblock",
+        "Return the excessive block size.",
+        {},
+        RPCResult{"  excessiveBlockSize (integer) block size in bytes\n"},
+        RPCExamples{HelpExampleCli("getexcessiveblock", "") +
+                    HelpExampleRpc("getexcessiveblock", "")},
     }
+        .Check(request);
 
     UniValue ret(UniValue::VOBJ);
     ret.pushKV("excessiveBlockSize", config.GetMaxBlockSize());
@@ -30,28 +31,30 @@ static UniValue getexcessiveblock(const Config &config,
 
 static UniValue setexcessiveblock(Config &config,
                                   const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() != 1) {
-        throw std::runtime_error(
-            "setexcessiveblock blockSize\n"
-            "\nSet the excessive block size. Excessive blocks will not be used "
-            "in the active chain or relayed. This  discourages the propagation "
-            "of blocks that you consider excessively large."
-            "\nResult\n"
-            "  blockSize (integer) excessive block size in bytes\n"
-            "\nExamples:\n" +
-            HelpExampleCli("setexcessiveblock", "") +
-            HelpExampleRpc("setexcessiveblock", ""));
+    RPCHelpMan{
+        "setexcessiveblock",
+        "Set the excessive block size. Excessive blocks will not be used in "
+        "the active chain or relayed. This discourages the propagation of "
+        "blocks that you consider excessively large.",
+        {
+            {"blockSize", RPCArg::Type::NUM, RPCArg::Optional::NO,
+             "Excessive block size in bytes.  Must be greater than " +
+                 std::to_string(LEGACY_MAX_BLOCK_SIZE) + "."},
+        },
+        RPCResult{"  blockSize (integer) excessive block size in bytes\n"},
+        RPCExamples{HelpExampleCli("setexcessiveblock", "25000000") +
+                    HelpExampleRpc("setexcessiveblock", "25000000")},
     }
+        .Check(request);
 
-    int64_t ebs = 0;
-    if (request.params[0].isNum()) {
-        ebs = request.params[0].get_int64();
-    } else if (!ParseInt64(request.params[0].get_str(), &ebs)) {
+    if (!request.params[0].isNum()) {
         throw JSONRPCError(
             RPC_INVALID_PARAMETER,
             std::string(
                 "Invalid parameter, excessiveblock must be an integer"));
     }
+
+    int64_t ebs = request.params[0].get_int64();
 
     // Do not allow maxBlockSize to be set below historic 1MB limit
     if (ebs <= int64_t(LEGACY_MAX_BLOCK_SIZE)) {
@@ -63,8 +66,11 @@ static UniValue setexcessiveblock(Config &config,
     }
 
     // Set the new max block size.
-    if (!config.SetMaxBlockSize(ebs)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Unexpected error");
+    {
+        LOCK(cs_main);
+        if (!config.SetMaxBlockSize(ebs)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Unexpected error");
+        }
     }
 
     // settingsToUserAgentString();
@@ -74,7 +80,7 @@ static UniValue setexcessiveblock(Config &config,
 }
 
 // clang-format off
-static const ContextFreeRPCCommand commands[] = {
+static const CRPCCommand commands[] = {
     //  category            name                      actor (function)        argNames
     //  ------------------- ------------------------  ----------------------  ----------
     { "network",            "getexcessiveblock",      getexcessiveblock,      {}},

@@ -3,7 +3,6 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <attributes.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <config.h>
@@ -13,6 +12,7 @@
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <rpc/blockchain.h>
+#include <rpc/protocol.h>
 #include <rpc/server.h>
 #include <streams.h>
 #include <sync.h>
@@ -156,24 +156,24 @@ static bool rest_headers(Config &config, HTTPRequest *req,
     headers.reserve(count);
     {
         LOCK(cs_main);
-        tip = chainActive.Tip();
+        tip = ::ChainActive().Tip();
         const CBlockIndex *pindex = LookupBlockIndex(hash);
-        while (pindex != nullptr && chainActive.Contains(pindex)) {
+        while (pindex != nullptr && ::ChainActive().Contains(pindex)) {
             headers.push_back(pindex);
             if (headers.size() == size_t(count)) {
                 break;
             }
-            pindex = chainActive.Next(pindex);
+            pindex = ::ChainActive().Next(pindex);
         }
-    }
-
-    CDataStream ssHeader(SER_NETWORK, PROTOCOL_VERSION);
-    for (const CBlockIndex *pindex : headers) {
-        ssHeader << pindex->GetBlockHeader();
     }
 
     switch (rf) {
         case RetFormat::BINARY: {
+            CDataStream ssHeader(SER_NETWORK, PROTOCOL_VERSION);
+            for (const CBlockIndex *pindex : headers) {
+                ssHeader << pindex->GetBlockHeader();
+            }
+
             std::string binaryHeader = ssHeader.str();
             req->WriteHeader("Content-Type", "application/octet-stream");
             req->WriteReply(HTTP_OK, binaryHeader);
@@ -181,6 +181,11 @@ static bool rest_headers(Config &config, HTTPRequest *req,
         }
 
         case RetFormat::HEX: {
+            CDataStream ssHeader(SER_NETWORK, PROTOCOL_VERSION);
+            for (const CBlockIndex *pindex : headers) {
+                ssHeader << pindex->GetBlockHeader();
+            }
+
             std::string strHex =
                 HexStr(ssHeader.begin(), ssHeader.end()) + "\n";
             req->WriteHeader("Content-Type", "text/plain");
@@ -225,7 +230,7 @@ static bool rest_block(const Config &config, HTTPRequest *req,
     CBlockIndex *tip = nullptr;
     {
         LOCK(cs_main);
-        tip = chainActive.Tip();
+        tip = ::ChainActive().Tip();
         pblockindex = LookupBlockIndex(hash);
         if (!pblockindex) {
             return RESTERR(req, HTTP_NOT_FOUND, hashStr + " not found");
@@ -242,12 +247,11 @@ static bool rest_block(const Config &config, HTTPRequest *req,
         }
     }
 
-    CDataStream ssBlock(SER_NETWORK,
-                        PROTOCOL_VERSION | RPCSerializationFlags());
-    ssBlock << block;
-
     switch (rf) {
         case RetFormat::BINARY: {
+            CDataStream ssBlock(SER_NETWORK,
+                                PROTOCOL_VERSION | RPCSerializationFlags());
+            ssBlock << block;
             std::string binaryBlock = ssBlock.str();
             req->WriteHeader("Content-Type", "application/octet-stream");
             req->WriteReply(HTTP_OK, binaryBlock);
@@ -255,6 +259,9 @@ static bool rest_block(const Config &config, HTTPRequest *req,
         }
 
         case RetFormat::HEX: {
+            CDataStream ssBlock(SER_NETWORK,
+                                PROTOCOL_VERSION | RPCSerializationFlags());
+            ssBlock << block;
             std::string strHex = HexStr(ssBlock.begin(), ssBlock.end()) + "\n";
             req->WriteHeader("Content-Type", "text/plain");
             req->WriteReply(HTTP_OK, strHex);
@@ -387,15 +394,16 @@ static bool rest_tx(Config &config, HTTPRequest *req,
     CTransactionRef tx;
     BlockHash hashBlock;
     if (!GetTransaction(txid, tx, config.GetChainParams().GetConsensus(),
-                        hashBlock, true)) {
+                        hashBlock)) {
         return RESTERR(req, HTTP_NOT_FOUND, hashStr + " not found");
     }
 
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION | RPCSerializationFlags());
-    ssTx << tx;
-
     switch (rf) {
         case RetFormat::BINARY: {
+            CDataStream ssTx(SER_NETWORK,
+                             PROTOCOL_VERSION | RPCSerializationFlags());
+            ssTx << tx;
+
             std::string binaryTx = ssTx.str();
             req->WriteHeader("Content-Type", "application/octet-stream");
             req->WriteReply(HTTP_OK, binaryTx);
@@ -403,6 +411,10 @@ static bool rest_tx(Config &config, HTTPRequest *req,
         }
 
         case RetFormat::HEX: {
+            CDataStream ssTx(SER_NETWORK,
+                             PROTOCOL_VERSION | RPCSerializationFlags());
+            ssTx << tx;
+
             std::string strHex = HexStr(ssTx.begin(), ssTx.end()) + "\n";
             req->WriteHeader("Content-Type", "text/plain");
             req->WriteReply(HTTP_OK, strHex);
@@ -584,8 +596,8 @@ static bool rest_getutxos(Config &config, HTTPRequest *req,
             // serialize data
             // use exact same output as mentioned in Bip64
             CDataStream ssGetUTXOResponse(SER_NETWORK, PROTOCOL_VERSION);
-            ssGetUTXOResponse << chainActive.Height()
-                              << chainActive.Tip()->GetBlockHash() << bitmap
+            ssGetUTXOResponse << ::ChainActive().Height()
+                              << ::ChainActive().Tip()->GetBlockHash() << bitmap
                               << outs;
             std::string ssGetUTXOResponseString = ssGetUTXOResponse.str();
 
@@ -596,8 +608,8 @@ static bool rest_getutxos(Config &config, HTTPRequest *req,
 
         case RetFormat::HEX: {
             CDataStream ssGetUTXOResponse(SER_NETWORK, PROTOCOL_VERSION);
-            ssGetUTXOResponse << chainActive.Height()
-                              << chainActive.Tip()->GetBlockHash() << bitmap
+            ssGetUTXOResponse << ::ChainActive().Height()
+                              << ::ChainActive().Tip()->GetBlockHash() << bitmap
                               << outs;
             std::string strHex =
                 HexStr(ssGetUTXOResponse.begin(), ssGetUTXOResponse.end()) +
@@ -613,9 +625,9 @@ static bool rest_getutxos(Config &config, HTTPRequest *req,
 
             // pack in some essentials
             // use more or less the same output as mentioned in Bip64
-            objGetUTXOResponse.pushKV("chainHeight", chainActive.Height());
+            objGetUTXOResponse.pushKV("chainHeight", ::ChainActive().Height());
             objGetUTXOResponse.pushKV(
-                "chaintipHash", chainActive.Tip()->GetBlockHash().GetHex());
+                "chaintipHash", ::ChainActive().Tip()->GetBlockHash().GetHex());
             objGetUTXOResponse.pushKV("bitmap", bitmapStringRepresentation);
 
             UniValue utxos(UniValue::VARR);

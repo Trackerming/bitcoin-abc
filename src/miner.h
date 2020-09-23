@@ -1,11 +1,12 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #ifndef BITCOIN_MINER_H
 #define BITCOIN_MINER_H
 
+#include <optional.h>
 #include <primitives/block.h>
 #include <txmempool.h>
 
@@ -152,8 +153,7 @@ private:
     int nHeight;
     int64_t nLockTimeCutoff;
     int64_t nMedianTimePast;
-    const CChainParams &chainparams;
-    bool fUseSigChecks;
+    const CChainParams &chainParams;
 
     const CTxMemPool *mempool;
 
@@ -175,19 +175,15 @@ public:
 
     uint64_t GetMaxGeneratedBlockSize() const { return nMaxGeneratedBlockSize; }
 
+    static Optional<int64_t> m_last_block_num_txs;
+    static Optional<int64_t> m_last_block_size;
+
 private:
     // utility functions
     /** Clear the block's state and prepare for assembling a new block */
     void resetBlock();
     /** Add a tx to the block */
     void AddToBlock(CTxMemPool::txiter iter);
-
-    /**
-     * Calculate the "SigOps" limit for a given block size (may actually be the
-     * SigChecks limit which is independent of blockSize, depending on
-     * fUseSigChecks)
-     */
-    uint64_t MaxBlockSigOpsCountForSize(uint64_t blockSize) const;
 
     // Methods for how to add transactions to a block.
     /**
@@ -235,6 +231,6 @@ private:
 void IncrementExtraNonce(CBlock *pblock, const CBlockIndex *pindexPrev,
                          uint64_t nExcessiveBlockSize,
                          unsigned int &nExtraNonce);
-int64_t UpdateTime(CBlockHeader *pblock, const Consensus::Params &params,
+int64_t UpdateTime(CBlockHeader *pblock, const CChainParams &chainParams,
                    const CBlockIndex *pindexPrev);
 #endif // BITCOIN_MINER_H

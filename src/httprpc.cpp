@@ -7,21 +7,22 @@
 #include <chainparams.h>
 #include <config.h>
 #include <crypto/hmac_sha256.h>
-#include <httpserver.h>
-#include <key_io.h>
-#include <random.h>
 #include <rpc/protocol.h>
-#include <rpc/server.h>
-#include <sync.h>
 #include <ui_interface.h>
 #include <util/strencodings.h>
 #include <util/system.h>
+#include <util/translation.h>
 #include <walletinitinterface.h>
 
 #include <boost/algorithm/string.hpp> // boost::trim
 
+#include <algorithm>
 #include <cstdio>
+#include <iterator>
+#include <map>
 #include <memory>
+#include <set>
+#include <string>
 
 /** WWW-Authenticate to present with 401 Unauthorized response */
 static const char *WWW_AUTH_HEADER_DATA = "Basic realm=\"jsonrpc\"";
@@ -63,8 +64,15 @@ private:
     struct event_base *base;
 };
 
+/* Pre-base64-encoded authentication token */
+static std::string strRPCUserColonPass;
+/* Pre-base64-encoded authentication token */
+static std::string strRPCCORSDomain;
 /* Stored RPC timer interface (for unregistration) */
 static std::unique_ptr<HTTPRPCTimerInterface> httpRPCTimerInterface;
+/* RPC Auth Whitelist */
+static std::map<std::string, std::set<std::string>> g_rpc_whitelist;
+static bool g_rpc_whitelist_default = false;
 
 static void JSONErrorReply(HTTPRequest *req, const UniValue &objError,
                            const UniValue &id) {
@@ -115,9 +123,9 @@ static bool multiUserAuthorized(std::string strUserPass) {
         static const unsigned int KEY_SIZE = 32;
         uint8_t out[KEY_SIZE];
 
-        CHMAC_SHA256(reinterpret_cast<const uint8_t *>(strSalt.c_str()),
+        CHMAC_SHA256(reinterpret_cast<const uint8_t *>(strSalt.data()),
                      strSalt.size())
-            .Write(reinterpret_cast<const uint8_t *>(strPass.c_str()),
+            .Write(reinterpret_cast<const uint8_t *>(strPass.data()),
                    strPass.size())
             .Finalize(out);
         std::vector<uint8_t> hexvec(out, out + KEY_SIZE);
@@ -130,10 +138,10 @@ static bool multiUserAuthorized(std::string strUserPass) {
     return false;
 }
 
-static bool RPCAuthorized(Config &config, const std::string &strAuth,
+static bool RPCAuthorized(const std::string &strAuth,
                           std::string &strAuthUsernameOut) {
     // Belt-and-suspenders measure if InitRPCAuthentication was not called.
-    if (config.GetRPCUserAndPassword().empty()) {
+    if (strRPCUserColonPass.empty()) {
         return false;
     }
 
@@ -150,13 +158,13 @@ static bool RPCAuthorized(Config &config, const std::string &strAuth,
     }
 
     // Check if authorized under single-user field
-    if (TimingResistantEqual(strUserPass, config.GetRPCUserAndPassword())) {
+    if (TimingResistantEqual(strUserPass, strRPCUserColonPass)) {
         return true;
     }
     return multiUserAuthorized(strUserPass);
 }
 
-static bool checkCORS(Config &config, HTTPRequest *req) {
+static bool checkCORS(HTTPRequest *req) {
     // https://www.w3.org/TR/cors/#resource-requests
 
     // 1. If the Origin header is not present terminate this set of steps.
@@ -171,7 +179,7 @@ static bool checkCORS(Config &config, HTTPRequest *req) {
     // and terminate this set of steps.
     // Note: Always matching is acceptable since the list of origins can be
     // unbounded.
-    if (origin.second != config.GetRPCCORSDomain()) {
+    if (origin.second != strRPCCORSDomain) {
         return false;
     }
 
@@ -279,7 +287,7 @@ static bool checkCORS(Config &config, HTTPRequest *req) {
 
 bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
     // First, check and/or set CORS headers
-    if (checkCORS(config, req)) {
+    if (checkCORS(req)) {
         return true;
     }
 
@@ -298,16 +306,18 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
     }
 
     JSONRPCRequest jreq;
-    if (!RPCAuthorized(config, authHeader.second, jreq.authUser)) {
+    jreq.peerAddr = req->GetPeer().ToString();
+    if (!RPCAuthorized(authHeader.second, jreq.authUser)) {
         LogPrintf("ThreadRPCServer incorrect password attempt from %s\n",
-                  req->GetPeer().ToString());
+                  jreq.peerAddr);
 
         /**
          * Deter brute-forcing.
          * If this results in a DoS the user really shouldn't have their RPC
          * port exposed.
          */
-        MilliSleep(RPC_AUTH_BRUTE_FORCE_DELAY);
+        UninterruptibleSleep(
+            std::chrono::milliseconds{RPC_AUTH_BRUTE_FORCE_DELAY});
 
         req->WriteHeader("WWW-Authenticate", WWW_AUTH_HEADER_DATA);
         req->WriteReply(HTTP_UNAUTHORIZED);
@@ -325,16 +335,51 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
         jreq.URI = req->GetURI();
 
         std::string strReply;
-        // singleton request
-        if (valRequest.isObject()) {
-            jreq.parse(valRequest);
+        bool user_has_whitelist = g_rpc_whitelist.count(jreq.authUser);
+        if (!user_has_whitelist && g_rpc_whitelist_default) {
+            LogPrintf("RPC User %s not allowed to call any methods\n",
+                      jreq.authUser);
+            req->WriteReply(HTTP_FORBIDDEN);
+            return false;
 
+            // singleton request
+        } else if (valRequest.isObject()) {
+            jreq.parse(valRequest);
+            if (user_has_whitelist &&
+                !g_rpc_whitelist[jreq.authUser].count(jreq.strMethod)) {
+                LogPrintf("RPC User %s not allowed to call method %s\n",
+                          jreq.authUser, jreq.strMethod);
+                req->WriteReply(HTTP_FORBIDDEN);
+                return false;
+            }
             UniValue result = rpcServer.ExecuteCommand(config, jreq);
 
             // Send reply
             strReply = JSONRPCReply(result, NullUniValue, jreq.id);
-        } else if (valRequest.isArray()) {
+
             // array of requests
+        } else if (valRequest.isArray()) {
+            if (user_has_whitelist) {
+                for (unsigned int reqIdx = 0; reqIdx < valRequest.size();
+                     reqIdx++) {
+                    if (!valRequest[reqIdx].isObject()) {
+                        throw JSONRPCError(RPC_INVALID_REQUEST,
+                                           "Invalid Request object");
+                    } else {
+                        const UniValue &request = valRequest[reqIdx].get_obj();
+                        // Parse method
+                        std::string strMethod =
+                            find_value(request, "method").get_str();
+                        if (!g_rpc_whitelist[jreq.authUser].count(strMethod)) {
+                            LogPrintf(
+                                "RPC User %s not allowed to call method %s\n",
+                                jreq.authUser, strMethod);
+                            req->WriteReply(HTTP_FORBIDDEN);
+                            return false;
+                        }
+                    }
+                }
+            }
             strReply = JSONRPCExecBatch(config, rpcServer, jreq,
                                         valRequest.get_array());
         } else {
@@ -353,36 +398,62 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
     return true;
 }
 
-static bool InitRPCAuthentication(Config &config) {
+static bool InitRPCAuthentication() {
     if (gArgs.GetArg("-rpcpassword", "") == "") {
-        LogPrintf("No rpcpassword set - using random cookie authentication\n");
-        std::string generatedUserAndPassword;
-        if (!GenerateAuthCookie(&generatedUserAndPassword)) {
+        LogPrintf("No rpcpassword set - using random cookie authentication.\n");
+        if (!GenerateAuthCookie(&strRPCUserColonPass)) {
             // Same message as AbortNode.
             uiInterface.ThreadSafeMessageBox(
                 _("Error: A fatal internal error occurred, see debug.log for "
-                  "details"),
+                  "details")
+                    .translated,
                 "", CClientUIInterface::MSG_ERROR);
             return false;
         }
-        config.SetRPCUserAndPassword(generatedUserAndPassword);
     } else {
         LogPrintf("Config options rpcuser and rpcpassword will soon be "
                   "deprecated. Locally-run instances may remove rpcuser to use "
                   "cookie-based auth, or may be replaced with rpcauth. Please "
-                  "see share/rpcuser for rpcauth auth generation.\n");
-        config.SetRPCUserAndPassword(gArgs.GetArg("-rpcuser", "") + ":" +
-                                     gArgs.GetArg("-rpcpassword", ""));
+                  "see share/rpcauth for rpcauth auth generation.\n");
+        strRPCUserColonPass = gArgs.GetArg("-rpcuser", "") + ":" +
+                              gArgs.GetArg("-rpcpassword", "");
     }
 
-    config.SetRPCCORSDomain(gArgs.GetArg("-rpccorsdomain", ""));
+    strRPCCORSDomain = gArgs.GetArg("-rpccorsdomain", "");
+
+    if (gArgs.GetArg("-rpcauth", "") != "") {
+        LogPrintf("Using rpcauth authentication.\n");
+    }
+
+    g_rpc_whitelist_default = gArgs.GetBoolArg("-rpcwhitelistdefault",
+                                               gArgs.IsArgSet("-rpcwhitelist"));
+    for (const std::string &strRPCWhitelist : gArgs.GetArgs("-rpcwhitelist")) {
+        auto pos = strRPCWhitelist.find(':');
+        std::string strUser = strRPCWhitelist.substr(0, pos);
+        bool intersect = g_rpc_whitelist.count(strUser);
+        std::set<std::string> &whitelist = g_rpc_whitelist[strUser];
+        if (pos != std::string::npos) {
+            std::string strWhitelist = strRPCWhitelist.substr(pos + 1);
+            std::set<std::string> new_whitelist;
+            boost::split(new_whitelist, strWhitelist, boost::is_any_of(", "));
+            if (intersect) {
+                std::set<std::string> tmp_whitelist;
+                std::set_intersection(
+                    new_whitelist.begin(), new_whitelist.end(),
+                    whitelist.begin(), whitelist.end(),
+                    std::inserter(tmp_whitelist, tmp_whitelist.end()));
+                new_whitelist = std::move(tmp_whitelist);
+            }
+            whitelist = std::move(new_whitelist);
+        }
+    }
+
     return true;
 }
 
-bool StartHTTPRPC(Config &config,
-                  HTTPRPCRequestProcessor &httpRPCRequestProcessor) {
+bool StartHTTPRPC(HTTPRPCRequestProcessor &httpRPCRequestProcessor) {
     LogPrint(BCLog::RPC, "Starting HTTP RPC server\n");
-    if (!InitRPCAuthentication(config)) {
+    if (!InitRPCAuthentication()) {
         return false;
     }
 

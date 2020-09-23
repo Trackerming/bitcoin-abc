@@ -29,7 +29,6 @@ from test_framework.util import (
     connect_nodes,
     disconnect_nodes,
     satoshi_round,
-    sync_blocks,
 )
 
 SEQUENCE_LOCKTIME_DISABLE_FLAG = (1 << 31)
@@ -46,7 +45,7 @@ NOT_FINAL_ERROR = "non-BIP68-final (code 64)"
 class BIP68Test(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
-        self.extra_args = [["-noparkdeepreorg", "-maxreorgdepth=-1"],
+        self.extra_args = [["-noparkdeepreorg", "-maxreorgdepth=-1", "-acceptnonstdtxn=1"],
                            ["-acceptnonstdtxn=0", "-maxreorgdepth=-1"]]
 
     def skip_test_if_missing_module(self):
@@ -475,7 +474,7 @@ class BIP68Test(BitcoinTestFramework):
         # the activation point, so we invalidate the tip.
         self.nodes[0].invalidateblock(self.nodes[0].getbestblockhash())
         connect_nodes(self.nodes[0], self.nodes[1])
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
     # Use self.nodes[1] to test that version 2 transactions are standard.
     def test_version2_relay(self):

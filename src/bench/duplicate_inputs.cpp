@@ -1,66 +1,33 @@
-// Copyright (c) 2011-2018 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <bench/bench.h>
 #include <chain.h>
 #include <chainparams.h>
-#include <coins.h>
 #include <config.h>
 #include <consensus/merkle.h>
 #include <consensus/validation.h>
-#include <miner.h>
-#include <policy/policy.h>
-#include <pow.h>
-#include <scheduler.h>
+#include <pow/pow.h>
+#include <random.h>
 #include <script/scriptcache.h>
-#include <txdb.h>
 #include <txmempool.h>
-#include <util/time.h>
 #include <validation.h>
-#include <validationinterface.h>
-
-#include <boost/thread.hpp>
-
-#include <list>
-#include <vector>
 
 static void DuplicateInputs(benchmark::State &state) {
     const CScript SCRIPT_PUB{CScript(OP_TRUE)};
 
-    // Switch to regtest so we can mine faster
-    SelectParams(CBaseChainParams::REGTEST);
-    const Config &config = GetConfig();
-
-    InitScriptExecutionCache();
-
-    boost::thread_group thread_group;
-    CScheduler scheduler;
-    const CChainParams &chainparams = config.GetChainParams();
-    {
-        LOCK(cs_main);
-        ::pblocktree.reset(new CBlockTreeDB(1 << 20, true));
-        ::pcoinsdbview.reset(new CCoinsViewDB(1 << 23, true));
-        ::pcoinsTip.reset(new CCoinsViewCache(pcoinsdbview.get()));
-    }
-    {
-        thread_group.create_thread(
-            std::bind(&CScheduler::serviceQueue, &scheduler));
-        GetMainSignals().RegisterBackgroundSignalScheduler(scheduler);
-        LoadGenesisBlock(chainparams);
-        CValidationState cvstate;
-        ActivateBestChain(config, cvstate);
-        assert(::chainActive.Tip() != nullptr);
-    }
+    const CChainParams &chainParams = Params();
+    const Consensus::Params &consensusParams = chainParams.GetConsensus();
 
     CBlock block{};
     CMutableTransaction coinbaseTx{};
     CMutableTransaction naughtyTx{};
 
-    CBlockIndex *pindexPrev = ::chainActive.Tip();
+    LOCK(cs_main);
+    CBlockIndex *pindexPrev = ::ChainActive().Tip();
     assert(pindexPrev != nullptr);
-    block.nBits =
-        GetNextWorkRequired(pindexPrev, &block, chainparams.GetConsensus());
+    block.nBits = GetNextWorkRequired(pindexPrev, &block, chainParams);
     block.nNonce = 0;
     auto nHeight = pindexPrev->nHeight + 1;
 
@@ -69,8 +36,7 @@ static void DuplicateInputs(benchmark::State &state) {
     coinbaseTx.vin[0].prevout = COutPoint();
     coinbaseTx.vout.resize(1);
     coinbaseTx.vout[0].scriptPubKey = SCRIPT_PUB;
-    coinbaseTx.vout[0].nValue =
-        GetBlockSubsidy(nHeight, chainparams.GetConsensus());
+    coinbaseTx.vout[0].nValue = GetBlockSubsidy(nHeight, consensusParams);
     coinbaseTx.vin[0].scriptSig = CScript() << nHeight << OP_0;
 
     naughtyTx.vout.resize(1);
@@ -90,18 +56,13 @@ static void DuplicateInputs(benchmark::State &state) {
     block.hashMerkleRoot = BlockMerkleRoot(block);
 
     while (state.KeepRunning()) {
-        CValidationState cvstate{};
-        assert(!CheckBlock(block, cvstate, chainparams.GetConsensus(),
-                           BlockValidationOptions(config)
+        BlockValidationState cvstate{};
+        assert(!CheckBlock(block, cvstate, consensusParams,
+                           BlockValidationOptions(GetConfig())
                                .withCheckPoW(false)
                                .withCheckMerkleRoot(false)));
         assert(cvstate.GetRejectReason() == "bad-txns-inputs-duplicate");
     }
-
-    thread_group.interrupt_all();
-    thread_group.join_all();
-    GetMainSignals().FlushBackgroundCallbacks();
-    GetMainSignals().UnregisterBackgroundSignalScheduler();
 }
 
 BENCHMARK(DuplicateInputs, 10);

@@ -13,7 +13,8 @@ Supported API
 
 Given a transaction hash: returns a transaction in binary, hex-encoded binary, or JSON formats.
 
-For full TX query capability, one must enable the transaction index via "txindex=1" command line / configuration option.
+By default, this endpoint will only search the mempool.
+To query for a confirmed transaction, enable the transaction index via "txindex=1" command line / configuration option.
 
 #### Blocks
 `GET /rest/block/<BLOCK-HASH>.<bin|hex|json>`
@@ -51,7 +52,7 @@ Only supports JSON as output format.
 
 The getutxo command allows querying of the UTXO set given a set of outpoints.
 See BIP64 for input and output serialisation:
-https://github.com/bitcoin/bips/blob/master/bip-0064.mediawiki
+<https://github.com/bitcoin/bips/blob/master/bip-0064.mediawiki>
 
 Example:
 ```

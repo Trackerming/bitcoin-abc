@@ -14,13 +14,13 @@
 #include <consensus/validation.h>
 #include <policy/fees.h>
 #include <policy/policy.h>
+#include <policy/settings.h>
 #include <reverse_iterator.h>
-#include <streams.h>
-#include <timedata.h>
 #include <util/moneystr.h>
 #include <util/system.h>
 #include <util/time.h>
 #include <validation.h>
+#include <validationinterface.h>
 #include <version.h>
 
 #include <algorithm>
@@ -193,7 +193,7 @@ bool CTxMemPool::CalculateMemPoolAncestors(
         // GetMemPoolParents() is only valid for entries in the mempool, so we
         // iterate mapTx to find parents.
         for (const CTxIn &in : tx.vin) {
-            boost::optional<txiter> piter = GetIter(in.prevout.GetTxId());
+            Optional<txiter> piter = GetIter(in.prevout.GetTxId());
             if (!piter) {
                 continue;
             }
@@ -377,7 +377,7 @@ void CTxMemPoolEntry::UpdateDescendantState(int64_t modifySize,
 
 void CTxMemPoolEntry::UpdateAncestorState(int64_t modifySize, Amount modifyFee,
                                           int64_t modifyCount,
-                                          int modifySigOps) {
+                                          int64_t modifySigOps) {
     nSizeWithAncestors += modifySize;
     assert(int64_t(nSizeWithAncestors) > 0);
     nModFeesWithAncestors += modifyFee;
@@ -464,6 +464,13 @@ void CTxMemPool::addUnchecked(const CTxMemPoolEntry &entry,
 }
 
 void CTxMemPool::removeUnchecked(txiter it, MemPoolRemovalReason reason) {
+    CTransactionRef ptx = it->GetSharedTx();
+    NotifyEntryRemoved(ptx, reason);
+    if (reason != MemPoolRemovalReason::BLOCK &&
+        reason != MemPoolRemovalReason::CONFLICT) {
+        GetMainSignals().TransactionRemovedFromMempool(ptx);
+    }
+
     NotifyEntryRemoved(it->GetSharedTx(), reason);
     for (const CTxIn &txin : it->GetTx().vin) {
         mapNextTx.erase(txin.prevout);
@@ -564,7 +571,7 @@ void CTxMemPool::removeForReorg(const Config &config,
         LockPoints lp = it->GetLockPoints();
         bool validLP = TestLockPointValidity(&lp);
 
-        CValidationState state;
+        TxValidationState state;
         if (!ContextualCheckTransactionForCurrentBlock(
                 config.GetChainParams().GetConsensus(), tx, state, flags) ||
             !CheckSequenceLocks(*this, tx, flags, &lp, validLP)) {
@@ -681,11 +688,13 @@ void CTxMemPool::clear() {
 static void CheckInputsAndUpdateCoins(const CTransaction &tx,
                                       CCoinsViewCache &mempoolDuplicate,
                                       const int64_t spendheight) {
-    CValidationState state;
+    // Not used. CheckTxInputs() should always pass
+    TxValidationState dummy_state;
     Amount txfee = Amount::zero();
     bool fCheckResult =
-        tx.IsCoinBase() || Consensus::CheckTxInputs(tx, state, mempoolDuplicate,
-                                                    spendheight, txfee);
+        tx.IsCoinBase() ||
+        Consensus::CheckTxInputs(tx, dummy_state, mempoolDuplicate, spendheight,
+                                 txfee);
     assert(fCheckResult);
     UpdateCoins(mempoolDuplicate, tx, std::numeric_limits<int>::max());
 }
@@ -994,13 +1003,12 @@ const CTransaction *CTxMemPool::GetConflictTx(const COutPoint &prevout) const {
     return it == mapNextTx.end() ? nullptr : it->second;
 }
 
-boost::optional<CTxMemPool::txiter>
-CTxMemPool::GetIter(const TxId &txid) const {
+Optional<CTxMemPool::txiter> CTxMemPool::GetIter(const TxId &txid) const {
     auto it = mapTx.find(txid);
     if (it != mapTx.end()) {
         return it;
     }
-    return boost::optional<txiter>{};
+    return Optional<txiter>{};
 }
 
 CTxMemPool::setEntries
@@ -1067,7 +1075,7 @@ void CTxMemPool::RemoveStaged(setEntries &stage, bool updateDescendants,
     }
 }
 
-int CTxMemPool::Expire(int64_t time) {
+int CTxMemPool::Expire(std::chrono::seconds time) {
     LOCK(cs);
     indexed_transaction_set::index<entry_time>::type::iterator it =
         mapTx.get<entry_time>().begin();
@@ -1086,8 +1094,8 @@ int CTxMemPool::Expire(int64_t time) {
     return stage.size();
 }
 
-void CTxMemPool::LimitSize(size_t limit, unsigned long age) {
-    int expired = Expire(GetTime() - age);
+void CTxMemPool::LimitSize(size_t limit, std::chrono::seconds age) {
+    int expired = Expire(GetTime<std::chrono::seconds>() - age);
     if (expired != 0) {
         LogPrint(BCLog::MEMPOOL,
                  "Expired %i transactions from the memory pool\n", expired);
@@ -1272,10 +1280,6 @@ void CTxMemPool::SetIsLoaded(bool loaded) {
     m_is_loaded = loaded;
 }
 
-SaltedTxidHasher::SaltedTxidHasher()
-    : k0(GetRand(std::numeric_limits<uint64_t>::max())),
-      k1(GetRand(std::numeric_limits<uint64_t>::max())) {}
-
 /** Maximum bytes for transactions to store for processing during reorg */
 static const size_t MAX_DISCONNECTED_TX_POOL_SIZE = 20 * DEFAULT_MAX_BLOCK_SIZE;
 
@@ -1292,7 +1296,7 @@ void DisconnectedBlockTransactions::addForBlock(
         addTransaction(tx);
 
         // Fill in the set of parents.
-        std::unordered_set<TxId, SaltedTxidHasher> parents;
+        std::unordered_set<TxId, SaltedTxIdHasher> parents;
         for (const CTxIn &in : tx->vin) {
             parents.insert(in.prevout.GetTxId());
         }
@@ -1301,7 +1305,7 @@ void DisconnectedBlockTransactions::addForBlock(
         // if we already know of the parent of the current transaction. If so,
         // we remove them from the set and then add them back.
         while (parents.size() > 0) {
-            std::unordered_set<TxId, SaltedTxidHasher> worklist(
+            std::unordered_set<TxId, SaltedTxIdHasher> worklist(
                 std::move(parents));
             parents.clear();
 
@@ -1388,10 +1392,9 @@ void DisconnectedBlockTransactions::updateMempoolForReorg(const Config &config,
     for (const CTransactionRef &tx :
          reverse_iterate(queuedTx.get<insertion_order>())) {
         // ignore validation errors in resurrected transactions
-        CValidationState stateDummy;
+        TxValidationState stateDummy;
         if (!fAddToMempool || tx->IsCoinBase() ||
             !AcceptToMemoryPool(config, g_mempool, stateDummy, tx,
-                                nullptr /* pfMissingInputs */,
                                 true /* bypass_limits */,
                                 Amount::zero() /* nAbsurdFee */)) {
             // If the transaction doesn't make it in to the mempool, remove any
@@ -1413,11 +1416,12 @@ void DisconnectedBlockTransactions::updateMempoolForReorg(const Config &config,
 
     // We also need to remove any now-immature transactions
     g_mempool.removeForReorg(config, pcoinsTip.get(),
-                             chainActive.Tip()->nHeight + 1,
+                             ::ChainActive().Tip()->nHeight + 1,
                              STANDARD_LOCKTIME_VERIFY_FLAGS);
 
     // Re-limit mempool size, in case we added any transactions
     g_mempool.LimitSize(
         gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000,
-        gArgs.GetArg("-mempoolexpiry", DEFAULT_MEMPOOL_EXPIRY) * 60 * 60);
+        std::chrono::hours{
+            gArgs.GetArg("-mempoolexpiry", DEFAULT_MEMPOOL_EXPIRY)});
 }

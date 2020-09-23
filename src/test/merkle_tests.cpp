@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2016 The Bitcoin Core developers
+// Copyright (c) 2015-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -6,7 +6,7 @@
 
 #include <util/strencodings.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -20,9 +20,9 @@ ComputeMerkleRootFromBranch(const uint256 &leaf,
     for (std::vector<uint256>::const_iterator it = vMerkleBranch.begin();
          it != vMerkleBranch.end(); ++it) {
         if (nIndex & 1) {
-            hash = Hash(BEGIN(*it), END(*it), BEGIN(hash), END(hash));
+            hash = Hash(it->begin(), it->end(), hash.begin(), hash.end());
         } else {
-            hash = Hash(BEGIN(hash), END(hash), BEGIN(*it), END(*it));
+            hash = Hash(hash.begin(), hash.end(), it->begin(), it->end());
         }
         nIndex >>= 1;
     }

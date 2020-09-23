@@ -10,6 +10,7 @@
 #include <crypto/common.h>
 #include <uint256.h>
 
+#include <chrono> // For std::chrono::microseconds
 #include <cstdint>
 #include <limits>
 
@@ -36,25 +37,24 @@
  * everything that fast seeding includes, but additionally:
  *   - OS entropy (/dev/urandom, getrandom(), ...). The application will
  * terminate if this entropy source fails.
- *   - Bytes from OpenSSL's RNG (which itself may be seeded from various
- * sources)
  *   - Another high-precision timestamp (indirectly committing to a benchmark of
  * all the previous sources). These entropy sources are slower, but designed to
  * make sure the RNG state contains fresh data that is unpredictable to
  * attackers.
  *
- * - RandAddSeedSleep() seeds everything that fast seeding includes, but
+ * - RandAddPeriodic() seeds everything that fast seeding includes, but
  * additionally:
- *   - A high-precision timestamp before and after sleeping 1ms.
- *   - (On Windows) Once every 10 minutes, performance monitoring data from the
- * OS. These just exploit the fact the system is idle to improve the quality of
- * the RNG slightly.
+ *   - A high-precision timestamp
+ *   - Dynamic environment data (performance monitoring, ...)
+ *   - Strengthen the entropy for 10 ms using repeated SHA512.
+ *   This is run once every minute.
  *
  * On first use of the RNG (regardless of what function is called first), all
  * entropy sources used in the 'slow' seeder are included, but also:
  * - 256 bits from the hardware RNG (rdseed or rdrand) when available.
- * - (On Windows) Performance monitoring data from the OS.
- * - (On Windows) Through OpenSSL, the screen contents.
+ * - Dynamic environment data (performance monitoring, ...)
+ * - Static environment data
+ * - Strengthen the entropy for 100 ms using repeated SHA512.
  *
  * When mixing in new entropy, H = SHA512(entropy || old_rng_state) is computed,
  * and (up to) the first 32 bytes of H are produced as output, while the last 32
@@ -71,6 +71,8 @@
  */
 void GetRandBytes(uint8_t *buf, int num) noexcept;
 uint64_t GetRand(uint64_t nMax) noexcept;
+std::chrono::microseconds
+GetRandMicros(std::chrono::microseconds duration_max) noexcept;
 int GetRandInt(int nMax) noexcept;
 uint256 GetRandHash() noexcept;
 
@@ -85,12 +87,12 @@ uint256 GetRandHash() noexcept;
 void GetStrongRandBytes(uint8_t *buf, int num) noexcept;
 
 /**
- * Sleep for 1ms, gather entropy from various sources, and feed them to the PRNG
+ * Gather entropy from various expensive sources, and feed them to the PRNG
  * state.
  *
  * Thread-safe.
  */
-void RandAddSeedSleep();
+void RandAddPeriodic() noexcept;
 
 /**
  * Fast randomness source. This is seeded once with secure random data, but
@@ -115,7 +117,7 @@ private:
         if (requires_seed) {
             RandomSeed();
         }
-        rng.Output(bytebuf, sizeof(bytebuf));
+        rng.Keystream(bytebuf, sizeof(bytebuf));
         bytebuf_size = sizeof(bytebuf);
     }
 

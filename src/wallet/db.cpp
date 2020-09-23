@@ -5,13 +5,8 @@
 
 #include <wallet/db.h>
 
-#include <addrman.h>
-#include <fs.h>
-#include <hash.h>
-#include <protocol.h>
 #include <util/strencodings.h>
-#include <util/system.h>
-#include <wallet/walletutil.h>
+#include <util/translation.h>
 
 #include <boost/thread.hpp> // boost::this_thread::interruption_point() (mingw)
 
@@ -57,7 +52,7 @@ void CheckUniqueFileid(const BerkeleyEnvironment &env,
     }
 }
 
-CCriticalSection cs_db;
+RecursiveMutex cs_db;
 
 //! Map from directory name to db environment.
 std::map<std::string, std::weak_ptr<BerkeleyEnvironment>>
@@ -98,6 +93,13 @@ bool IsWalletLoaded(const fs::path &wallet_path) {
 
     auto database = env->second.lock();
     return database && database->IsDatabaseLoaded(database_filename);
+}
+
+fs::path WalletDataFilePath(const fs::path &wallet_path) {
+    fs::path env_directory;
+    std::string database_filename;
+    SplitWalletPath(wallet_path, env_directory, database_filename);
+    return env_directory / database_filename;
 }
 
 /**
@@ -322,6 +324,37 @@ BerkeleyEnvironment::Verify(const std::string &strFile,
     return (fRecovered ? VerifyResult::RECOVER_OK : VerifyResult::RECOVER_FAIL);
 }
 
+BerkeleyBatch::SafeDbt::SafeDbt() {
+    m_dbt.set_flags(DB_DBT_MALLOC);
+}
+
+BerkeleyBatch::SafeDbt::SafeDbt(void *data, size_t size) : m_dbt(data, size) {}
+
+BerkeleyBatch::SafeDbt::~SafeDbt() {
+    if (m_dbt.get_data() != nullptr) {
+        // Clear memory, e.g. in case it was a private key
+        memory_cleanse(m_dbt.get_data(), m_dbt.get_size());
+        // under DB_DBT_MALLOC, data is malloced by the Dbt, but must be
+        // freed by the caller.
+        // https://docs.oracle.com/cd/E17275_01/html/api_reference/C/dbt.html
+        if (m_dbt.get_flags() & DB_DBT_MALLOC) {
+            free(m_dbt.get_data());
+        }
+    }
+}
+
+const void *BerkeleyBatch::SafeDbt::get_data() const {
+    return m_dbt.get_data();
+}
+
+u_int32_t BerkeleyBatch::SafeDbt::get_size() const {
+    return m_dbt.get_size();
+}
+
+BerkeleyBatch::SafeDbt::operator Dbt *() {
+    return &m_dbt;
+}
+
 bool BerkeleyBatch::Recover(const fs::path &file_path, void *callbackDataIn,
                             bool (*recoverKVcallback)(void *callbackData,
                                                       CDataStream ssKey,
@@ -400,18 +433,12 @@ bool BerkeleyBatch::VerifyEnvironment(const fs::path &file_path,
 
     LogPrintf("Using BerkeleyDB version %s\n",
               DbEnv::version(nullptr, nullptr, nullptr));
-    LogPrintf("Using wallet %s\n", walletFile);
-
-    // Wallet file must be a plain filename without a directory
-    if (walletFile != fs::basename(walletFile) + fs::extension(walletFile)) {
-        errorStr = strprintf(_("Wallet %s resides outside wallet directory %s"),
-                             walletFile, walletDir.string());
-        return false;
-    }
+    LogPrintf("Using wallet %s\n", file_path.string());
 
     if (!env->Open(true /* retry */)) {
         errorStr = strprintf(
-            _("Error initializing wallet database environment %s!"), walletDir);
+            _("Error initializing wallet database environment %s!").translated,
+            walletDir);
         return false;
     }
 
@@ -419,8 +446,8 @@ bool BerkeleyBatch::VerifyEnvironment(const fs::path &file_path,
 }
 
 bool BerkeleyBatch::VerifyDatabaseFile(
-    const fs::path &file_path, std::string &warningStr, std::string &errorStr,
-    BerkeleyEnvironment::recoverFunc_type recoverFunc) {
+    const fs::path &file_path, std::vector<std::string> &warnings,
+    std::string &errorStr, BerkeleyEnvironment::recoverFunc_type recoverFunc) {
     std::string walletFile;
     std::shared_ptr<BerkeleyEnvironment> env =
         GetWalletEnv(file_path, walletFile);
@@ -431,14 +458,16 @@ bool BerkeleyBatch::VerifyDatabaseFile(
         BerkeleyEnvironment::VerifyResult r =
             env->Verify(walletFile, recoverFunc, backup_filename);
         if (r == BerkeleyEnvironment::VerifyResult::RECOVER_OK) {
-            warningStr = strprintf(
+            warnings.push_back(strprintf(
                 _("Warning: Wallet file corrupt, data salvaged! Original %s "
                   "saved as %s in %s; if your balance or transactions are "
-                  "incorrect you should restore from a backup."),
-                walletFile, backup_filename, walletDir);
+                  "incorrect you should restore from a backup.")
+                    .translated,
+                walletFile, backup_filename, walletDir));
         }
         if (r == BerkeleyEnvironment::VerifyResult::RECOVER_FAIL) {
-            errorStr = strprintf(_("%s corrupt, salvage failed"), walletFile);
+            errorStr = strprintf(_("%s corrupt, salvage failed").translated,
+                                 walletFile);
             return false;
         }
     }
@@ -613,7 +642,7 @@ BerkeleyBatch::BerkeleyBatch(BerkeleyDatabase &database, const char *pszMode,
             if (fCreate && !Exists(std::string("version"))) {
                 bool fTmp = fReadOnly;
                 fReadOnly = false;
-                WriteVersion(CLIENT_VERSION);
+                Write(std::string("version"), CLIENT_VERSION);
                 fReadOnly = fTmp;
             }
         }
@@ -633,10 +662,15 @@ void BerkeleyBatch::Flush() {
         nMinutes = 1;
     }
 
-    env->dbenv->txn_checkpoint(
-        nMinutes ? gArgs.GetArg("-dblogsize", DEFAULT_WALLET_DBLOGSIZE) * 1024
-                 : 0,
-        nMinutes, 0);
+    // env is nullptr for dummy databases (i.e. in tests). Don't actually flush
+    // if env is nullptr so we don't segfault
+    if (env) {
+        env->dbenv->txn_checkpoint(
+            nMinutes
+                ? gArgs.GetArg("-dblogsize", DEFAULT_WALLET_DBLOGSIZE) * 1024
+                : 0,
+            nMinutes, 0);
+    }
 }
 
 void BerkeleyDatabase::IncrementUpdateCounter() {
@@ -679,7 +713,7 @@ void BerkeleyEnvironment::CloseDb(const std::string &strFile) {
 void BerkeleyEnvironment::ReloadDbEnv() {
     // Make sure that no Db's are in use
     AssertLockNotHeld(cs_db);
-    std::unique_lock<CCriticalSection> lock(cs_db);
+    std::unique_lock<RecursiveMutex> lock(cs_db);
     m_db_in_use.wait(lock, [this]() {
         for (auto &count : mapFileUseCount) {
             if (count.second > 0) {
@@ -806,7 +840,7 @@ bool BerkeleyBatch::Rewrite(BerkeleyDatabase &database, const char *pszSkip) {
                 return fSuccess;
             }
         }
-        MilliSleep(100);
+        UninterruptibleSleep(std::chrono::milliseconds{100});
     }
 }
 
@@ -944,12 +978,13 @@ bool BerkeleyDatabase::Backup(const std::string &strDest) {
                     return true;
                 } catch (const fs::filesystem_error &e) {
                     LogPrintf("error copying %s to %s - %s\n", strFile,
-                              pathDest.string(), e.what());
+                              pathDest.string(),
+                              fsbridge::get_filesystem_error_message(e));
                     return false;
                 }
             }
         }
-        MilliSleep(100);
+        UninterruptibleSleep(std::chrono::milliseconds{100});
     }
 }
 

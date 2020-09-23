@@ -2,14 +2,11 @@
 
 project(bitcoin-qt)
 
-# This ensure that AUTOMOC doesn't run on generated files.
-cmake_policy(SET CMP0071 OLD)
-
 include(BrewHelper)
 find_brew_prefix(QT5_PREFIX qt5)
 
 set(QT_REQUIRED_COMPONENTS Core Widgets Network Test)
-if(ENABLE_NOTIFICATIONS)
+if(ENABLE_DBUS_NOTIFICATIONS)
 	list(APPEND QT_REQUIRED_COMPONENTS DBus)
 endif()
 
@@ -56,6 +53,7 @@ qt5_wrap_ui(UI_GENERATED_HEADERS
 	forms/addressbookpage.ui
 	forms/askpassphrasedialog.ui
 	forms/coincontroldialog.ui
+	forms/createwalletdialog.ui
 	forms/editaddressdialog.ui
 	forms/helpmessagedialog.ui
 	forms/intro.ui
@@ -228,7 +226,7 @@ target_link_libraries(bitcoin-qt-base
 	Qt5::Widgets
 	Qt5::Network
 )
-if(ENABLE_NOTIFICATIONS)
+if(ENABLE_DBUS_NOTIFICATIONS)
 	target_link_libraries(bitcoin-qt-base Qt5::DBus)
 endif()
 
@@ -236,7 +234,7 @@ if(ENABLE_BIP70)
 	# Do protobuf codegen
 	find_package(Protobuf REQUIRED)
 	protobuf_generate_cpp(PROTOBUF_SOURCES PROTOBUF_HEADERS paymentrequest.proto)
-	
+
 	add_library(bitcoin-qt-protobuf OBJECT
 		# Protobuf codegen
 			${PROTOBUF_HEADERS}
@@ -250,6 +248,25 @@ if(ENABLE_BIP70)
 	if(ENABLE_CLANG_TIDY)
 		include(ClangTidy)
 		target_disable_clang_tidy(bitcoin-qt-protobuf)
+	endif()
+
+	# Message::ByteSize() is deprecated and replaced by ByteSizeLong() since
+	# protobuf 3.1.
+	if(Protobuf_VERSION GREATER_EQUAL "3.1.0")
+		target_compile_definitions(bitcoin-qt-base PRIVATE USE_PROTOBUF_MESSAGE_BYTESIZELONG)
+	endif()
+
+	# OpenSSL functionality
+	include(BrewHelper)
+	find_brew_prefix(OPENSSL_ROOT_DIR openssl)
+	find_package(OpenSSL REQUIRED)
+
+	include(CheckSymbolExists)
+	set(CMAKE_REQUIRED_INCLUDES ${OPENSSL_INCLUDE_DIR})
+	set(CMAKE_REQUIRED_LIBRARIES ${OPENSSL_CRYPTO_LIBRARY})
+	check_symbol_exists(EVP_MD_CTX_new "openssl/evp.h" HAVE_DECL_EVP_MD_CTX_NEW)
+	if(HAVE_DECL_EVP_MD_CTX_NEW)
+		target_compile_definitions(bitcoin-qt-base PRIVATE HAVE_DECL_EVP_MD_CTX_NEW=1)
 	endif()
 
 	target_link_libraries(bitcoin-qt-base
@@ -271,6 +288,7 @@ if(BUILD_BITCOIN_WALLET)
 			askpassphrasedialog.cpp
 			coincontroldialog.cpp
 			coincontroltreewidget.cpp
+			createwalletdialog.cpp
 			editaddressdialog.cpp
 			openuridialog.cpp
 			overviewpage.cpp
@@ -305,8 +323,8 @@ if(BUILD_BITCOIN_WALLET)
 	target_link_libraries(bitcoin-qt-base wallet)
 
 	if(ENABLE_QRCODE)
-		target_include_directories(bitcoin-qt-base PUBLIC ${QRENCODE_INCLUDE_DIR})
-		target_link_libraries(bitcoin-qt-base ${QRENCODE_LIBRARY})
+		find_package(QREncode REQUIRED)
+		target_link_libraries(bitcoin-qt-base QREncode::qrencode)
 	endif()
 endif()
 
@@ -323,6 +341,7 @@ add_to_security_check(bitcoin-qt)
 
 include(InstallationHelper)
 install_target(bitcoin-qt)
+install_manpages(bitcoin-qt)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	set(BITCOINQT_BUNDLE_ICON "res/icons/bitcoin.icns")
@@ -417,7 +436,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
 	get_target_property(QMAKE_EXECUTABLE Qt5::qmake IMPORTED_LOCATION)
 	execute_process(
-		COMMAND 
+		COMMAND
 			"${QMAKE_EXECUTABLE}"
 			-query QT_INSTALL_TRANSLATIONS
 		OUTPUT_VARIABLE
@@ -589,6 +608,19 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		)
 	endif()
 endif()
+
+configure_file(
+	"${CMAKE_SOURCE_DIR}/cmake/utils/translate.sh.in"
+	"${CMAKE_CURRENT_BINARY_DIR}/translate.sh"
+	@ONLY
+)
+
+add_custom_target(translate
+	COMMENT "Updating the translations..."
+	COMMAND "${CMAKE_CURRENT_BINARY_DIR}/translate.sh"
+	DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/translate.sh"
+	WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+)
 
 # Test tests
 add_subdirectory(test)

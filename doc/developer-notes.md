@@ -17,6 +17,7 @@ Developer Notes
         - [DEBUG_LOCKORDER](#debug_lockorder)
         - [Valgrind suppressions file](#valgrind-suppressions-file)
         - [Compiling for test coverage](#compiling-for-test-coverage)
+        - [Performance profiling with perf](#performance-profiling-with-perf)
         - [Sanitizers](#sanitizers)
     - [Locking/mutex usage notes](#lockingmutex-usage-notes)
     - [Threads](#threads)
@@ -33,7 +34,7 @@ Developer Notes
     - [Source code organization](#source-code-organization)
     - [GUI](#gui)
     - [Unit tests](#unit-tests)
-    - [Subtrees](#subtrees)
+    - [Third party libraries](#third-party-libraries)
     - [Git and GitHub tips](#git-and-github-tips)
     - [RPC interface guidelines](#rpc-interface-guidelines)
 
@@ -45,9 +46,9 @@ Coding Style
 Various coding styles have been used during the history of the codebase,
 and the result is not very consistent. However, we're now trying to converge to
 a single style, so please use it in new code. Old code will be converted
-gradually and you are encouraged to use the provided
-[clang-format-diff script](/contrib/devtools/README.md#clang-format-diffpy)
-to clean up the patch automatically before submitting a pull request.
+gradually and a handful of linters will help you to clean up your patches before
+submitting them for review. These linters are run automatically when using
+`arc diff` but can also be explicitly called with `arc lint`.
 
 - Basic rules specified in [src/.clang-format](/src/.clang-format).
   - Braces on new lines for namespaces, classes, functions, methods.
@@ -63,16 +64,16 @@ to clean up the patch automatically before submitting a pull request.
   - Use CamelCase for functions/methods, and lowerCamelCase for variables.
     - GLOBAL_CONSTANTS should use UPPER_SNAKE_CASE.
     - namespaces should use lower_snake_case.
-  - Function names should generally start with an English command-form verb 
+  - Function names should generally start with an English command-form verb
     (e.g. `ValidateTransaction`, `AddTransactionToMempool`, `ConnectBlock`)
   - Variable names should generally be nouns or past/future tense verbs.
     (e.g. `canDoThing`, `signatureOperations`, `didThing`)
   - Avoid using globals, remove existing globals whenever possible.
   - Class member variable names should be prepended with `m_`
-  - DO choose easily readable identifier names. 
+  - DO choose easily readable identifier names.
   - DO favor readability over brevity.
   - DO NOT use Hungarian notation.
-  - DO NOT use abbreviations or contractions within identifiers. 
+  - DO NOT use abbreviations or contractions within identifiers.
     - WRONG: mempool
     - RIGHT: MemoryPool
     - WRONG: ChangeDir
@@ -104,11 +105,11 @@ private:
 public:
     /**
     * The documentation before a function or class method should follow Doxygen
-    * spec. The name of the function should start with an english verb which 
+    * spec. The name of the function should start with an english verb which
     * indicates the intended purpose of this code.
-    * 
+    *
     * The  function name should be should be CamelCase.
-    * 
+    *
     * @param[in] s    A description
     * @param[in] n    Another argument description
     * @pre Precondition for function...
@@ -209,14 +210,11 @@ Development tips and tricks
 
 ### Compiling for debugging
 
-Run configure with `--enable-debug` to add additional compiler flags that
-produce better debugging builds.
+Run `cmake`  with `-DCMAKE_BUILD_TYPE=Debug` to add additional compiler flags
+that produce better debugging builds.
 
 ### Compiling for gprof profiling
 
-Run configure with the `--enable-gprof` option, then make.
-
-With `cmake` and `ninja`:
 ```
   cmake -GNinja .. -DENABLE_HARDENING=OFF -DENABLE_PROFIILING=gprof
 ```
@@ -234,9 +232,9 @@ to see it.
 
 ### Writing tests
 
-For details on unit tests, see `unit-tests.md`
+For details on unit tests, see [Compiling/running unit tests](unit-tests.md).
 
-For details on functional tests, see `functional-tests.md`
+For details on functional tests, see [Functional tests](functional-tests.md).
 
 ### Writing script integration tests
 
@@ -244,7 +242,7 @@ Script integration tests are built using `src/test/script_tests.cpp`:
 
 1. Uncomment the line with `#define UPDATE_JSON_TESTS`
 2. Add a new TestBuilder to the `script_build` test to cover your test case.
-3. `make && ./src/test/test_bitcoin --run_test=script_tests`
+3. `ninja check-bitcoin-script_tests`
 4. Copy your newly generated test JSON from `<build-dir>/src/script_tests.json.gen` to `src/test/data/script_tests.json`.
 
 Please commit your TestBuilder along with your generated test JSON and cleanup the uncommented #define before code review.
@@ -261,16 +259,16 @@ that run in `-regtest` mode.
 ### DEBUG_LOCKORDER
 
 Bitcoin ABC is a multi-threaded application, and deadlocks or other
-multi-threading bugs can be very difficult to track down. The `--enable-debug`
-configure option adds `-DDEBUG_LOCKORDER` to the compiler flags. This inserts
-run-time checks to keep track of which locks are held, and adds warnings to the
-debug.log file if inconsistencies are detected.
+multi-threading bugs can be very difficult to track down.
+The `-DCMAKE_BUILD_TYPE=Debug` cmake option adds `-DDEBUG_LOCKORDER` to the
+compiler flags. This inserts run-time checks to keep track of which locks are
+held, and adds warnings to the debug.log file if inconsistencies are detected.
 
 ### Valgrind suppressions file
 
 Valgrind is a programming tool for memory debugging, memory leak detection, and
 profiling. The repo contains a Valgrind suppressions file
-([`valgrind.supp`](contrib/valgrind.supp))
+([`valgrind.supp`](/contrib/valgrind.supp))
 which includes known Valgrind warnings in our dependencies that cannot be fixed
 in-tree. Example use:
 
@@ -283,26 +281,78 @@ $ valgrind -v --leak-check=full src/bitcoind -printtoconsole
 
 ### Compiling for test coverage
 
-LCOV can be used to generate a test coverage report based upon `make check`
-execution. LCOV must be installed on your system (e.g. the `lcov` package
-on Debian/Ubuntu).
+LCOV can be used to generate a test coverage report based upon some test targets
+execution. Some packages are required to generate the coverage report:
+`c++filt`, `gcov`, `genhtml`, `lcov` and `python3`.
+
+To install these dependencies on Debian 10:
+
+```shell
+sudo apt install binutils-common g++ lcov python3
+```
 
 To enable LCOV report generation during test runs:
 
 ```shell
-./configure --enable-lcov
-make
-make cov
-
-# A coverage report will now be accessible at `./test_bitcoin.coverage/index.html`.
+cmake -GNinja .. -DENABLE_COVERAGE=ON
+ninja coverage-check-all
 ```
+
+A coverage report will now be accessible at `./check-all.coverage/index.html`.
+
+To include branch coverage, you can add the `-DENABLE_BRANCH_COVERAGE=ON` option
+to the `cmake` command line.
+
+### Performance profiling with perf
+
+Profiling is a good way to get a precise idea of where time is being spent in
+code. One tool for doing profiling on Linux platforms is called
+[`perf`](http://www.brendangregg.com/perf.html), and has been integrated into
+the functional test framework. Perf can observe a running process and sample
+(at some frequency) where its execution is.
+
+Perf installation is contingent on which kernel version you're running; see
+[this StackExchange
+thread](https://askubuntu.com/questions/50145/how-to-install-perf-monitoring-tool)
+for specific instructions.
+
+Certain kernel parameters may need to be set for perf to be able to inspect the
+running process' stack.
+
+```sh
+$ sudo sysctl -w kernel.perf_event_paranoid=-1
+$ sudo sysctl -w kernel.kptr_restrict=0
+```
+
+Make sure you [understand the security
+trade-offs](https://lwn.net/Articles/420403/) of setting these kernel
+parameters.
+
+To profile a running bitcoind process for 60 seconds, you could use an
+invocation of `perf record` like this:
+
+```sh
+$ perf record \
+    -g --call-graph dwarf --per-thread -F 140 \
+    -p `pgrep bitcoind` -- sleep 60
+```
+
+You could then analyze the results by running
+
+```sh
+perf report --stdio | c++filt | less
+```
+
+or using a graphical tool like [Hotspot](https://github.com/KDAB/hotspot).
+
+See the functional test documentation for how to invoke perf within tests.
 
 ### Sanitizers
 
 Bitcoin ABC can be compiled with various "sanitizers" enabled, which add
 instrumentation for issues regarding things like memory safety, thread race
 conditions, or undefined behavior. This is controlled with the
-`--with-sanitizers` configure flag, which should be a comma separated list of
+`-DENABLE_SANITIZERS` cmake flag, which should be a semicolon separated list of
 sanitizers to enable. The sanitizer list should correspond to supported
 `-fsanitize=` options in your compiler. These sanitizers have runtime overhead,
 so they are most useful when testing changes or producing debugging builds.
@@ -311,31 +361,82 @@ Some examples:
 
 ```bash
 # Enable both the address sanitizer and the undefined behavior sanitizer
-./configure --with-sanitizers=address,undefined
+cmake -GNinja .. -DENABLE_SANITIZERS="address;undefined"
 
 # Enable the thread sanitizer
-./configure --with-sanitizers=thread
+cmake -GNinja .. -DENABLE_SANITIZERS=thread
 ```
 
 If you are compiling with GCC you will typically need to install corresponding
 "san" libraries to actually compile with these flags, e.g. libasan for the
 address sanitizer, libtsan for the thread sanitizer, and libubsan for the
-undefined sanitizer. If you are missing required libraries, the configure script
-will fail with a linker error when testing the sanitizer flags.
+undefined sanitizer. If you are missing required libraries, the cmake script
+will fail with an error when testing the sanitizer flags.
 
-The test suite should pass cleanly with the `thread` and `undefined` sanitizers,
-but there are a number of known problems when using the `address` sanitizer. The
-address sanitizer is known to fail in
+Note that the sanitizers will give a better output if they are run with a Debug
+build configuration.
+
+There are a number of known problems for which suppressions files are provided
+under `test/sanitizer_suppressions`. These files are intended to be used with
+the `suppressions` option from the sanitizers. If you are using the `check-*`
+targets to run the tests, the suppression options are automatically set.
+Otherwise they need to be set manually using environment variables; refer to
+your compiler manual for the correct syntax.
+
+The address sanitizer is known to fail in
 [sha256_sse4::Transform](/src/crypto/sha256_sse4.cpp) which makes it unusable
-unless you also use `--disable-asm` when running configure. We would like to fix
-sanitizer issues, so please send pull requests if you can fix any errors found
-by the address sanitizer (or any other sanitizer).
+unless you also use `-DCRYPTO_USE_ASM=OFF` when running cmake.
+We would like to fix sanitizer issues, so please send pull requests if you can
+fix any errors found by the address sanitizer (or any other sanitizer).
 
 Not all sanitizer options can be enabled at the same time, e.g. trying to build
-with `--with-sanitizers=address,thread` will fail in the configure script as
+with `-DENABLE_SANITIZERS=="address;thread" will fail in the cmake script as
 these sanitizers are mutually incompatible. Refer to your compiler manual to
 learn more about these options and which sanitizers are supported by your
 compiler.
+
+Examples:
+
+Build and run the test suite with the address sanitizer enabled:
+
+```bash
+mkdir build_asan
+cd build_asan
+
+cmake -GNinja .. \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DENABLE_SANITIZERS=address \
+  -DCRYPTO_USE_ASM=OFF
+
+ninja check check-functional
+```
+
+Build and run the test suite with the thread sanitizer enabled (it can take a
+very long time to complete):
+
+```bash
+mkdir build_tsan
+cd build_tsan
+
+cmake -GNinja .. \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DENABLE_SANITIZERS=thread
+
+ninja check check-functional
+```
+
+Build and run the test suite with the undefined sanitizer enabled:
+
+```bash
+mkdir build_ubsan
+cd build_ubsan
+
+cmake -GNinja .. \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DENABLE_SANITIZERS=undefined
+
+ninja check check-functional
+```
 
 Additional resources:
 
@@ -357,12 +458,12 @@ The code is multi-threaded, and uses mutexes and the
 Deadlocks due to inconsistent lock ordering (thread 1 locks `cs_main` and then
 `cs_wallet`, while thread 2 locks them in the opposite order: result, deadlock
 as each waits for the other to release its lock) are a problem. Compile with
-`-DDEBUG_LOCKORDER` (or use `--enable-debug`) to get lock order inconsistencies
-reported in the debug.log file.
+`-DDEBUG_LOCKORDER` (or use `-DCMAKE_BUILD_TYPE=Debug`) to get lock order
+inconsistencies reported in the debug.log file.
 
 Re-architecting the core code so there are better-defined interfaces
 between the various components is a goal, with any necessary locking
-done by the components (e.g. see the self-contained `CBasicKeyStore` class
+done by the components (e.g. see the self-contained `FillableSigningProvider` class
 and its `cs_KeyStore` lock for example).
 
 Threads
@@ -398,7 +499,7 @@ Ignoring IDE/editor files
 In closed-source environments in which everyone uses the same IDE it is common
 to add temporary files it produces to the project-wide `.gitignore` file.
 
-However, in open source software such as Bitcoin Core, where everyone uses
+However, in open source software such as Bitcoin ABC, where everyone uses
 their own editors/IDE/tools, it is less common. Only you know what files your
 editor produces and this may change from version to version. The canonical way
 to do this is thus to create your local gitignore. Add this to `~/.gitconfig`:
@@ -411,7 +512,7 @@ to do this is thus to create your local gitignore. Add this to `~/.gitconfig`:
 (alternatively, type the command `git config --global core.excludesfile ~/.gitignore_global`
 on a terminal)
 
-Then put your favourite tool's temporary filenames in that file, e.g.
+Then put your favorite tool's temporary filenames in that file, e.g.
 ```
 # NetBeans
 nbproject/
@@ -428,7 +529,7 @@ Development guidelines
 ============================
 
 A few non-style-related recommendations for developers, as well as points to
-pay attention to for reviewers of Bitcoin Core code.
+pay attention to for reviewers of Bitcoin ABC code.
 
 Wallet
 -------
@@ -568,7 +669,7 @@ Threads and synchronization
 
 - Build and run tests with `-DDEBUG_LOCKORDER` to verify that no potential
   deadlocks are introduced. As of 0.12, this is defined by default when
-  configuring with `--enable-debug`
+  configuring with `-DCMAKE_BUILD_TYPE=Debug`
 
 - When using `LOCK`/`TRY_LOCK` be aware that the lock exists in the context of
   the current scope, so surround the statement and the code that needs the lock
@@ -650,7 +751,7 @@ Header Inclusions
   e.g.: `#include <qt/test/guiutiltests.h>`
 
   - Native C++ headers should be preferred over C compatibility headers.
-  e.g.: use `<cstdint>` instead of `<stdint.h>` 
+  e.g.: use `<cstdint>` instead of `<stdint.h>`
 
   - In order to make the code consistent, header files should be included in the following order, with each
   section separated by a newline:
@@ -660,7 +761,7 @@ Header Inclusions
     4. The 3rd party libraries headers. Different libraries should be in different sections.
     5. The system libraries.
 
-All headers should be lexically ordered inside their block. 
+All headers should be lexically ordered inside their block.
 
 - Use include guards to avoid the problem of double inclusion. The header file
   `foo/bar.h` should use the include guard identifier `BITCOIN_FOO_BAR_H`, e.g.
@@ -688,7 +789,7 @@ GUI
 
   Prefer to offload work from the GUI thread to worker threads (see
   `RPCExecutor` in console code as an example) or take other steps (see
-  https://doc.qt.io/archives/qq/qq27-responsive-guis.html) to keep the GUI
+  <https://doc.qt.io/archives/qq/qq27-responsive-guis.html>) to keep the GUI
   responsive.
 
   - *Rationale*: Blocking the GUI thread can increase latency, and lead to
@@ -696,42 +797,39 @@ GUI
 
 Unit Tests
 -----------
- - Test suite naming convention: The Boost test suite in file 
+ - Test suite naming convention: The Boost test suite in file
    `src/test/foo_tests.cpp` should be named `foo_tests`. Test suite names must
    be unique.
 
-Subtrees
-----------
+Third party libraries
+---------------------
 
-Several parts of the repository are subtrees of software maintained elsewhere.
+Several parts of the repository are software maintained elsewhere.
 
-Some of these are maintained by active developers of Bitcoin Core, in which case changes should probably go
-directly upstream without being PRed directly against the project.  They will be merged back in the next
-subtree merge.
+Changes to these should preferably be sent upstream but bugfixes may also be
+submitted to Bitcoin ABC so that they can be integrated quickly.
+Cosmetic changes should be purely taken upstream.
 
-Others are external projects without a tight relationship with our project.  Changes to these should also
-be sent upstream but bugfixes may also be prudent to PR against Bitcoin Core so that they can be integrated
-quickly.  Cosmetic changes should be purely taken upstream.
-
-There is a tool in `test/lint/git-subtree-check.sh` to check a subtree directory for consistency with
-its upstream repository.
-
-Current subtrees include:
+Current third party libraries include:
 
 - src/leveldb
-  - Upstream at https://github.com/google/leveldb ; Maintained by Google, but
-    open important PRs to Core to avoid delay.
-  - **Note**: Follow the instructions in [Upgrading LevelDB](#upgrading-leveldb) when
-    merging upstream changes to the leveldb subtree.
+  - Upstream at <https://github.com/google/leveldb> ; Maintained by Google.
+  - **Note**: Follow the instructions in [Upgrading LevelDB](#upgrading-leveldb)
+    when merging upstream changes to Bitcoin ABC.
 
 - src/libsecp256k1
-  - Upstream at https://github.com/bitcoin-core/secp256k1/ ; actively maintaned by Core contributors.
+  - Upstream at <https://github.com/bitcoin-core/secp256k1/> ; actively maintained
+    by Bitcoin Core contributors.
+    Bitcoin ABC is using a modified version of libsecp256k1, some changes might
+    be directly submitted to Bitcoin ABC.
+    See the [secp256k1 README](../src/secp256k1/README.md) for details.
 
 - src/crypto/ctaes
-  - Upstream at https://github.com/bitcoin-core/ctaes ; actively maintained by Core contributors.
+  - Upstream at https://github.com/bitcoin-core/ctaes ; maintained by Bitcoin
+    Core contributors.
 
 - src/univalue
-  - Upstream at https://github.com/jgarzik/univalue ; report important PRs to Core to avoid delay.
+  - Upstream at https://github.com/jgarzik/univalue ; maintained by Jeff Garzik.
 
 Upgrading LevelDB
 ---------------------
@@ -776,18 +874,18 @@ to check for issues affecting consensus compatibility.
 For example, if LevelDB had a bug that accidentally prevented a key from being
 returned in an edge case, and that bug was fixed upstream, the bug "fix" would
 be an incompatible consensus change. In this situation the correct behavior
-would be to revert the upstream fix before applying the updates to Bitcoin's
+would be to revert the upstream fix before applying the updates to Bitcoin ABC's
 copy of LevelDB. In general you should be wary of any upstream changes affecting
 what data is returned from LevelDB queries.
 
 Git and GitHub tips
 ---------------------
 
-- Github is not typically the source of truth for pull requests.  See CONTRIBUTING.md for instructions
+- Github is not typically the source of truth for pull requests.  See [CONTRIBUTING](../CONTRIBUTING.md) for instructions
   on setting up your repo correctly.
 
 - Similarly, your git remote origin should be set to: `ssh://vcs@reviews.bitcoinabc.org:2221/source/bitcoin-abc.git`
-  instead of github.com.  See CONTRIBUTING.md for details.
+  instead of github.com. See [CONTRIBUTING](../CONTRIBUTING.md).
 
 - For resolving merge/rebase conflicts, it can be useful to enable diff3 style using
   `git config merge.conflictstyle diff3`. Instead of

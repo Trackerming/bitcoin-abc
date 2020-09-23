@@ -7,7 +7,7 @@
 #include <consensus/activation.h>
 #include <util/system.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -42,29 +42,43 @@ BOOST_AUTO_TEST_CASE(isgravitonenabled) {
 }
 
 BOOST_AUTO_TEST_CASE(isphononenabled) {
-    CBlockIndex prev;
+    const Consensus::Params &consensus = Params().GetConsensus();
+    BOOST_CHECK(!IsPhononEnabled(consensus, nullptr));
 
+    std::array<CBlockIndex, 4> blocks;
+    blocks[0].nHeight = consensus.phononHeight - 2;
+    for (size_t i = 1; i < blocks.size(); ++i) {
+        blocks[i].pprev = &blocks[i - 1];
+        blocks[i].nHeight = blocks[i - 1].nHeight + 1;
+    }
+    BOOST_CHECK(!IsPhononEnabled(consensus, &blocks[0]));
+    BOOST_CHECK(!IsPhononEnabled(consensus, &blocks[1]));
+    BOOST_CHECK(IsPhononEnabled(consensus, &blocks[2]));
+    BOOST_CHECK(IsPhononEnabled(consensus, &blocks[3]));
+}
+
+BOOST_AUTO_TEST_CASE(isaxionenabled) {
     const Consensus::Params &params = Params().GetConsensus();
     const auto activation =
-        gArgs.GetArg("-phononactivationtime", params.phononActivationTime);
+        gArgs.GetArg("-axionactivationtime", params.axionActivationTime);
     SetMockTime(activation - 1000000);
 
-    BOOST_CHECK(!IsPhononEnabled(params, nullptr));
+    BOOST_CHECK(!IsAxionEnabled(params, nullptr));
 
     std::array<CBlockIndex, 12> blocks;
     for (size_t i = 1; i < blocks.size(); ++i) {
         blocks[i].pprev = &blocks[i - 1];
     }
-    BOOST_CHECK(!IsPhononEnabled(params, &blocks.back()));
+    BOOST_CHECK(!IsAxionEnabled(params, &blocks.back()));
 
     SetMTP(blocks, activation - 1);
-    BOOST_CHECK(!IsPhononEnabled(params, &blocks.back()));
+    BOOST_CHECK(!IsAxionEnabled(params, &blocks.back()));
 
     SetMTP(blocks, activation);
-    BOOST_CHECK(IsPhononEnabled(params, &blocks.back()));
+    BOOST_CHECK(IsAxionEnabled(params, &blocks.back()));
 
     SetMTP(blocks, activation + 1);
-    BOOST_CHECK(IsPhononEnabled(params, &blocks.back()));
+    BOOST_CHECK(IsAxionEnabled(params, &blocks.back()));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

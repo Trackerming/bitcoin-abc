@@ -167,7 +167,7 @@ namespace tinyformat {
 
 class format_error : public std::runtime_error {
 public:
-    format_error(const std::string &what) : std::runtime_error(what) {}
+    explicit format_error(const std::string &what) : std::runtime_error(what) {}
 };
 
 //------------------------------------------------------------------------------
@@ -1085,6 +1085,10 @@ std::string format(const std::string &fmt, const Args &... args) {
 
 } // namespace tinyformat
 
+/**
+ * Format arguments and return the string or write to given std::ostream (see
+ * tinyformat::format doc for details)
+ */
 #define strprintf tfm::format
 
 #endif // TINYFORMAT_H_INCLUDED

@@ -16,8 +16,7 @@ import shutil
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
-    connect_nodes_bi,
-    sync_blocks,
+    connect_nodes,
 )
 
 
@@ -40,7 +39,7 @@ class KeypoolRestoreTest(BitcoinTestFramework):
         self.stop_node(1)
         shutil.copyfile(wallet_path, wallet_backup_path)
         self.start_node(1, self.extra_args[1])
-        connect_nodes_bi(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[0], self.nodes[1])
 
         self.log.info("Generate keys for wallet")
         for _ in range(90):
@@ -53,13 +52,13 @@ class KeypoolRestoreTest(BitcoinTestFramework):
         self.nodes[0].generate(1)
         self.nodes[0].sendtoaddress(addr_extpool, 5)
         self.nodes[0].generate(1)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         self.log.info("Restart node with wallet backup")
         self.stop_node(1)
         shutil.copyfile(wallet_backup_path, wallet_path)
         self.start_node(1, self.extra_args[1])
-        connect_nodes_bi(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[0], self.nodes[1])
         self.sync_all()
 
         self.log.info("Verify keypool is restored and balance is correct")

@@ -8,6 +8,7 @@ Verify that a bitcoind node can load multiple wallet files
 """
 import os
 import shutil
+import time
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.test_node import ErrorMatch
@@ -15,6 +16,8 @@ from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
 )
+
+FEATURE_LATEST = 200300
 
 
 class MultiWalletTest(BitcoinTestFramework):
@@ -25,6 +28,16 @@ class MultiWalletTest(BitcoinTestFramework):
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
+
+    def add_options(self, parser):
+        parser.add_argument(
+            '--data_wallets_dir',
+            default=os.path.join(
+                os.path.dirname(
+                    os.path.realpath(__file__)),
+                'data/wallets/'),
+            help='Test data with wallet directories (default: %(default)s)',
+        )
 
     def run_test(self):
         node = self.nodes[0]
@@ -40,14 +53,18 @@ class MultiWalletTest(BitcoinTestFramework):
                 return wallet_dir(name, "wallet.dat")
             return wallet_dir(name)
 
+        assert_equal(self.nodes[0].listwalletdir(),
+                     {'wallets': [{'name': ''}]})
+
         # check wallet.dat is created
         self.stop_nodes()
         assert_equal(os.path.isfile(wallet_dir('wallet.dat')), True)
 
         # create symlink to verify wallet directory path can be referenced
         # through symlink
-        os.mkdir(wallet_dir('w7'))
-        os.symlink('w7', wallet_dir('w7_symlink'))
+        if os.name != 'nt':
+            os.mkdir(wallet_dir('w7'))
+            os.symlink('w7', wallet_dir('w7_symlink'))
 
         # rename wallet.dat to make sure plain wallet file paths (as opposed to
         # directory paths) can be loaded
@@ -69,8 +86,13 @@ class MultiWalletTest(BitcoinTestFramework):
         #   ''         - to verify default wallet file is created correctly
         wallet_names = ['w1', 'w2', 'w3', 'w', 'sub/w5',
                         os.path.join(self.options.tmpdir, 'extern/w6'), 'w7_symlink', 'w8', '']
+        if os.name == 'nt':
+            wallet_names.remove('w7_symlink')
         extra_args = ['-wallet={}'.format(n) for n in wallet_names]
         self.start_node(0, extra_args)
+        assert_equal(sorted(map(lambda w: w['name'], self.nodes[0].listwalletdir()['wallets'])), [
+                     '', os.path.join('sub', 'w5'), 'w', 'w1', 'w2', 'w3', 'w7', 'w7_symlink', 'w8'])
+
         assert_equal(set(node.listwallets()), set(wallet_names))
 
         # check that all requested wallets were created
@@ -79,7 +101,7 @@ class MultiWalletTest(BitcoinTestFramework):
             assert_equal(os.path.isfile(wallet_file(wallet_name)), True)
 
         # should not initialize if wallet path can't be created
-        exp_stderr = "boost::filesystem::create_directory: (The system cannot find the path specified|Not a directory):"
+        exp_stderr = "boost::filesystem::create_directory:"
         self.nodes[0].assert_start_raises_init_error(
             ['-wallet=wallet.dat/bad'], exp_stderr, match=ErrorMatch.PARTIAL_REGEX)
 
@@ -101,9 +123,10 @@ class MultiWalletTest(BitcoinTestFramework):
             ['-wallet=w8', '-wallet=w8_copy'], exp_stderr, match=ErrorMatch.PARTIAL_REGEX)
 
         # should not initialize if wallet file is a symlink
-        os.symlink('w8', wallet_dir('w8_symlink'))
-        self.nodes[0].assert_start_raises_init_error(
-            ['-wallet=w8_symlink'], r'Error: Invalid -wallet path \'w8_symlink\'\. .*', match=ErrorMatch.FULL_REGEX)
+        if os.name != 'nt':
+            os.symlink('w8', wallet_dir('w8_symlink'))
+            self.nodes[0].assert_start_raises_init_error(
+                ['-wallet=w8_symlink'], r'Error: Invalid -wallet path \'w8_symlink\'\. .*', match=ErrorMatch.FULL_REGEX)
 
         # should not initialize if the specified walletdir does not exist
         self.nodes[0].assert_start_raises_init_error(
@@ -168,7 +191,7 @@ class MultiWalletTest(BitcoinTestFramework):
         self.start_node(0, ['-wallet=w4', '-wallet=w5'])
         assert_equal(set(node.listwallets()), {"w4", "w5"})
         w5 = wallet("w5")
-        w5.generate(1)
+        node.generatetoaddress(nblocks=1, address=w5.getnewaddress())
 
         # now if wallets/ exists again, but the rootdir is specified as the
         # walletdir, w4 and w5 should still be loaded
@@ -190,11 +213,14 @@ class MultiWalletTest(BitcoinTestFramework):
 
         self.restart_node(0, extra_args)
 
+        assert_equal(sorted(map(lambda w: w['name'], self.nodes[0].listwalletdir()['wallets'])), [
+                     '', os.path.join('sub', 'w5'), 'w', 'w1', 'w2', 'w3', 'w7', 'w7_symlink', 'w8', 'w8_copy'])
+
         wallets = [wallet(w) for w in wallet_names]
         wallet_bad = wallet("bad")
 
         # check wallet names and balances
-        wallets[0].generate(1)
+        node.generatetoaddress(nblocks=1, address=wallets[0].getnewaddress())
         for wallet_name, wallet in zip(wallet_names, wallets):
             info = wallet.getwalletinfo()
             assert_equal(info['immature_balance'],
@@ -210,7 +236,7 @@ class MultiWalletTest(BitcoinTestFramework):
                                 node.getwalletinfo)
 
         w1, w2, w3, w4, *_ = wallets
-        w1.generate(101)
+        node.generatetoaddress(nblocks=101, address=w1.getnewaddress())
         assert_equal(w1.getbalance(), 100)
         assert_equal(w2.getbalance(), 0)
         assert_equal(w3.getbalance(), 0)
@@ -219,7 +245,7 @@ class MultiWalletTest(BitcoinTestFramework):
         w1.sendtoaddress(w2.getnewaddress(), 1)
         w1.sendtoaddress(w3.getnewaddress(), 2)
         w1.sendtoaddress(w4.getnewaddress(), 3)
-        w1.generate(1)
+        node.generatetoaddress(nblocks=1, address=w1.getnewaddress())
         assert_equal(w2.getbalance(), 1)
         assert_equal(w3.getbalance(), 2)
         assert_equal(w4.getbalance(), 3)
@@ -290,8 +316,9 @@ class MultiWalletTest(BitcoinTestFramework):
                                 self.nodes[0].loadwallet, 'w8_copy')
 
         # Fail to load if wallet file is a symlink
-        assert_raises_rpc_error(-4, "Wallet file verification failed: Invalid -wallet path 'w8_symlink'",
-                                self.nodes[0].loadwallet, 'w8_symlink')
+        if os.name != 'nt':
+            assert_raises_rpc_error(-4, "Wallet file verification failed: Invalid -wallet path 'w8_symlink'",
+                                    self.nodes[0].loadwallet, 'w8_symlink')
 
         # Fail to load if a directory is specified that doesn't contain a
         # wallet
@@ -340,7 +367,11 @@ class MultiWalletTest(BitcoinTestFramework):
         assert 'w1' not in self.nodes[0].listwallets()
 
         # Successfully unload the wallet referenced by the request endpoint
+        # Also ensure unload works during walletpassphrase timeout
+        w2.encryptwallet('test')
+        w2.walletpassphrase('test', 1)
         w2.unloadwallet()
+        time.sleep(1.1)
         assert 'w2' not in self.nodes[0].listwallets()
 
         # Successfully unload all wallets
@@ -354,6 +385,9 @@ class MultiWalletTest(BitcoinTestFramework):
         self.nodes[0].loadwallet('w1')
         assert_equal(self.nodes[0].listwallets(), ['w1'])
         assert_equal(w1.getwalletinfo()['walletname'], 'w1')
+
+        assert_equal(sorted(map(lambda w: w['name'], self.nodes[0].listwalletdir()['wallets'])), [
+                     '', os.path.join('sub', 'w5'), 'w', 'w1', 'w2', 'w3', 'w7', 'w7_symlink', 'w8', 'w8_copy', 'w9'])
 
         # Test backing up and restoring wallets
         self.log.info("Test wallet backup")
@@ -382,6 +416,25 @@ class MultiWalletTest(BitcoinTestFramework):
                                 self.nodes[1].loadwallet, wallet)
         self.nodes[0].unloadwallet(wallet)
         self.nodes[1].loadwallet(wallet)
+
+        # Fail to load if wallet is downgraded
+        shutil.copytree(
+            os.path.join(
+                self.options.data_wallets_dir,
+                'high_minversion'),
+            wallet_dir('high_minversion'))
+        self.restart_node(
+            0, extra_args=[
+                '-upgradewallet={}'.format(FEATURE_LATEST)])
+        assert {'name': 'high_minversion'} in self.nodes[0].listwalletdir()[
+            'wallets']
+        self.log.info("Fail -upgradewallet that results in downgrade")
+        assert_raises_rpc_error(
+            -4,
+            'Wallet loading failed: Error loading {}: Wallet requires newer version of {}'.format(
+                wallet_dir('high_minversion', 'wallet.dat'), self.config['environment']['PACKAGE_NAME']),
+            lambda: self.nodes[0].loadwallet(filename='high_minversion'),
+        )
 
 
 if __name__ == '__main__':

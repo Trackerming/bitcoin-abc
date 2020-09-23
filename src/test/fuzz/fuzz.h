@@ -6,11 +6,9 @@
 #define BITCOIN_TEST_FUZZ_FUZZ_H
 
 #include <cstdint>
-#include <functional>
 #include <vector>
 
-const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
-
-void test_one_input(std::vector<uint8_t> buffer);
+void initialize();
+void test_one_input(const std::vector<uint8_t> &buffer);
 
 #endif // BITCOIN_TEST_FUZZ_FUZZ_H

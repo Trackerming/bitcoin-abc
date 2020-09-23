@@ -5,14 +5,18 @@
 """Test the parckblock and unparkblock RPC calls."""
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal, connect_nodes_bi, wait_until
+from test_framework.util import (
+    assert_equal,
+    connect_nodes,
+    wait_until
+)
 
 
 class ParkedChainTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
         self.extra_args = [["-noparkdeepreorg",
-                            "-noautomaticunparking"], ["-maxreorgdepth=-1"]]
+                            "-noautomaticunparking", "-whitelist=noban@127.0.0.1"], ["-maxreorgdepth=-1"]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -172,8 +176,12 @@ class ParkedChainTest(BitcoinTestFramework):
             # Invalidate the tip on node 0, so it doesn't follow node 1.
             node.invalidateblock(node.getbestblockhash())
             # Mine block to create a fork of proper depth
-            parking_node.generate(depth - 1)
-            node.generate(depth)
+            parking_node.generatetoaddress(
+                nblocks=depth - 1,
+                address=parking_node.getnewaddress(label='coinbase'))
+            node.generatetoaddress(
+                nblocks=depth,
+                address=node.getnewaddress(label='coinbase'))
             # extra block should now find themselves parked
             for i in range(extra_blocks):
                 node.generate(1)
@@ -203,7 +211,9 @@ class ParkedChainTest(BitcoinTestFramework):
         # generate a ton of blocks at once.
         try:
             with parking_node.assert_debug_log(["Park block"]):
-                node.generate(20)
+                node.generatetoaddress(
+                    nblocks=20,
+                    address=node.getnewaddress(label='coinbase'))
                 wait_until(lambda: parking_node.getbestblockhash() ==
                            node.getbestblockhash())
         except AssertionError as exc:
@@ -216,12 +226,14 @@ class ParkedChainTest(BitcoinTestFramework):
         # Set up parking node height = fork + 4, node height = fork + 5
         node.invalidateblock(node.getbestblockhash())
         parking_node.generate(3)
-        node.generate(5)
+        node.generatetoaddress(
+            nblocks=5,
+            address=node.getnewaddress(label='coinbase'))
         wait_for_parked_block(node.getbestblockhash())
         # Restart the parking node without parkdeepreorg.
         self.restart_node(1, ["-parkdeepreorg=0"])
         parking_node = self.nodes[1]
-        connect_nodes_bi(node, parking_node)
+        connect_nodes(node, parking_node)
         # The other chain should still be marked 'parked'.
         wait_for_parked_block(node.getbestblockhash())
         # Three more blocks is not enough to unpark. Even though its PoW is

@@ -7,6 +7,11 @@ AH_TOP([#ifndef LIBSECP256K1_CONFIG_H])
 AH_TOP([#define LIBSECP256K1_CONFIG_H])
 AH_BOTTOM([#endif /*LIBSECP256K1_CONFIG_H*/])
 AM_INIT_AUTOMAKE([foreign subdir-objects])
+
+# Set -g if CFLAGS are not already set, which matches the default autoconf
+# behavior (see PROG_CC in the Autoconf manual) with the exception that we don't
+# set -O2 here because we set it in any case (see further down).
+: ${CFLAGS="-g"}
 LT_INIT
 
 dnl make the compilation flags quiet unless V=1 is used
@@ -18,10 +23,6 @@ AC_PATH_TOOL(AR, ar)
 AC_PATH_TOOL(RANLIB, ranlib)
 AC_PATH_TOOL(STRIP, strip)
 AX_PROG_CC_FOR_BUILD
-
-if test "x$CFLAGS" = "x"; then
-  CFLAGS="-g"
-fi
 
 AM_PROG_CC_C_O
 
@@ -63,11 +64,11 @@ case $host_os in
    ;;
 esac
 
-CFLAGS="$CFLAGS -W"
+CFLAGS="-W $CFLAGS"
 
 warn_CFLAGS="-std=c89 -pedantic -Wall -Wextra -Wcast-align -Wnested-externs -Wshadow -Wstrict-prototypes -Wno-unused-function -Wno-long-long -Wno-overlength-strings"
 saved_CFLAGS="$CFLAGS"
-CFLAGS="$CFLAGS $warn_CFLAGS"
+CFLAGS="$warn_CFLAGS $CFLAGS"
 AC_MSG_CHECKING([if ${CC} supports ${warn_CFLAGS}])
 AC_COMPILE_IFELSE([AC_LANG_SOURCE([[char foo;]])],
     [ AC_MSG_RESULT([yes]) ],
@@ -76,7 +77,7 @@ AC_COMPILE_IFELSE([AC_LANG_SOURCE([[char foo;]])],
     ])
 
 saved_CFLAGS="$CFLAGS"
-CFLAGS="$CFLAGS -fvisibility=hidden"
+CFLAGS="-fvisibility=hidden $CFLAGS"
 AC_MSG_CHECKING([if ${CC} supports -fvisibility=hidden])
 AC_COMPILE_IFELSE([AC_LANG_SOURCE([[char foo;]])],
     [ AC_MSG_RESULT([yes]) ],
@@ -175,14 +176,25 @@ AC_ARG_WITH([ecmult-window], [AS_HELP_STRING([--with-ecmult-window=SIZE|auto],
 )],
 [req_ecmult_window=$withval], [req_ecmult_window=auto])
 
+AC_ARG_WITH([ecmult-gen-precision], [AS_HELP_STRING([--with-ecmult-gen-precision=2|4|8|auto],
+[Precision bits to tune the precomputed table size for signing.]
+[The size of the table is 32kB for 2 bits, 64kB for 4 bits, 512kB for 8 bits of precision.]
+[A larger table size usually results in possible faster signing.]
+["auto" is a reasonable setting for desktop machines (currently 4). [default=auto]]
+)],
+[req_ecmult_gen_precision=$withval], [req_ecmult_gen_precision=auto])
+
 AC_CHECK_TYPES([__int128])
+
+AC_CHECK_HEADER([valgrind/memcheck.h], [enable_valgrind=yes], [enable_valgrind=no], [])
+AM_CONDITIONAL([VALGRIND_ENABLED],[test "$enable_valgrind" = "yes"])
 
 if test x"$enable_coverage" = x"yes"; then
     AC_DEFINE(COVERAGE, 1, [Define this symbol to compile out all VERIFY code])
-    CFLAGS="$CFLAGS -O0 --coverage"
-    LDFLAGS="$LDFLAGS --coverage"
+    CFLAGS="-O0 --coverage $CFLAGS"
+    LDFLAGS="--coverage $LDFLAGS"
 else
-    CFLAGS="$CFLAGS -O3"
+    CFLAGS="-O2 $CFLAGS"
 fi
 
 if test x"$use_ecmult_static_precomputation" != x"no"; then
@@ -200,7 +212,7 @@ if test x"$use_ecmult_static_precomputation" != x"no"; then
 
   warn_CFLAGS_FOR_BUILD="-Wall -Wextra -Wno-unused-function"
   saved_CFLAGS="$CFLAGS"
-  CFLAGS="$CFLAGS $warn_CFLAGS_FOR_BUILD"
+  CFLAGS="$warn_CFLAGS_FOR_BUILD $CFLAGS"
   AC_MSG_CHECKING([if native ${CC_FOR_BUILD} supports ${warn_CFLAGS_FOR_BUILD}])
   AC_COMPILE_IFELSE([AC_LANG_SOURCE([[char foo;]])],
       [ AC_MSG_RESULT([yes]) ],
@@ -433,6 +445,22 @@ case $set_ecmult_window in
   ;;
 esac
 
+#set ecmult gen precision
+if test x"$req_ecmult_gen_precision" = x"auto"; then
+  set_ecmult_gen_precision=4
+else
+  set_ecmult_gen_precision=$req_ecmult_gen_precision
+fi
+
+case $set_ecmult_gen_precision in
+2|4|8)
+  AC_DEFINE_UNQUOTED(ECMULT_GEN_PREC_BITS, $set_ecmult_gen_precision, [Set ecmult gen precision bits])
+  ;;
+*)
+  AC_MSG_ERROR(['ecmult gen precision not 2, 4, 8 or "auto"'])
+  ;;
+esac
+
 if test x"$use_tests" = x"yes"; then
   SECP_OPENSSL_CHECK
   if test x"$has_openssl_ec" = x"yes"; then
@@ -530,6 +558,9 @@ else
   if test x"$enable_module_ecdh" = x"yes"; then
     AC_MSG_ERROR([ECDH module is experimental. Use --enable-experimental to allow.])
   fi
+  if test x"$enable_module_multiset" = x"yes"; then
+    AC_MSG_ERROR([Multiset module is experimental. Use --enable-experimental to allow.])
+  fi
   if test x"$set_asm" = x"arm"; then
     AC_MSG_ERROR([ARM assembly optimization is experimental. Use --enable-experimental to allow.])
   fi
@@ -580,7 +611,9 @@ echo "  bignum                  = $set_bignum"
 echo "  field                   = $set_field"
 echo "  scalar                  = $set_scalar"
 echo "  ecmult window size      = $set_ecmult_window"
+echo "  ecmult gen prec. bits   = $set_ecmult_gen_precision"
 echo
+echo "  valgrind                = $enable_valgrind"
 echo "  CC                      = $CC"
 echo "  CFLAGS                  = $CFLAGS"
 echo "  CPPFLAGS                = $CPPFLAGS"

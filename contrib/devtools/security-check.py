@@ -15,7 +15,7 @@ import os
 READELF_CMD = os.getenv('READELF', '/usr/bin/readelf')
 OBJDUMP_CMD = os.getenv('OBJDUMP', '/usr/bin/objdump')
 # checks which are non-fatal for now but only generate a warning
-NONFATAL = {'HIGH_ENTROPY_VA'}
+NONFATAL = {}
 
 
 def check_ELF_PIE(executable):
@@ -106,7 +106,7 @@ def check_ELF_RELRO(executable):
     for line in stdout.splitlines():
         tokens = line.split()
         if len(tokens) > 1 and tokens[1] == '(BIND_NOW)' or (
-                len(tokens) > 2 and tokens[1] == '(FLAGS)' and 'BIND_NOW' in tokens[2]):
+                len(tokens) > 2 and tokens[1] == '(FLAGS)' and 'BIND_NOW' in tokens[2:]):
             have_bindnow = True
     return have_gnu_relro and have_bindnow
 

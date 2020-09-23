@@ -1,3 +1,5 @@
+abc-ci-builds
+
 *.tar.gz
 
 *.exe
@@ -6,6 +8,7 @@ src/bitcoind
 src/bitcoin-cli
 src/bitcoin-seeder
 src/bitcoin-tx
+src/bitcoin-wallet
 src/test/test_bitcoin
 src/test/test_bitcoin_fuzzy
 src/qt/test/test_bitcoin-qt
@@ -63,7 +66,6 @@ src/qt/bitcoin-qt.includes
 *.pyc
 *.o
 *.o-*
-*.patch
 *.a
 *.pb.cc
 *.pb.h
@@ -74,6 +76,10 @@ src/qt/bitcoin-qt.includes
 
 *.json.h
 *.raw.h
+
+# Only ignore unexpected patches
+*.patch
+!depends/patches/**/*.patch
 
 #libtool object files
 *.lo

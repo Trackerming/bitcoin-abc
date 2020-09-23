@@ -2,10 +2,6 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#if defined(HAVE_CONFIG_H)
-#include <config/bitcoin-config.h>
-#endif
-
 #include <qt/paymentserver.h>
 
 #include <cashaddrenc.h>
@@ -320,7 +316,7 @@ bool PaymentServer::handleURI(const CChainParams &params, const QString &s) {
     if (uri.hasQueryItem("r")) {
 #ifdef ENABLE_BIP70
         QByteArray temp;
-        temp.append(uri.queryItemValue("r"));
+        temp.append(uri.queryItemValue("r").toUtf8());
         QString decoded = QUrl::fromPercentEncoding(temp);
         QUrl fetchUrl(decoded, QUrl::StrictMode);
 
@@ -736,21 +732,18 @@ void PaymentServer::fetchPaymentACK(WalletModel *walletModel,
     payment.add_transactions(transaction.data(), transaction.size());
 
     // Create a new refund address, or re-use:
-    CPubKey newKey;
-    if (walletModel->wallet().getKeyFromPool(false /* internal */, newKey)) {
+    CTxDestination dest;
+    const OutputType change_type =
+        walletModel->wallet().getDefaultChangeType() != OutputType::CHANGE_AUTO
+            ? walletModel->wallet().getDefaultChangeType()
+            : walletModel->wallet().getDefaultAddressType();
+    if (walletModel->wallet().getNewDestination(change_type, "", dest)) {
         // BIP70 requests encode the scriptPubKey directly, so we are not
         // restricted to address types supported by the receiver. As a result,
         // we choose the address format we also use for change. Despite an
         // actual payment and not change, this is a close match: it's the output
         // type we use subject to privacy issues, but not restricted by what
         // other software supports.
-        const OutputType change_type =
-            walletModel->wallet().getDefaultChangeType() !=
-                    OutputType::CHANGE_AUTO
-                ? walletModel->wallet().getDefaultChangeType()
-                : walletModel->wallet().getDefaultAddressType();
-        walletModel->wallet().learnRelatedScripts(newKey, change_type);
-        CTxDestination dest = GetDestinationForKey(newKey, change_type);
         std::string label = tr("Refund from %1")
                                 .arg(recipient.authenticatedMerchant)
                                 .toStdString();
@@ -766,11 +759,16 @@ void PaymentServer::fetchPaymentACK(WalletModel *walletModel,
                       "key, refund_to not set";
     }
 
-    int length = payment.ByteSize();
+    QVariant length;
+#ifdef USE_PROTOBUF_MESSAGE_BYTESIZELONG
+    length.setValue(payment.ByteSizeLong());
+#else
+    length.setValue(payment.ByteSize());
+#endif
 
     netRequest.setHeader(QNetworkRequest::ContentLengthHeader, length);
-    QByteArray serData(length, '\0');
-    if (payment.SerializeToArray(serData.data(), length)) {
+    QByteArray serData(length.toInt(), '\0');
+    if (payment.SerializeToArray(serData.data(), length.toInt())) {
         netManager->post(netRequest, serData);
     } else {
         // This should never happen, either.

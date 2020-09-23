@@ -36,6 +36,7 @@ from test_framework.util import (
 from test_framework.blocktools import (
     create_block,
     create_coinbase,
+    TIME_GENESIS_BLOCK,
 )
 from test_framework.messages import (
     msg_block,
@@ -48,9 +49,14 @@ from test_framework.mininode import (
 class BlockchainTest(BitcoinTestFramework):
 
     def set_test_params(self):
+        self.setup_clean_chain = True
         self.num_nodes = 1
+        # TODO: remove -txindex. Currently required for getrawtransaction call.
+        self.extra_args = [["-txindex"]]
 
     def run_test(self):
+        self.mine_chain()
+
         # Set extra args with pruning after rescan is complete
         self.restart_node(0, extra_args=['-stopatheight=207', '-prune=1'])
 
@@ -65,6 +71,16 @@ class BlockchainTest(BitcoinTestFramework):
         if self.is_wallet_compiled():
             self._test_getblock()
         assert self.nodes[0].verifychain(4, 0)
+
+    def mine_chain(self):
+        self.log.info('Create some old blocks')
+        address = self.nodes[0].get_deterministic_priv_key().address
+        for t in range(TIME_GENESIS_BLOCK,
+                       TIME_GENESIS_BLOCK + 200 * 600, 600):
+            # ten-minute steps from genesis block time
+            self.nodes[0].setmocktime(t)
+            self.nodes[0].generatetoaddress(1, address)
+        assert_equal(self.nodes[0].getblockchaininfo()['blocks'], 200)
 
     def _test_getblockchaininfo(self):
         self.log.info("Test getblockchaininfo")
@@ -112,46 +128,6 @@ class BlockchainTest(BitcoinTestFramework):
                         'count': 57,
                         'possible': True,
                     },
-                },
-                'active': False,
-            },
-            'minerfund': {
-                'type': 'bip9',
-                'bip9': {
-                    'status': 'defined',
-                    'start_time': 1573819200,
-                    'timeout': 1589544000,
-                    'since': 0,
-                },
-                'active': False,
-            },
-            'minerfundabc': {
-                'type': 'bip9',
-                'bip9': {
-                    'status': 'defined',
-                    'start_time': 1573819200,
-                    'timeout': 1589544000,
-                    'since': 0,
-                },
-                'active': False,
-            },
-            'minerfundbchd': {
-                'type': 'bip9',
-                'bip9': {
-                    'status': 'defined',
-                    'start_time': 1573819200,
-                    'timeout': 1589544000,
-                    'since': 0,
-                },
-                'active': False,
-            },
-            'minerfundelectroncash': {
-                'type': 'bip9',
-                'bip9': {
-                    'status': 'defined',
-                    'start_time': 1573819200,
-                    'timeout': 1589544000,
-                    'since': 0,
                 },
                 'active': False,
             },
@@ -360,41 +336,6 @@ class BlockchainTest(BitcoinTestFramework):
         self.start_node(0)
         assert_equal(self.nodes[0].getblockcount(), 207)
 
-    def _test_getblock(self):
-        # Checks for getblock verbose outputs
-        node = self.nodes[0]
-        getblockinfo = node.getblock(node.getblockhash(1), 2)
-        gettransactioninfo = node.gettransaction(getblockinfo['tx'][0]['txid'])
-        getblockheaderinfo = node.getblockheader(node.getblockhash(1), True)
-
-        assert_equal(getblockinfo['hash'], gettransactioninfo['blockhash'])
-        assert_equal(
-            getblockinfo['confirmations'], gettransactioninfo['confirmations'])
-        assert_equal(getblockinfo['height'], getblockheaderinfo['height'])
-        assert_equal(
-            getblockinfo['versionHex'], getblockheaderinfo['versionHex'])
-        assert_equal(getblockinfo['version'], getblockheaderinfo['version'])
-        assert_equal(getblockinfo['size'], 181)
-        assert_equal(
-            getblockinfo['merkleroot'], getblockheaderinfo['merkleroot'])
-        # Verify transaction data by check the hex values
-        for tx in getblockinfo['tx']:
-            getrawtransaction = node.getrawtransaction(tx['txid'], True)
-            assert_equal(tx['hex'], getrawtransaction['hex'])
-        assert_equal(getblockinfo['time'], getblockheaderinfo['time'])
-        assert_equal(
-            getblockinfo['mediantime'], getblockheaderinfo['mediantime'])
-        assert_equal(getblockinfo['nonce'], getblockheaderinfo['nonce'])
-        assert_equal(getblockinfo['bits'], getblockheaderinfo['bits'])
-        assert_equal(
-            getblockinfo['difficulty'], getblockheaderinfo['difficulty'])
-        assert_equal(
-            getblockinfo['chainwork'], getblockheaderinfo['chainwork'])
-        assert_equal(
-            getblockinfo['previousblockhash'], getblockheaderinfo['previousblockhash'])
-        assert_equal(
-            getblockinfo['nextblockhash'], getblockheaderinfo['nextblockhash'])
-
     def _test_waitforblockheight(self):
         self.log.info("Test waitforblockheight")
         node = self.nodes[0]
@@ -434,6 +375,42 @@ class BlockchainTest(BitcoinTestFramework):
         assert_waitforheight(current_height - 1)
         assert_waitforheight(current_height)
         assert_waitforheight(current_height + 1)
+
+    def _test_getblock(self):
+        # Checks for getblock verbose outputs
+        node = self.nodes[0]
+        (blockhash, nextblockhash) = node.generate(2)
+
+        blockinfo = node.getblock(blockhash, 2)
+        transactioninfo = node.gettransaction(blockinfo['tx'][0]['txid'])
+        blockheaderinfo = node.getblockheader(blockhash, True)
+
+        assert_equal(blockinfo['hash'], transactioninfo['blockhash'])
+        assert_equal(
+            blockinfo['confirmations'],
+            transactioninfo['confirmations'])
+        assert_equal(blockinfo['height'], blockheaderinfo['height'])
+        assert_equal(blockinfo['versionHex'], blockheaderinfo['versionHex'])
+        assert_equal(blockinfo['version'], blockheaderinfo['version'])
+        assert_equal(blockinfo['size'], 181)
+        assert_equal(blockinfo['merkleroot'], blockheaderinfo['merkleroot'])
+        # Verify transaction data by check the hex values
+        for tx in blockinfo['tx']:
+            rawtransaction = node.getrawtransaction(tx['txid'], True)
+            assert_equal(tx['hex'], rawtransaction['hex'])
+        assert_equal(blockinfo['time'], blockheaderinfo['time'])
+        assert_equal(blockinfo['mediantime'], blockheaderinfo['mediantime'])
+        assert_equal(blockinfo['nonce'], blockheaderinfo['nonce'])
+        assert_equal(blockinfo['bits'], blockheaderinfo['bits'])
+        assert_equal(blockinfo['difficulty'], blockheaderinfo['difficulty'])
+        assert_equal(blockinfo['chainwork'], blockheaderinfo['chainwork'])
+        assert_equal(
+            blockinfo['previousblockhash'],
+            blockheaderinfo['previousblockhash'])
+        assert_equal(blockinfo['nextblockhash'], nextblockhash)
+        assert_equal(
+            blockinfo['nextblockhash'],
+            blockheaderinfo['nextblockhash'])
 
 
 if __name__ == '__main__':

@@ -9,11 +9,9 @@
 #include <crypto/ripemd160.h>
 #include <crypto/sha1.h>
 #include <crypto/sha256.h>
-#include <primitives/transaction.h>
 #include <pubkey.h>
 #include <script/bitfield.h>
 #include <script/script.h>
-#include <script/script_flags.h>
 #include <script/sigencoding.h>
 #include <uint256.h>
 #include <util/bitmanip.h>
@@ -1236,10 +1234,6 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                     } break;
 
                     case OP_REVERSEBYTES: {
-                        if (!(flags & SCRIPT_ENABLE_OP_REVERSEBYTES)) {
-                            return set_error(serror, ScriptError::BAD_OPCODE);
-                        }
-
                         // (in -- out)
                         if (stack.size() < 1) {
                             return set_error(
@@ -1765,13 +1759,6 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey,
         if ((flags & SCRIPT_DISALLOW_SEGWIT_RECOVERY) == 0 && stack.empty() &&
             pubKey2.IsWitnessProgram()) {
             // must set metricsOut for all successful returns
-
-            // Prior to activation of this flag, all transactions will count as
-            // having a sigchecks count of 0 for accounting purposes outside of
-            // VerifyScript.
-            if (!(flags & SCRIPT_REPORT_SIGCHECKS)) {
-                metrics.nSigChecks = 0;
-            }
             metricsOut = metrics;
             return set_success(serror);
         }
@@ -1824,12 +1811,6 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey,
         if (int(scriptSig.size()) < metrics.nSigChecks * 43 - 60) {
             return set_error(serror, ScriptError::INPUT_SIGCHECKS);
         }
-    }
-
-    // Prior to activation of this flag, all transactions will count as having a
-    // sigchecks count of 0 for accounting purposes outside of VerifyScript.
-    if (!(flags & SCRIPT_REPORT_SIGCHECKS)) {
-        metrics.nSigChecks = 0;
     }
 
     metricsOut = metrics;

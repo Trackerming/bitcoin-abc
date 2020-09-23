@@ -14,8 +14,7 @@ RPC_WALLET_NOT_SPECIFIED = "Wallet file not specified (must request wallet " + \
 class SignRawTransactionsTest(BitcoinTestFramework):
     def set_test_params(self):
         self.setup_clean_chain = True
-        self.num_nodes = 2
-        self.extra_args = [[], ["-wallet=w1", "-wallet=w2"]]
+        self.num_nodes = 1
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -216,7 +215,7 @@ class SignRawTransactionsTest(BitcoinTestFramework):
 
         outputs = {'mpLQjfK79b7CCV4VMJWEWAj5Mpx8Up5zxB': 0.1}
 
-        multiwallet_node = self.nodes[1]
+        multiwallet_node = self.nodes[0]
 
         rawTx = multiwallet_node.createrawtransaction(inputs, outputs)
 
@@ -228,7 +227,9 @@ class SignRawTransactionsTest(BitcoinTestFramework):
 
         # The multiwallet node can sign the transaction using w1
         w1 = multiwallet_node.get_wallet_rpc('w1')
-        w1.generate(101)
+        multiwallet_node.generatetoaddress(
+            nblocks=101,
+            address=w1.getnewaddress(label='coinbase'))
 
         utxo = w1.listunspent()[0]
         inputs = [{
@@ -246,8 +247,12 @@ class SignRawTransactionsTest(BitcoinTestFramework):
         self.successful_signing_test()
         self.script_verification_error_test()
         self.test_sighashes()
-        self.multiwallet_signing_test()
         self.test_with_lock_outputs()
+
+        # The multiwalet require the node to use different flags, so we run it
+        # last.
+        self.restart_node(0, ["-wallet=w1", "-wallet=w2"])
+        self.multiwallet_signing_test()
 
 
 if __name__ == '__main__':

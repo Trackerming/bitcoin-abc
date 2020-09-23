@@ -6,7 +6,6 @@
 
 #include <chainparams.h>
 #include <consensus/consensus.h> // DEFAULT_MAX_BLOCK_SIZE
-#include <globals.h>
 
 GlobalConfig::GlobalConfig()
     : useCashAddr(false), nMaxBlockSize(DEFAULT_MAX_BLOCK_SIZE) {}
@@ -62,20 +61,4 @@ void GlobalConfig::SetExcessUTXOCharge(Amount fee) {
 
 Amount GlobalConfig::GetExcessUTXOCharge() const {
     return excessUTXOCharge;
-}
-
-void GlobalConfig::SetRPCUserAndPassword(std::string userAndPassword) {
-    rpcUserAndPassword = userAndPassword;
-}
-
-std::string GlobalConfig::GetRPCUserAndPassword() const {
-    return rpcUserAndPassword;
-}
-
-void GlobalConfig::SetRPCCORSDomain(std::string corsDomain) {
-    rpcCORSDomain = corsDomain;
-}
-
-std::string GlobalConfig::GetRPCCORSDomain() const {
-    return rpcCORSDomain;
 }

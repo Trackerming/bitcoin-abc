@@ -5,9 +5,12 @@ project(crypto)
 # The library
 add_library(crypto
 	aes.cpp
+	chacha_poly_aead.cpp
 	chacha20.cpp
+	hkdf_sha256_32.cpp
 	hmac_sha256.cpp
 	hmac_sha512.cpp
+	poly1305.cpp
 	ripemd160.cpp
 	sha1.cpp
 	sha256.cpp
@@ -31,9 +34,6 @@ option(CRYPTO_USE_ASM "Use assembly version of crypto primitives" ON)
 if(CRYPTO_USE_ASM)
 	target_compile_definitions(crypto PRIVATE USE_ASM)
 endif()
-
-# Dependencies
-target_link_libraries(crypto OpenSSL::Crypto)
 
 # Crypto libraries requiring hardware features
 macro(add_crypto_library NAME)

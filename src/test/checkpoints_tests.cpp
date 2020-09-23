@@ -18,7 +18,7 @@
 #include <util/strencodings.h>
 #include <validation.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -43,36 +43,6 @@ BOOST_AUTO_TEST_CASE(sanity) {
     // ... but any hash not at a checkpoint should succeed:
     BOOST_CHECK(Checkpoints::CheckBlock(checkpoints, 11111 + 1, p134444));
     BOOST_CHECK(Checkpoints::CheckBlock(checkpoints, 134444 + 1, p11111));
-}
-
-BOOST_AUTO_TEST_CASE(ban_fork_at_genesis_block) {
-    DummyConfig config;
-
-    // Sanity check that a checkpoint exists at the genesis block
-    auto &checkpoints = config.GetChainParams().Checkpoints().mapCheckpoints;
-    assert(checkpoints.find(0) != checkpoints.end());
-
-    // Another precomputed genesis block (with differing nTime) should conflict
-    // with the regnet genesis block checkpoint and not be accepted or stored
-    // in memory.
-    CBlockHeader header =
-        CreateGenesisBlock(1296688603, 2, 0x207fffff, 1, 50 * COIN);
-
-    // Header should not be accepted
-    CValidationState state;
-    CBlockHeader invalid;
-    const CBlockIndex *pindex = nullptr;
-    BOOST_CHECK(
-        !ProcessNewBlockHeaders(config, {header}, state, &pindex, &invalid));
-    BOOST_CHECK(state.IsInvalid());
-    BOOST_CHECK(pindex == nullptr);
-    BOOST_CHECK(invalid.GetHash() == header.GetHash());
-
-    // Sanity check to ensure header was not saved in memory
-    {
-        LOCK(cs_main);
-        BOOST_CHECK(LookupBlockIndex(header.GetHash()) == nullptr);
-    }
 }
 
 class ChainParamsWithCheckpoints : public CChainParams {
@@ -111,9 +81,6 @@ public:
  */
 BOOST_AUTO_TEST_CASE(ban_fork_prior_to_and_at_checkpoints) {
     MainnetConfigWithTestCheckpoints config;
-
-    CValidationState state;
-    CBlockHeader invalid;
     const CBlockIndex *pindex = nullptr;
 
     // Start with mainnet genesis block
@@ -121,9 +88,12 @@ BOOST_AUTO_TEST_CASE(ban_fork_prior_to_and_at_checkpoints) {
     BOOST_CHECK(headerG.GetHash() ==
                 uint256S("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f"
                          "1b60a8ce26f"));
-    BOOST_CHECK(
-        ProcessNewBlockHeaders(config, {headerG}, state, &pindex, &invalid));
-    pindex = nullptr;
+
+    {
+        BlockValidationState state;
+        BOOST_CHECK(ProcessNewBlockHeaders(config, {headerG}, state, &pindex));
+        pindex = nullptr;
+    }
 
     CBlockHeader headerA, headerB, headerAA, headerAB;
     CDataStream stream = CDataStream(
@@ -183,28 +153,31 @@ BOOST_AUTO_TEST_CASE(ban_fork_prior_to_and_at_checkpoints) {
     BOOST_CHECK(headerAB.hashPrevBlock == headerA.GetHash());
 
     // Headers A and AA should be accepted
-    BOOST_CHECK(
-        ProcessNewBlockHeaders(config, {headerA}, state, &pindex, &invalid));
-    BOOST_CHECK(state.IsValid());
-    BOOST_CHECK(pindex != nullptr);
-    pindex = nullptr;
-    BOOST_CHECK(invalid.IsNull());
+    {
+        BlockValidationState state;
+        BOOST_CHECK(ProcessNewBlockHeaders(config, {headerA}, state, &pindex));
+        BOOST_CHECK(state.IsValid());
+        BOOST_CHECK(pindex != nullptr);
+        pindex = nullptr;
+    }
 
-    BOOST_CHECK(
-        ProcessNewBlockHeaders(config, {headerAA}, state, &pindex, &invalid));
-    BOOST_CHECK(state.IsValid());
-    BOOST_CHECK(pindex != nullptr);
-    pindex = nullptr;
-    BOOST_CHECK(invalid.IsNull());
+    {
+        BlockValidationState state;
+        BOOST_CHECK(ProcessNewBlockHeaders(config, {headerAA}, state, &pindex));
+        BOOST_CHECK(state.IsValid());
+        BOOST_CHECK(pindex != nullptr);
+        pindex = nullptr;
+    }
 
     // Header B should be rejected
-    BOOST_CHECK(
-        !ProcessNewBlockHeaders(config, {headerB}, state, &pindex, &invalid));
-    BOOST_CHECK(state.IsInvalid());
-    BOOST_CHECK(state.GetRejectCode() == REJECT_CHECKPOINT);
-    BOOST_CHECK(state.GetRejectReason() == "bad-fork-prior-to-checkpoint");
-    BOOST_CHECK(pindex == nullptr);
-    BOOST_CHECK(invalid.GetHash() == headerB.GetHash());
+    {
+        BlockValidationState state;
+        BOOST_CHECK(!ProcessNewBlockHeaders(config, {headerB}, state, &pindex));
+        BOOST_CHECK(state.IsInvalid());
+        BOOST_CHECK(state.GetRejectCode() == REJECT_CHECKPOINT);
+        BOOST_CHECK(state.GetRejectReason() == "bad-fork-prior-to-checkpoint");
+        BOOST_CHECK(pindex == nullptr);
+    }
 
     // Sanity check to ensure header was not saved in memory
     {
@@ -213,13 +186,15 @@ BOOST_AUTO_TEST_CASE(ban_fork_prior_to_and_at_checkpoints) {
     }
 
     // Header AB should be rejected
-    BOOST_CHECK(
-        !ProcessNewBlockHeaders(config, {headerAB}, state, &pindex, &invalid));
-    BOOST_CHECK(state.IsInvalid());
-    BOOST_CHECK(state.GetRejectCode() == REJECT_CHECKPOINT);
-    BOOST_CHECK(state.GetRejectReason() == "checkpoint mismatch");
-    BOOST_CHECK(pindex == nullptr);
-    BOOST_CHECK(invalid.GetHash() == headerAB.GetHash());
+    {
+        BlockValidationState state;
+        BOOST_CHECK(
+            !ProcessNewBlockHeaders(config, {headerAB}, state, &pindex));
+        BOOST_CHECK(state.IsInvalid());
+        BOOST_CHECK(state.GetRejectCode() == REJECT_CHECKPOINT);
+        BOOST_CHECK(state.GetRejectReason() == "checkpoint mismatch");
+        BOOST_CHECK(pindex == nullptr);
+    }
 
     // Sanity check to ensure header was not saved in memory
     {

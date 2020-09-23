@@ -1,20 +1,19 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <key.h>
-#include <keystore.h>
 #include <policy/policy.h>
 #include <script/interpreter.h>
-#include <script/ismine.h>
 #include <script/script.h>
 #include <script/script_error.h>
 #include <script/sighashtype.h>
 #include <script/sign.h>
+#include <script/signingprovider.h>
 #include <tinyformat.h>
 #include <uint256.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -226,11 +225,11 @@ BOOST_AUTO_TEST_CASE(multisig_IsStandard) {
 BOOST_AUTO_TEST_CASE(multisig_Sign) {
     // Test SignSignature() (and therefore the version of Solver() that signs
     // transactions)
-    CBasicKeyStore keystore;
+    FillableSigningProvider keystore;
     CKey key[4];
     for (int i = 0; i < 4; i++) {
         key[i].MakeNewKey(true);
-        keystore.AddKey(key[i]);
+        BOOST_CHECK(keystore.AddKey(key[i]));
     }
 
     CScript a_and_b;

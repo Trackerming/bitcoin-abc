@@ -4,13 +4,14 @@
 
 #include <amount.h>
 #include <chainparams.h> // For Params
+#include <node/context.h>
 #include <primitives/transaction.h>
 #include <random.h>
 #include <wallet/coincontrol.h>
 #include <wallet/coinselection.h>
 #include <wallet/wallet.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 #include <wallet/test/wallet_test_fixture.h>
 
 #include <boost/test/unit_test.hpp>
@@ -34,6 +35,7 @@ std::vector<std::unique_ptr<CWalletTx>> wtxn;
 typedef std::set<CInputCoin> CoinSet;
 
 static std::vector<COutput> vCoins;
+static NodeContext testNode;
 static Amount balance = Amount::zero();
 
 CoinEligibilityFilter filter_standard(1, 6, 0);
@@ -75,8 +77,7 @@ static void add_coin(CWallet &wallet, const Amount nValue, int nAge = 6 * 24,
     auto wtx =
         std::make_unique<CWalletTx>(&wallet, MakeTransactionRef(std::move(tx)));
     if (fIsFromMe) {
-        wtx->fDebitCached = true;
-        wtx->nDebitCached = SATOSHI;
+        wtx->m_amounts[CWalletTx::DEBIT].Set(ISMINE_SPENDABLE, SATOSHI);
     }
     COutput output(wtx.get(), nInput, nAge, true /* spendable */,
                    true /* solvable */, true /* safe */);
@@ -127,7 +128,9 @@ inline std::vector<OutputGroup> &GroupCoins(const std::vector<COutput> &coins) {
         // HACK: we can't figure out the is_me flag so we use the conditions
         // defined below; perhaps set safe to false for !fIsFromMe in add_coin()
         const bool is_me =
-            coin.tx->fDebitCached && coin.tx->nDebitCached == SATOSHI;
+            coin.tx->m_amounts[CWalletTx::DEBIT].m_cached[ISMINE_SPENDABLE] &&
+            coin.tx->m_amounts[CWalletTx::DEBIT].m_value[ISMINE_SPENDABLE] ==
+                SATOSHI;
         static_groups.emplace_back(coin.GetInputCoin(), coin.nDepth, is_me, 0,
                                    0);
     }
@@ -300,8 +303,8 @@ BOOST_AUTO_TEST_CASE(bnb_search_test) {
 }
 
 BOOST_AUTO_TEST_CASE(knapsack_solver_test) {
-    auto testChain = interfaces::MakeChain();
-    CWallet testWallet(Params(), *testChain, WalletLocation(),
+    auto testChain = interfaces::MakeChain(testNode, Params());
+    CWallet testWallet(Params(), testChain.get(), WalletLocation(),
                        WalletDatabase::CreateDummy());
 
     CoinSet setCoinsRet, setCoinsRet2;
@@ -729,8 +732,8 @@ BOOST_AUTO_TEST_CASE(ApproximateBestSubset) {
 // Tests that with the ideal conditions, the coin selector will always be able
 // to find a solution that can pay the target value
 BOOST_AUTO_TEST_CASE(SelectCoins_test) {
-    auto testChain = interfaces::MakeChain();
-    CWallet testWallet(Params(), *testChain, WalletLocation(),
+    auto testChain = interfaces::MakeChain(testNode, Params());
+    CWallet testWallet(Params(), testChain.get(), WalletLocation(),
                        WalletDatabase::CreateDummy());
 
     // Random generator stuff

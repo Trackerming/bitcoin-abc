@@ -9,12 +9,12 @@
 
 //
 // NOTE:
-// boost::thread / boost::chrono should be ported to
-// std::thread / std::chrono when we support C++11.
+// boost::thread should be ported to std::thread
+// when we support C++11.
 //
-#include <boost/chrono/chrono.hpp>
-#include <boost/thread.hpp>
-
+#include <condition_variable>
+#include <functional>
+#include <list>
 #include <map>
 
 //
@@ -24,12 +24,15 @@
 // Usage:
 //
 // CScheduler* s = new CScheduler();
-// s->scheduleFromNow(doSomething, 11); // Assuming a: void doSomething() { }
-// s->scheduleFromNow(std::bind(Class::func, this, argument), 3);
-// boost::thread* t = new boost::thread(std::bind(CScheduler::serviceQueue, s));
+// // Assuming a: void doSomething() { }
+// s->scheduleFromNow(doSomething, std::chrono::milliseconds{11});
+// s->scheduleFromNow([=] { this->func(argument); },
+//                    std::chrono::milliseconds{3});
+// boost::thread *t = new boost::thread(std::bind(CScheduler::serviceQueue, s));
 //
-// ... then at program shutdown, clean up the thread running serviceQueue:
-// t->interrupt();
+// ... then at program shutdown, make sure to call stop() to clean up the
+// thread(s) running serviceQueue:
+// s->stop();
 // t->join();
 // delete t;
 // delete s; // Must be done after thread is interrupted/joined.
@@ -44,18 +47,28 @@ public:
     typedef std::function<bool()> Predicate;
 
     // Call func at/after time t
-    void schedule(Function f, boost::chrono::system_clock::time_point t =
-                                  boost::chrono::system_clock::now());
+    void schedule(Function f, std::chrono::system_clock::time_point t);
 
-    // Convenience method: call f once deltaMilliSeconds from now
-    void scheduleFromNow(Function f, int64_t deltaMilliSeconds);
+    /** Call f once after the delta has passed */
+    void scheduleFromNow(Function f, std::chrono::milliseconds delta) {
+        schedule(std::move(f), std::chrono::system_clock::now() + delta);
+    }
 
-    // Another convenience method: call p approximately every deltaMilliSeconds
-    // forever, starting deltaMilliSeconds from now untill p returns false. To
-    // be more precise: every time p is finished, it is rescheduled to run
-    // deltaMilliSeconds later. If you need more accurate scheduling, don't use
-    // this method.
-    void scheduleEvery(Predicate p, int64_t deltaMilliSeconds);
+    /**
+     * Repeat p until it return false. First run is after delta has passed once.
+     *
+     * The timing is not exact: Every time p is finished, it is rescheduled to
+     * run again after delta. If you need more accurate scheduling, don't use
+     * this method.
+     */
+    void scheduleEvery(Predicate p, std::chrono::milliseconds delta);
+
+    /**
+     * Mock the scheduler to fast forward in time.
+     * Iterates through items on taskQueue and reschedules them
+     * to be delta_seconds sooner.
+     */
+    void MockForward(std::chrono::seconds delta_seconds);
 
     // To keep things as simple as possible, there is no unschedule.
 
@@ -68,22 +81,23 @@ public:
     // there is no work left to be done (drain=true)
     void stop(bool drain = false);
 
-    // Returns number of tasks waiting to be serviced, and first and last task
-    // times
-    size_t getQueueInfo(boost::chrono::system_clock::time_point &first,
-                        boost::chrono::system_clock::time_point &last) const;
+    // Returns number of tasks waiting to be serviced,
+    // and first and last task times
+    size_t getQueueInfo(std::chrono::system_clock::time_point &first,
+                        std::chrono::system_clock::time_point &last) const;
 
     // Returns true if there are threads actively running in serviceQueue()
     bool AreThreadsServicingQueue() const;
 
 private:
-    std::multimap<boost::chrono::system_clock::time_point, Function> taskQueue;
-    boost::condition_variable newTaskScheduled;
-    mutable boost::mutex newTaskMutex;
-    int nThreadsServicingQueue;
-    bool stopRequested;
-    bool stopWhenEmpty;
-    bool shouldStop() const {
+    mutable Mutex newTaskMutex;
+    std::condition_variable newTaskScheduled;
+    std::multimap<std::chrono::system_clock::time_point, Function>
+        taskQueue GUARDED_BY(newTaskMutex);
+    int nThreadsServicingQueue GUARDED_BY(newTaskMutex){0};
+    bool stopRequested GUARDED_BY(newTaskMutex){false};
+    bool stopWhenEmpty GUARDED_BY(newTaskMutex){false};
+    bool shouldStop() const EXCLUSIVE_LOCKS_REQUIRED(newTaskMutex) {
         return stopRequested || (stopWhenEmpty && taskQueue.empty());
     }
 };
@@ -102,7 +116,7 @@ class SingleThreadedSchedulerClient {
 private:
     CScheduler *m_pscheduler;
 
-    CCriticalSection m_cs_callbacks_pending;
+    RecursiveMutex m_cs_callbacks_pending;
     std::list<std::function<void()>>
         m_callbacks_pending GUARDED_BY(m_cs_callbacks_pending);
     bool m_are_callbacks_running GUARDED_BY(m_cs_callbacks_pending) = false;

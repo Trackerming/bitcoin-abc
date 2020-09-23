@@ -5,6 +5,7 @@
 
 include(CheckIncludeFiles)
 include(CheckSymbolExists)
+include(CheckCXXSymbolExists)
 include(CheckCXXSourceCompiles)
 
 # Version
@@ -119,6 +120,16 @@ check_symbol_exists(getentropy "unistd.h" HAVE_GETENTROPY)
 # macOS needs unistd.h and sys/random.h to define getentropy
 check_symbol_exists(getentropy "unistd.h;sys/random.h" HAVE_GETENTROPY_RAND)
 
+# OSX and BSDs measurement related headers
+check_include_files("sys/types.h;vm/vm_params.h" HAVE_VM_VM_PARAM_H)
+check_include_files("sys/types.h;sys/vmmeter.h" HAVE_SYS_VMMETER_H)
+check_include_files("sys/types.h;sys/resources.h" HAVE_SYS_RESOURCES_H)
+
+# Don't use sysctl on Linux, it's deprecated even when it works
+if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+	check_symbol_exists(sysctl "sys/types.h;sys/sysctl.h" HAVE_SYSCTL)
+endif()
+
 # getifaddrs and freeifaddrs may be unavailable with some Android versions
 check_symbol_exists(getifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_GETIFADDRS)
 check_symbol_exists(freeifaddrs "sys/types.h;ifaddrs.h" HAVE_DECL_FREEIFADDRS)
@@ -182,25 +193,6 @@ set(CMAKE_REQUIRED_DEFINITIONS -D_FORTIFY_SOURCE=2)
 # and always succeed to build.
 set(CMAKE_REQUIRED_FLAGS -O2)
 
-check_prototype_definition(
-	__fdelt_warn
-	"extern long unsigned int __fdelt_warn(long unsigned int a)"
-	"0"
-	"sys/select.h"
-	FDELT_PROTOTYPE_LONG_UNSIGNED_INT
-)
-
-if(FDELT_PROTOTYPE_LONG_UNSIGNED_INT)
-	set(FDELT_TYPE "long unsigned int")
-else()
-	set(FDELT_TYPE "long int")
-endif()
-
-# OpenSSL functionality
-set(CMAKE_REQUIRED_INCLUDES ${OPENSSL_INCLUDE_DIR})
-set(CMAKE_REQUIRED_LIBRARIES ${OPENSSL_CRYPTO_LIBRARY})
-check_symbol_exists(EVP_MD_CTX_new "openssl/evp.h" HAVE_DECL_EVP_MD_CTX_NEW)
-
 # Activate wallet
 set(ENABLE_WALLET ${BUILD_BITCOIN_WALLET})
 
@@ -210,14 +202,11 @@ set(ENABLE_ZMQ ${BUILD_BITCOIN_ZMQ})
 # Try to find libqrencode
 # Only used in the wallet GUI
 if(ENABLE_QRCODE AND BUILD_BITCOIN_WALLET AND BUILD_BITCOIN_QT)
-	find_package(QREncode REQUIRED)
 	set(USE_QRCODE 1 CACHE INTERNAL "QR code is enabled")
 endif()
 
 # Try to find miniupnpc
 if(ENABLE_UPNP)
-	find_package(MiniUPnPc REQUIRED)
-
 	# The expected behavior is as follow:
 	#  - If UPnP is enabled USE_UPNP must be defined
 	#  - If UPnP should be the default port map method, USE_UPNP should be
@@ -225,8 +214,15 @@ if(ENABLE_UPNP)
 	set(USE_UPNP ${START_WITH_UPNP} CACHE INTERNAL "UPnP is enabled")
 endif()
 
-if(ENABLE_NOTIFICATIONS)
+if(ENABLE_DBUS_NOTIFICATIONS)
 	set(USE_DBUS 1)
+endif()
+
+# Check if std::system or ::wsystem is available
+check_cxx_symbol_exists(std::system "cstdlib" _HAVE_STD_SYSTEM)
+check_cxx_symbol_exists(::wsystem "" _HAVE_WSYSTEM)
+if(_HAVE_STD_SYSTEM OR _HAVE_WSYSTEM)
+	set(HAVE_SYSTEM 1)
 endif()
 
 # Generate the config

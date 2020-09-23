@@ -19,6 +19,7 @@
 static const bool DEFAULT_LOGTIMEMICROS = false;
 static const bool DEFAULT_LOGIPS = false;
 static const bool DEFAULT_LOGTIMESTAMPS = true;
+static const bool DEFAULT_LOGTHREADNAMES = false;
 
 extern bool fLogIPs;
 extern const char *const DEFAULT_DEBUGLOGFILE;
@@ -53,14 +54,21 @@ enum LogFlags : uint32_t {
     COINDB = (1 << 18),
     QT = (1 << 19),
     LEVELDB = (1 << 20),
+    VALIDATION = (1 << 21),
     ALL = ~uint32_t(0),
 };
 
 class Logger {
 private:
+    // Can not use Mutex from sync.h because in debug mode it would cause a
+    // deadlock when a potential deadlock was detected
+    mutable std::mutex m_cs;
+    // GUARDED_BY(m_cs)
     FILE *m_fileout = nullptr;
-    std::mutex m_file_mutex;
+    // GUARDED_BY(m_cs)
     std::list<std::string> m_msgs_before_open;
+    //! Buffer messages before logging can be started. GUARDED_BY(m_cs)
+    bool m_buffering{true};
 
     /**
      * m_started_new_line is a state variable that will suppress printing of the
@@ -75,12 +83,17 @@ private:
 
     std::string LogTimestampStr(const std::string &str);
 
+    /** Slots that connect to the print signal */
+    std::list<std::function<void(const std::string &)>>
+        m_print_callbacks /* GUARDED_BY(m_cs) */ {};
+
 public:
     bool m_print_to_console = false;
     bool m_print_to_file = false;
 
     bool m_log_timestamps = DEFAULT_LOGTIMESTAMPS;
     bool m_log_time_micros = DEFAULT_LOGTIMEMICROS;
+    bool m_log_threadnames = DEFAULT_LOGTHREADNAMES;
 
     fs::path m_file_path;
     std::atomic<bool> m_reopen_file{false};
@@ -91,9 +104,32 @@ public:
     void LogPrintStr(const std::string &str);
 
     /** Returns whether logs will be written to any output */
-    bool Enabled() const { return m_print_to_console || m_print_to_file; }
+    bool Enabled() const {
+        std::lock_guard<std::mutex> scoped_lock(m_cs);
+        return m_buffering || m_print_to_console || m_print_to_file ||
+               !m_print_callbacks.empty();
+    }
 
-    bool OpenDebugLog();
+    /** Connect a slot to the print signal and return the connection */
+    std::list<std::function<void(const std::string &)>>::iterator
+    PushBackCallback(std::function<void(const std::string &)> fun) {
+        std::lock_guard<std::mutex> scoped_lock(m_cs);
+        m_print_callbacks.push_back(std::move(fun));
+        return --m_print_callbacks.end();
+    }
+
+    /** Delete a connection */
+    void DeleteCallback(
+        std::list<std::function<void(const std::string &)>>::iterator it) {
+        std::lock_guard<std::mutex> scoped_lock(m_cs);
+        m_print_callbacks.erase(it);
+    }
+
+    /** Start logging (and flush all buffered messages) */
+    bool StartLogging();
+    /** Only for testing */
+    void DisconnectTestLogger();
+
     void ShrinkDebugFile();
 
     uint32_t GetCategoryMask() const { return m_categories.load(); }

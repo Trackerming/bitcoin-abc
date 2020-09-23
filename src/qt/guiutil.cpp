@@ -6,7 +6,6 @@
 
 #include <cashaddrenc.h>
 #include <chainparams.h>
-#include <fs.h>
 #include <interfaces/node.h>
 #include <key_io.h>
 #include <policy/policy.h>
@@ -39,8 +38,6 @@
 #include <shlwapi.h>
 #endif
 
-#include <boost/scoped_array.hpp>
-
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QClipboard>
@@ -49,17 +46,16 @@
 #include <QDoubleValidator>
 #include <QFileDialog>
 #include <QFont>
+#include <QFontDatabase>
+#include <QFontMetrics>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QMouseEvent>
+#include <QProgressDialog>
 #include <QSettings>
 #include <QTextDocument> // for Qt::mightBeRichText
 #include <QThread>
 #include <QUrlQuery>
-
-#if QT_VERSION >= 0x50200
-#include <QFontDatabase>
-#endif
 
 #if defined(Q_OS_MAC)
 #pragma GCC diagnostic push
@@ -82,13 +78,7 @@ QString dateTimeStr(qint64 nTime) {
 }
 
 QFont fixedPitchFont() {
-#if QT_VERSION >= 0x50200
     return QFontDatabase::systemFont(QFontDatabase::FixedFont);
-#else
-    QFont font("Monospace");
-    font.setStyleHint(QFont::Monospace);
-    return font;
-#endif
 }
 
 static std::string MakeAddrInvalid(std::string addr,
@@ -113,7 +103,7 @@ std::string DummyAddress(const CChainParams &params) {
         0xeb, 0x15, 0x23, 0x1d, 0xfc, 0xeb, 0x60, 0x92, 0x58, 0x86,
         0xb6, 0x7d, 0x06, 0x52, 0x99, 0x92, 0x59, 0x15, 0xae, 0xb1};
 
-    const CTxDestination dstKey = CKeyID(uint160(dummydata));
+    const CTxDestination dstKey = PKHash(uint160(dummydata));
     return MakeAddrInvalid(EncodeCashAddr(dstKey, params), params);
 }
 
@@ -410,7 +400,7 @@ bool openBitcoinConf() {
         GetConfigFile(gArgs.GetArg("-conf", BITCOIN_CONF_FILENAME));
 
     /* Create the file */
-    fs::ofstream configFile(pathConfig, std::ios_base::app);
+    fsbridge::ofstream configFile(pathConfig, std::ios_base::app);
 
     if (!configFile.good()) {
         return false;
@@ -421,6 +411,16 @@ bool openBitcoinConf() {
     /* Open bitcoin.conf with the associated application */
     return QDesktopServices::openUrl(
         QUrl::fromLocalFile(boostPathToQString(pathConfig)));
+}
+
+QStringList splitSkipEmptyParts(const QString &s, const QString &separator) {
+    return s.split(separator,
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
+                   Qt::SkipEmptyParts
+#else
+                   QString::SkipEmptyParts
+#endif
+    );
 }
 
 ToolTipToRichTextFilter::ToolTipToRichTextFilter(int _size_threshold,
@@ -587,41 +587,28 @@ bool SetStartOnSystemStartup(bool fAutoStart) {
         CoInitialize(nullptr);
 
         // Get a pointer to the IShellLink interface.
-        IShellLink *psl = nullptr;
+        IShellLinkW *psl = nullptr;
         HRESULT hres =
             CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
-                             IID_IShellLink, reinterpret_cast<void **>(&psl));
+                             IID_IShellLinkW, reinterpret_cast<void **>(&psl));
 
         if (SUCCEEDED(hres)) {
             // Get the current executable path
-            TCHAR pszExePath[MAX_PATH];
-            GetModuleFileName(nullptr, pszExePath, sizeof(pszExePath));
+            WCHAR pszExePath[MAX_PATH];
+            GetModuleFileNameW(nullptr, pszExePath, ARRAYSIZE(pszExePath));
 
             // Start client minimized
             QString strArgs = "-min";
             // Set -testnet /-regtest options
-            strArgs += QString::fromStdString(strprintf(
-                " -testnet=%d -regtest=%d", gArgs.GetBoolArg("-testnet", false),
-                gArgs.GetBoolArg("-regtest", false)));
-
-#ifdef UNICODE
-            boost::scoped_array<TCHAR> args(new TCHAR[strArgs.length() + 1]);
-            // Convert the QString to TCHAR*
-            strArgs.toWCharArray(args.get());
-            // Add missing '\0'-termination to string
-            args[strArgs.length()] = '\0';
-#endif
+            strArgs += QString::fromStdString(
+                strprintf(" -chain=%s", gArgs.GetChainName()));
 
             // Set the path to the shortcut target
             psl->SetPath(pszExePath);
-            PathRemoveFileSpec(pszExePath);
+            PathRemoveFileSpecW(pszExePath);
             psl->SetWorkingDirectory(pszExePath);
             psl->SetShowCmd(SW_SHOWMINNOACTIVE);
-#ifndef UNICODE
-            psl->SetArguments(strArgs.toStdString().c_str());
-#else
-            psl->SetArguments(args.get());
-#endif
+            psl->SetArguments(strArgs.toStdWString().c_str());
 
             // Query IShellLink for the IPersistFile interface for
             // saving the shortcut in persistent storage.
@@ -629,13 +616,8 @@ bool SetStartOnSystemStartup(bool fAutoStart) {
             hres = psl->QueryInterface(IID_IPersistFile,
                                        reinterpret_cast<void **>(&ppf));
             if (SUCCEEDED(hres)) {
-                WCHAR pwsz[MAX_PATH];
-                // Ensure that the string is ANSI.
-                MultiByteToWideChar(CP_ACP, 0,
-                                    StartupShortcutPath().string().c_str(), -1,
-                                    pwsz, MAX_PATH);
                 // Save the link by calling IPersistFile::Save.
-                hres = ppf->Save(pwsz, TRUE);
+                hres = ppf->Save(StartupShortcutPath().wstring().c_str(), TRUE);
                 ppf->Release();
                 psl->Release();
                 CoUninitialize();
@@ -674,7 +656,7 @@ static fs::path GetAutostartFilePath() {
 }
 
 bool GetStartOnSystemStartup() {
-    fs::ifstream optionFile(GetAutostartFilePath());
+    fsbridge::ifstream optionFile(GetAutostartFilePath());
     if (!optionFile.good()) {
         return false;
     }
@@ -706,8 +688,8 @@ bool SetStartOnSystemStartup(bool fAutoStart) {
 
         fs::create_directories(GetAutostartDir());
 
-        fs::ofstream optionFile(GetAutostartFilePath(),
-                                std::ios_base::out | std::ios_base::trunc);
+        fsbridge::ofstream optionFile(
+            GetAutostartFilePath(), std::ios_base::out | std::ios_base::trunc);
         if (!optionFile.good()) {
             return false;
         }
@@ -721,9 +703,7 @@ bool SetStartOnSystemStartup(bool fAutoStart) {
             optionFile << strprintf("Name=Bitcoin (%s)\n", chain);
         }
         optionFile << "Exec=" << pszExePath
-                   << strprintf(" -min -testnet=%d -regtest=%d\n",
-                                gArgs.GetBoolArg("-testnet", false),
-                                gArgs.GetBoolArg("-regtest", false));
+                   << strprintf(" -min -chain=%s\n", chain);
         optionFile << "Terminal=false\n";
         optionFile << "Hidden=false\n";
         optionFile.close();
@@ -906,12 +886,11 @@ QString formatServicesStr(quint64 mask) {
     }
 }
 
-QString formatPingTime(double dPingTime) {
-    return (dPingTime == std::numeric_limits<int64_t>::max() / 1e6 ||
-            dPingTime == 0)
+QString formatPingTime(int64_t ping_usec) {
+    return (ping_usec == std::numeric_limits<int64_t>::max() || ping_usec == 0)
                ? QObject::tr("N/A")
                : QString(QObject::tr("%1 ms"))
-                     .arg(QString::number((int)(dPingTime * 1000), 10));
+                     .arg(QString::number(int(ping_usec / 1000), 10));
 }
 
 QString formatTimeOffset(int64_t nTimeOffset) {
@@ -962,6 +941,27 @@ QString formatBytes(uint64_t bytes) {
     return QString(QObject::tr("%1 GB")).arg(bytes / 1024 / 1024 / 1024);
 }
 
+bool ClickableLabel::hasPixmap() const {
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+    return !pixmap(Qt::ReturnByValue).isNull();
+#else
+    return pixmap() != nullptr;
+#endif
+}
+
+qreal calculateIdealFontSize(int width, const QString &text, QFont font,
+                             qreal minPointSize, qreal font_size) {
+    while (font_size >= minPointSize) {
+        font.setPointSizeF(font_size);
+        QFontMetrics fm(font);
+        if (fm.horizontalAdvance(text) < width) {
+            break;
+        }
+        font_size -= 0.5;
+    }
+    return font_size;
+}
+
 void ClickableLabel::mouseReleaseEvent(QMouseEvent *event) {
     Q_EMIT clicked(event->pos());
 }
@@ -984,6 +984,17 @@ int TextWidth(const QFontMetrics &fm, const QString &text) {
     return fm.horizontalAdvance(text);
 #else
     return fm.width(text);
+#endif
+}
+
+void PolishProgressDialog(QProgressDialog *dialog) {
+#ifdef Q_OS_MAC
+    // Workaround for macOS-only Qt bug; see: QTBUG-65750, QTBUG-70357.
+    const int margin = dialog->fontMetrics().width("X");
+    dialog->resize(dialog->width() + 2 * margin, dialog->height());
+    dialog->show();
+#else
+    Q_UNUSED(dialog);
 #endif
 }
 

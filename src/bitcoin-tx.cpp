@@ -12,20 +12,21 @@
 #include <consensus/consensus.h>
 #include <core_io.h>
 #include <key_io.h>
-#include <keystore.h>
-#include <policy/policy.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
 #include <script/sign.h>
+#include <script/signingprovider.h>
 #include <util/moneystr.h>
 #include <util/strencodings.h>
 #include <util/system.h>
-
-#include <boost/algorithm/string.hpp>
+#include <util/translation.h>
 
 #include <univalue.h>
 
+#include <boost/algorithm/string.hpp>
+
 #include <cstdio>
+#include <functional>
 #include <memory>
 
 static bool fCreateBlank;
@@ -35,47 +36,48 @@ static const int CONTINUE_EXECUTION = -1;
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
 static void SetupBitcoinTxArgs() {
-    gArgs.AddArg("-?", "This help message", false, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-create", "Create new, empty TX.", false,
+    gArgs.AddArg("-?", "This help message", ArgsManager::ALLOW_ANY,
                  OptionsCategory::OPTIONS);
-    gArgs.AddArg("-json", "Select JSON output", false,
+    gArgs.AddArg("-create", "Create new, empty TX.", ArgsManager::ALLOW_ANY,
+                 OptionsCategory::OPTIONS);
+    gArgs.AddArg("-json", "Select JSON output", ArgsManager::ALLOW_ANY,
                  OptionsCategory::OPTIONS);
     gArgs.AddArg("-txid",
                  "Output only the hex-encoded transaction id of the resultant "
                  "transaction.",
-                 false, OptionsCategory::OPTIONS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     SetupChainParamsBaseOptions();
 
-    gArgs.AddArg("delin=N", "Delete input N from TX", false,
+    gArgs.AddArg("delin=N", "Delete input N from TX", ArgsManager::ALLOW_ANY,
                  OptionsCategory::COMMANDS);
-    gArgs.AddArg("delout=N", "Delete output N from TX", false,
+    gArgs.AddArg("delout=N", "Delete output N from TX", ArgsManager::ALLOW_ANY,
                  OptionsCategory::COMMANDS);
-    gArgs.AddArg("in=TXID:VOUT(:SEQUENCE_NUMBER)", "Add input to TX", false,
+    gArgs.AddArg("in=TXID:VOUT(:SEQUENCE_NUMBER)", "Add input to TX",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    gArgs.AddArg("locktime=N", "Set TX lock time to N", ArgsManager::ALLOW_ANY,
                  OptionsCategory::COMMANDS);
-    gArgs.AddArg("locktime=N", "Set TX lock time to N", false,
-                 OptionsCategory::COMMANDS);
-    gArgs.AddArg("nversion=N", "Set TX version to N", false,
+    gArgs.AddArg("nversion=N", "Set TX version to N", ArgsManager::ALLOW_ANY,
                  OptionsCategory::COMMANDS);
     gArgs.AddArg("outaddr=VALUE:ADDRESS", "Add address-based output to TX",
-                 false, OptionsCategory::COMMANDS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
     gArgs.AddArg("outpubkey=VALUE:PUBKEY[:FLAGS]",
                  "Add pay-to-pubkey output to TX. "
                  "Optionally add the \"S\" flag to wrap the output in a "
                  "pay-to-script-hash.",
-                 false, OptionsCategory::COMMANDS);
-    gArgs.AddArg("outdata=[VALUE:]DATA", "Add data-based output to TX", false,
-                 OptionsCategory::COMMANDS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    gArgs.AddArg("outdata=[VALUE:]DATA", "Add data-based output to TX",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
     gArgs.AddArg("outscript=VALUE:SCRIPT[:FLAGS]",
                  "Add raw script output to TX. "
                  "Optionally add the \"S\" flag to wrap the output in a "
                  "pay-to-script-hash.",
-                 false, OptionsCategory::COMMANDS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
     gArgs.AddArg(
         "outmultisig=VALUE:REQUIRED:PUBKEYS:PUBKEY1:PUBKEY2:....[:FLAGS]",
         "Add Pay To n-of-m Multi-sig output to TX. n = REQUIRED, m = PUBKEYS. "
         "Optionally add the \"S\" flag to wrap the output in a "
         "pay-to-script-hash.",
-        false, OptionsCategory::COMMANDS);
+        ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
     gArgs.AddArg("sign=SIGHASH-FLAGS",
                  "Add zero or more signatures to transaction. "
                  "This command requires JSON registers:"
@@ -83,18 +85,18 @@ static void SetupBitcoinTxArgs() {
                  "privatekeys=JSON object. "
                  "See signrawtransactionwithkey docs for format of sighash "
                  "flags, JSON objects.",
-                 false, OptionsCategory::COMMANDS);
+                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
 
     gArgs.AddArg("load=NAME:FILENAME",
-                 "Load JSON file FILENAME into register NAME", false,
-                 OptionsCategory::REGISTER_COMMANDS);
+                 "Load JSON file FILENAME into register NAME",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::REGISTER_COMMANDS);
     gArgs.AddArg("set=NAME:JSON-STRING",
-                 "Set register NAME to given JSON-STRING", false,
-                 OptionsCategory::REGISTER_COMMANDS);
+                 "Set register NAME to given JSON-STRING",
+                 ArgsManager::ALLOW_ANY, OptionsCategory::REGISTER_COMMANDS);
 
     // Hidden
-    gArgs.AddArg("-h", "", false, OptionsCategory::HIDDEN);
-    gArgs.AddArg("-help", "", false, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-h", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
+    gArgs.AddArg("-help", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
 }
 
 //
@@ -108,17 +110,17 @@ static int AppInitRawTx(int argc, char *argv[]) {
     SetupBitcoinTxArgs();
     std::string error;
     if (!gArgs.ParseParameters(argc, argv, error)) {
-        fprintf(stderr, "Error parsing command line arguments: %s\n",
-                error.c_str());
+        tfm::format(std::cerr, "Error parsing command line arguments: %s\n",
+                    error);
         return EXIT_FAILURE;
     }
 
-    // Check for -testnet or -regtest parameter (Params() calls are only valid
-    // after this clause)
+    // Check for -chain, -testnet or -regtest parameter (Params() calls are only
+    // valid after this clause)
     try {
         SelectParams(gArgs.GetChainName());
     } catch (const std::exception &e) {
-        fprintf(stderr, "Error: %s\n", e.what());
+        tfm::format(std::cerr, "Error: %s\n", e.what());
         return EXIT_FAILURE;
     }
 
@@ -135,10 +137,11 @@ static int AppInitRawTx(int argc, char *argv[]) {
             "hex-encoded bitcoin transaction\n" +
             "\n";
         strUsage += gArgs.GetHelpMessage();
-        fprintf(stdout, "%s", strUsage.c_str());
+
+        tfm::format(std::cout, "%s", strUsage);
 
         if (argc < 2) {
-            fprintf(stderr, "Error: too few parameters\n");
+            tfm::format(std::cerr, "Error: too few parameters\n");
             return EXIT_FAILURE;
         }
 
@@ -345,7 +348,7 @@ static void MutateTxAddOutPubKey(CMutableTransaction &tx,
     if (bScriptHash) {
         // Get the ID for the script, and then construct a P2SH destination for
         // it.
-        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
+        scriptPubKey = GetScriptForDestination(ScriptHash(scriptPubKey));
     }
 
     // construct TxOut, append to transaction output list
@@ -416,7 +419,7 @@ static void MutateTxAddOutMultiSig(CMutableTransaction &tx,
         }
         // Get the ID for the script, and then construct a P2SH destination for
         // it.
-        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
+        scriptPubKey = GetScriptForDestination(ScriptHash(scriptPubKey));
     }
 
     // construct TxOut, append to transaction output list
@@ -488,7 +491,7 @@ static void MutateTxAddOutScript(CMutableTransaction &tx,
                 strprintf("redeemScript exceeds size limit: %d > %d",
                           scriptPubKey.size(), MAX_SCRIPT_ELEMENT_SIZE));
         }
-        scriptPubKey = GetScriptForDestination(CScriptID(scriptPubKey));
+        scriptPubKey = GetScriptForDestination(ScriptHash(scriptPubKey));
     }
 
     // construct TxOut, append to transaction output list
@@ -595,7 +598,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
         throw std::runtime_error("privatekeys register variable must be set.");
     }
 
-    CBasicKeyStore tempKeystore;
+    FillableSigningProvider tempKeystore;
     UniValue keysObj = registers["privatekeys"];
 
     for (unsigned int kidx = 0; kidx < keysObj.size(); kidx++) {
@@ -680,7 +683,7 @@ static void MutateTxSign(CMutableTransaction &tx, const std::string &flagStr) {
         }
     }
 
-    const CKeyStore &keystore = tempKeystore;
+    const FillableSigningProvider &keystore = tempKeystore;
 
     // Sign what we can:
     for (size_t i = 0; i < mergedTx.vin.size(); i++) {
@@ -762,20 +765,20 @@ static void OutputTxJSON(const CTransaction &tx) {
     TxToUniv(tx, uint256(), entry);
 
     std::string jsonOutput = entry.write(4);
-    fprintf(stdout, "%s\n", jsonOutput.c_str());
+    tfm::format(std::cout, "%s\n", jsonOutput);
 }
 
 static void OutputTxHash(const CTransaction &tx) {
     // the hex-encoded transaction id.
     std::string strHexHash = tx.GetId().GetHex();
 
-    fprintf(stdout, "%s\n", strHexHash.c_str());
+    tfm::format(std::cout, "%s\n", strHexHash);
 }
 
 static void OutputTxHex(const CTransaction &tx) {
     std::string strHex = EncodeHexTx(tx);
 
-    fprintf(stdout, "%s\n", strHex.c_str());
+    tfm::format(std::cout, "%s\n", strHex);
 }
 
 static void OutputTx(const CTransaction &tx) {
@@ -870,7 +873,7 @@ static int CommandLineRawTx(int argc, char *argv[],
     }
 
     if (strPrint != "") {
-        fprintf((nRet == 0 ? stdout : stderr), "%s\n", strPrint.c_str());
+        tfm::format(nRet == 0 ? std::cout : std::cerr, "%s\n", strPrint);
     }
 
     return nRet;

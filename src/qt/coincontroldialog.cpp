@@ -9,7 +9,6 @@
 #include <qt/coincontroldialog.h>
 #include <qt/forms/ui_coincontroldialog.h>
 
-#include <base58.h>
 #include <cashaddrenc.h>
 #include <interfaces/node.h>
 #include <key_io.h>
@@ -20,7 +19,6 @@
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
 #include <qt/walletmodel.h>
-#include <validation.h> // For mempool
 #include <wallet/coincontrol.h>
 #include <wallet/wallet.h>
 
@@ -31,9 +29,7 @@
 #include <QFlags>
 #include <QIcon>
 #include <QSettings>
-#include <QString>
 #include <QTreeWidget>
-#include <QTreeWidgetItem>
 
 QList<Amount> CoinControlDialog::payAmounts;
 bool CoinControlDialog::fSubtractFeeFromAmount = false;
@@ -510,8 +506,8 @@ void CoinControlDialog::updateLabels(WalletModel *model, QDialog *dialog) {
         CTxDestination address;
         if (ExtractDestination(out.txout.scriptPubKey, address)) {
             CPubKey pubkey;
-            CKeyID *keyid = boost::get<CKeyID>(&address);
-            if (keyid && model->wallet().getPubKey(*keyid, pubkey)) {
+            PKHash *pkhash = boost::get<PKHash>(&address);
+            if (pkhash && model->wallet().getPubKey(CKeyID(*pkhash), pubkey)) {
                 nBytesInputs += (pubkey.IsCompressed() ? 148 : 180);
             } else {
                 // in all error cases, simply assume 148 here

@@ -16,6 +16,7 @@
 #include <ui_interface.h>
 #include <util/strencodings.h>
 #include <util/system.h>
+#include <util/threadnames.h>
 
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
@@ -35,7 +36,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -140,15 +140,15 @@ struct HTTPPathHandler {
 //! libevent event loop
 static struct event_base *eventBase = nullptr;
 //! HTTP server
-struct evhttp *eventHTTP = nullptr;
+static struct evhttp *eventHTTP = nullptr;
 //! List of subnets to allow RPC connections from
 static std::vector<CSubNet> rpc_allow_subnets;
 //! Work queue for handling longer requests off the event loop thread
 static WorkQueue<HTTPClosure> *workQueue = nullptr;
 //! Handlers for (sub)paths
-std::vector<HTTPPathHandler> pathHandlers;
+static std::vector<HTTPPathHandler> pathHandlers;
 //! Bound listening sockets
-std::vector<evhttp_bound_socket *> boundSockets;
+static std::vector<evhttp_bound_socket *> boundSockets;
 
 /** Check if a network address is allowed to access the HTTP server */
 static bool ClientAllowed(const CNetAddr &netaddr) {
@@ -232,21 +232,29 @@ static void http_request_cb(struct evhttp_request *req, void *arg) {
     }
     auto hreq = std::make_unique<HTTPRequest>(req);
 
-    LogPrint(BCLog::HTTP, "Received a %s request for %s from %s\n",
-             RequestMethodString(hreq->GetRequestMethod()), hreq->GetURI(),
-             hreq->GetPeer().ToString());
-
     // Early address-based allow check
     if (!ClientAllowed(hreq->GetPeer())) {
+        LogPrint(BCLog::HTTP,
+                 "HTTP request from %s rejected: Client network is not allowed "
+                 "RPC access\n",
+                 hreq->GetPeer().ToString());
         hreq->WriteReply(HTTP_FORBIDDEN);
         return;
     }
 
     // Early reject unknown HTTP methods
     if (hreq->GetRequestMethod() == HTTPRequest::UNKNOWN) {
+        LogPrint(BCLog::HTTP,
+                 "HTTP request from %s rejected: Unknown HTTP request method\n",
+                 hreq->GetPeer().ToString());
         hreq->WriteReply(HTTP_BADMETHOD);
         return;
     }
+
+    LogPrint(BCLog::HTTP, "Received a %s request for %s from %s\n",
+             RequestMethodString(hreq->GetRequestMethod()),
+             SanitizeString(hreq->GetURI(), SAFE_CHARS_URI).substr(0, 100),
+             hreq->GetPeer().ToString());
 
     // Find registered handler for prefix
     std::string strURI = hreq->GetURI();
@@ -293,7 +301,7 @@ static void http_reject_request_cb(struct evhttp_request *req, void *) {
 
 /** Event dispatcher thread */
 static bool ThreadHTTP(struct event_base *base) {
-    RenameThread("bitcoin-http");
+    util::ThreadRename("http");
     LogPrint(BCLog::HTTP, "Entering http event loop\n");
     event_base_dispatch(base);
     // Event loop will be interrupted by InterruptHTTPServer()
@@ -303,14 +311,18 @@ static bool ThreadHTTP(struct event_base *base) {
 
 /** Bind HTTP server to specified addresses */
 static bool HTTPBindAddresses(struct evhttp *http) {
-    int defaultPort = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
+    int http_port = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
     std::vector<std::pair<std::string, uint16_t>> endpoints;
 
     // Determine what addresses to bind to
-    if (!gArgs.IsArgSet("-rpcallowip")) {
+    if (!(gArgs.IsArgSet("-rpcallowip") && gArgs.IsArgSet("-rpcbind"))) {
         // Default to loopback if not allowing external IPs.
-        endpoints.push_back(std::make_pair("::1", defaultPort));
-        endpoints.push_back(std::make_pair("127.0.0.1", defaultPort));
+        endpoints.push_back(std::make_pair("::1", http_port));
+        endpoints.push_back(std::make_pair("127.0.0.1", http_port));
+        if (gArgs.IsArgSet("-rpcallowip")) {
+            LogPrintf("WARNING: option -rpcallowip was specified without "
+                      "-rpcbind; this doesn't usually make sense\n");
+        }
         if (gArgs.IsArgSet("-rpcbind")) {
             LogPrintf("WARNING: option -rpcbind was ignored because "
                       "-rpcallowip was not specified, refusing to allow "
@@ -319,15 +331,11 @@ static bool HTTPBindAddresses(struct evhttp *http) {
     } else if (gArgs.IsArgSet("-rpcbind")) {
         // Specific bind address.
         for (const std::string &strRPCBind : gArgs.GetArgs("-rpcbind")) {
-            int port = defaultPort;
+            int port = http_port;
             std::string host;
             SplitHostPort(strRPCBind, port, host);
             endpoints.push_back(std::make_pair(host, port));
         }
-    } else {
-        // No specific bind address specified, bind to any.
-        endpoints.push_back(std::make_pair("::", defaultPort));
-        endpoints.push_back(std::make_pair("0.0.0.0", defaultPort));
     }
 
     // Bind addresses
@@ -339,6 +347,13 @@ static bool HTTPBindAddresses(struct evhttp *http) {
         evhttp_bound_socket *bind_handle = evhttp_bind_socket_with_handle(
             http, i->first.empty() ? nullptr : i->first.c_str(), i->second);
         if (bind_handle) {
+            CNetAddr addr;
+            if (i->first.empty() ||
+                (LookupHost(i->first.c_str(), addr, false) &&
+                 addr.IsBindAny())) {
+                LogPrintf("WARNING: the RPC server is not safe to expose to "
+                          "untrusted networks such as the public internet\n");
+            }
             boundSockets.push_back(bind_handle);
         } else {
             LogPrintf("Binding RPC on address %s port %i failed.\n", i->first,
@@ -349,8 +364,8 @@ static bool HTTPBindAddresses(struct evhttp *http) {
 }
 
 /** Simple wrapper to set thread name and run work queue */
-static void HTTPWorkQueueRun(WorkQueue<HTTPClosure> *queue) {
-    RenameThread("bitcoin-httpworker");
+static void HTTPWorkQueueRun(WorkQueue<HTTPClosure> *queue, int worker_num) {
+    util::ThreadRename(strprintf("httpworker.%i", worker_num));
     queue->Run();
 }
 
@@ -370,13 +385,6 @@ static void libevent_log_cb(int severity, const char *msg) {
 
 bool InitHTTPServer(Config &config) {
     if (!InitHTTPAllowList()) {
-        return false;
-    }
-
-    if (gArgs.GetBoolArg("-rpcssl", false)) {
-        uiInterface.ThreadSafeMessageBox(
-            "SSL mode for RPC (-rpcssl) is no longer supported.", "",
-            CClientUIInterface::MSG_ERROR);
         return false;
     }
 
@@ -450,7 +458,7 @@ bool UpdateHTTPServerLogging(bool enable) {
 #endif
 }
 
-std::thread threadHTTP;
+static std::thread threadHTTP;
 static std::vector<std::thread> g_thread_http_workers;
 
 void StartHTTPServer() {
@@ -461,7 +469,7 @@ void StartHTTPServer() {
     threadHTTP = std::thread(ThreadHTTP, eventBase);
 
     for (int i = 0; i < rpcThreads; i++) {
-        g_thread_http_workers.emplace_back(HTTPWorkQueueRun, workQueue);
+        g_thread_http_workers.emplace_back(HTTPWorkQueueRun, workQueue, i);
     }
 }
 

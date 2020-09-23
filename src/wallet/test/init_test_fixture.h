@@ -7,7 +7,8 @@
 
 #include <interfaces/chain.h>
 
-#include <test/test_bitcoin.h>
+#include <node/context.h>
+#include <test/util/setup_common.h>
 
 struct InitWalletDirTestingSetup : public BasicTestingSetup {
     explicit InitWalletDirTestingSetup(
@@ -18,7 +19,7 @@ struct InitWalletDirTestingSetup : public BasicTestingSetup {
     fs::path m_datadir;
     fs::path m_cwd;
     std::map<std::string, fs::path> m_walletdir_path_cases;
-    std::unique_ptr<interfaces::Chain> m_chain = interfaces::MakeChain();
+    std::unique_ptr<interfaces::Chain> m_chain;
     std::unique_ptr<interfaces::ChainClient> m_chain_client;
 };
 

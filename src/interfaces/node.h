@@ -5,10 +5,11 @@
 #ifndef BITCOIN_INTERFACES_NODE_H
 #define BITCOIN_INTERFACES_NODE_H
 
-#include <addrdb.h>     // For banmap_t
-#include <amount.h>     // For Amount
-#include <net.h>        // For CConnman::NumConnections
-#include <netaddress.h> // For Network
+#include <addrdb.h>                    // For banmap_t
+#include <amount.h>                    // For Amount
+#include <net.h>                       // For CConnman::NumConnections
+#include <netaddress.h>                // For Network
+#include <support/allocators/secure.h> // For SecureString
 
 #include <cstddef>
 #include <cstdint>
@@ -26,10 +27,12 @@ struct CNodeStats;
 class Coin;
 class Config;
 class HTTPRPCRequestProcessor;
+struct NodeContext;
 class proxyType;
 class RPCServer;
 class RPCTimerInterface;
 class UniValue;
+enum class WalletCreationStatus;
 
 namespace interfaces {
 class Handler;
@@ -39,6 +42,9 @@ class Wallet;
 class Node {
 public:
     virtual ~Node() {}
+
+    //! Send init error.
+    virtual void initError(const std::string &message) = 0;
 
     //! Set command line arguments.
     virtual bool parseParameters(int argc, const char *const argv[],
@@ -56,6 +62,12 @@ public:
 
     //! Choose network parameters.
     virtual void selectParams(const std::string &network) = 0;
+
+    //! Get the (assumed) blockchain size.
+    virtual uint64_t getAssumedBlockchainSize() = 0;
+
+    //! Get the (assumed) chain state size.
+    virtual uint64_t getAssumedChainStateSize() = 0;
 
     //! Get network name.
     virtual std::string getNetwork() = 0;
@@ -107,8 +119,7 @@ public:
     virtual bool getBanned(banmap_t &banmap) = 0;
 
     //! Ban node.
-    virtual bool ban(const CNetAddr &net_addr, BanReason reason,
-                     int64_t ban_time_offset) = 0;
+    virtual bool ban(const CNetAddr &net_addr, int64_t ban_time_offset) = 0;
 
     //! Unban node.
     virtual bool unban(const CSubNet &ip) = 0;
@@ -158,9 +169,6 @@ public:
     //! Get network active.
     virtual bool getNetworkActive() = 0;
 
-    //! Get max tx fee.
-    virtual Amount getMaxTxFee() = 0;
-
     //! Estimate smart fee.
     virtual CFeeRate estimateSmartFee() = 0;
 
@@ -184,8 +192,29 @@ public:
     //! Get unspent outputs associated with a transaction.
     virtual bool getUnspentOutput(const COutPoint &output, Coin &coin) = 0;
 
+    //! Return default wallet directory.
+    virtual std::string getWalletDir() = 0;
+
+    //! Return available wallets in wallet directory.
+    virtual std::vector<std::string> listWalletDir() = 0;
+
     //! Return interfaces for accessing wallets (if any).
     virtual std::vector<std::unique_ptr<Wallet>> getWallets() = 0;
+
+    //! Attempts to load a wallet from file or directory.
+    //! The loaded wallet is also notified to handlers previously registered
+    //! with handleLoadWallet.
+    virtual std::unique_ptr<Wallet>
+    loadWallet(const CChainParams &params, const std::string &name,
+               std::string &error,
+               std::vector<std::string> &warnings) const = 0;
+
+    //! Create a wallet from file
+    virtual WalletCreationStatus
+    createWallet(const CChainParams &params, const SecureString &passphrase,
+                 uint64_t wallet_creation_flags, const std::string &name,
+                 std::string &error, std::vector<std::string> &warnings,
+                 std::unique_ptr<Wallet> &result) = 0;
 
     //! Register handler for init messages.
     using InitMessageFn = std::function<void(const std::string &message)>;
@@ -247,6 +276,9 @@ public:
                            int64_t block_time, double verification_progress)>;
     virtual std::unique_ptr<Handler>
     handleNotifyHeaderTip(NotifyHeaderTipFn fn) = 0;
+
+    //! Return pointer to internal chain interface, useful for testing.
+    virtual NodeContext *context() { return nullptr; }
 };
 
 //! Return implementation of Node interface.

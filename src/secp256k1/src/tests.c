@@ -1822,7 +1822,7 @@ void run_field_misc(void) {
         q = x;
         secp256k1_fe_cmov(&x, &z, 0);
 #ifdef VERIFY
-        CHECK(!x.normalized && x.magnitude == z.magnitude);
+        CHECK(x.normalized && x.magnitude == 1);
 #endif
         secp256k1_fe_cmov(&x, &x, 1);
         CHECK(fe_memcmp(&x, &z) != 0);
@@ -1845,7 +1845,7 @@ void run_field_misc(void) {
             secp256k1_fe_normalize_var(&q);
             secp256k1_fe_cmov(&q, &z, (j&1));
 #ifdef VERIFY
-            CHECK(!q.normalized && q.magnitude == (j+2));
+            CHECK((q.normalized != (j&1)) && q.magnitude == ((j&1) ? z.magnitude : 1));
 #endif
         }
         secp256k1_fe_normalize_var(&z);
@@ -5173,9 +5173,33 @@ void run_ecdsa_openssl(void) {
 # include "modules/schnorr/tests_impl.h"
 #endif
 
+void run_memczero_test(void) {
+    unsigned char buf1[6] = {1, 2, 3, 4, 5, 6};
+    unsigned char buf2[sizeof(buf1)];
+
+    /* memczero(..., ..., 0) is a noop. */
+    memcpy(buf2, buf1, sizeof(buf1));
+    memczero(buf1, sizeof(buf1), 0);
+    CHECK(memcmp(buf1, buf2, sizeof(buf1)) == 0);
+
+    /* memczero(..., ..., 1) zeros the buffer. */
+    memset(buf2, 0, sizeof(buf2));
+    memczero(buf1, sizeof(buf1) , 1);
+    CHECK(memcmp(buf1, buf2, sizeof(buf1)) == 0);
+}
+
 int main(int argc, char **argv) {
     unsigned char seed16[16] = {0};
     unsigned char run32[32] = {0};
+
+    /* Disable buffering for stdout to improve reliability of getting
+     * diagnostic information. Happens right at the start of main because
+     * setbuf must be used before any other operation on the stream. */
+    setbuf(stdout, NULL);
+    /* Also disable buffering for stderr because it's not guaranteed that it's
+     * unbuffered on all systems. */
+    setbuf(stderr, NULL);
+
     /* find iteration count */
     if (argc > 1) {
         count = strtol(argv[1], NULL, 0);
@@ -5305,6 +5329,9 @@ int main(int argc, char **argv) {
     /* Schnorr signature tests */
     run_schnorr_tests();
 #endif
+
+    /* util tests */
+    run_memczero_test();
 
     secp256k1_rand256(run32);
     printf("random run = %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n", run32[0], run32[1], run32[2], run32[3], run32[4], run32[5], run32[6], run32[7], run32[8], run32[9], run32[10], run32[11], run32[12], run32[13], run32[14], run32[15]);

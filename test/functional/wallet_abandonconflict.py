@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2016 The Bitcoin Core developers
+# Copyright (c) 2014-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the abandontransaction RPC.
@@ -19,8 +19,6 @@ from test_framework.util import (
     connect_nodes,
     disconnect_nodes,
     satoshi_round,
-    sync_blocks,
-    sync_mempools,
 )
 
 
@@ -36,11 +34,12 @@ class AbandonConflictTest(BitcoinTestFramework):
         def total_fees(*txids):
             total = 0
             for txid in txids:
-                total += self.nodes[0].calculate_fee_from_txid(txid)
-
+                # '-=' is because gettransaction(txid)['fee'] returns a negative
+                total -= self.nodes[0].gettransaction(txid)['fee']
             return satoshi_round(total)
+
         self.nodes[1].generate(100)
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         balance = self.nodes[0].getbalance()
         txA = self.nodes[0].sendtoaddress(
             self.nodes[0].getnewaddress(), Decimal("10"))
@@ -49,7 +48,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         txC = self.nodes[0].sendtoaddress(
             self.nodes[0].getnewaddress(), Decimal("10"))
 
-        sync_mempools(self.nodes)
+        self.sync_mempools()
         self.nodes[1].generate(1)
 
         # Can not abandon non-wallet transaction
@@ -59,7 +58,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         assert_raises_rpc_error(-5, 'Transaction not eligible for abandonment',
                                 lambda: self.nodes[0].abandontransaction(txid=txA))
 
-        sync_blocks(self.nodes)
+        self.sync_blocks()
         newbalance = self.nodes[0].getbalance()
 
         # no more than fees lost
@@ -71,12 +70,12 @@ class AbandonConflictTest(BitcoinTestFramework):
         disconnect_nodes(self.nodes[0], self.nodes[1])
 
         # Identify the 10btc outputs
-        nA = next(i for i, vout in enumerate(self.nodes[0].getrawtransaction(
-            txA, 1)["vout"]) if vout["value"] == Decimal("10"))
-        nB = next(i for i, vout in enumerate(self.nodes[0].getrawtransaction(
-            txB, 1)["vout"]) if vout["value"] == Decimal("10"))
-        nC = next(i for i, vout in enumerate(self.nodes[0].getrawtransaction(
-            txC, 1)["vout"]) if vout["value"] == Decimal("10"))
+        nA = next(tx_out["vout"] for tx_out in self.nodes[0].gettransaction(
+            txA)["details"] if tx_out["amount"] == Decimal("10"))
+        nB = next(tx_out["vout"] for tx_out in self.nodes[0].gettransaction(
+            txB)["details"] if tx_out["amount"] == Decimal("10"))
+        nC = next(tx_out["vout"] for tx_out in self.nodes[0].gettransaction(
+            txC)["details"] if tx_out["amount"] == Decimal("10"))
 
         inputs = []
         # spend 10btc outputs from txA and txB
@@ -91,8 +90,8 @@ class AbandonConflictTest(BitcoinTestFramework):
         txAB1 = self.nodes[0].sendrawtransaction(signed["hex"])
 
         # Identify the 14.99998btc output
-        nAB = next(i for i, vout in enumerate(self.nodes[0].getrawtransaction(
-            txAB1, 1)["vout"]) if vout["value"] == Decimal("14.99998"))
+        nAB = next(tx_out["vout"] for tx_out in self.nodes[0].gettransaction(
+            txAB1)["details"] if tx_out["amount"] == Decimal("14.99998"))
 
         # Create a child tx spending AB1 and C
         inputs = []
@@ -198,7 +197,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         self.nodes[1].generate(1)
 
         connect_nodes(self.nodes[0], self.nodes[1])
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         # Verify that B and C's 10 BCH outputs are available for spending again
         # because AB1 is now conflicted

@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #include <uint256.h>
@@ -7,15 +7,12 @@
 #include <streams.h>
 #include <version.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
-#include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <iomanip>
-#include <limits>
 #include <sstream>
 #include <string>
 
@@ -263,6 +260,18 @@ BOOST_AUTO_TEST_CASE(methods) {
     ss >> TmpS;
     BOOST_CHECK(MaxS == TmpS);
     ss.clear();
+
+    // Check that '0x' or '0X', and leading spaces are correctly skipped in
+    // SetHex
+    const auto baseHexstring{uint256S(
+        "0x7d1de5eaf9b156d53208f033b5aa8122d2d2355d5e12292b121156cfdb4a529c")};
+    const auto hexstringWithCharactersToSkip{uint256S(
+        " 0X7d1de5eaf9b156d53208f033b5aa8122d2d2355d5e12292b121156cfdb4a529c")};
+    const auto wrongHexstringWithCharactersToSkip{uint256S(
+        " 0X7d1de5eaf9b156d53208f033b5aa8122d2d2355d5e12292b121156cfdb4a529d")};
+
+    BOOST_CHECK(baseHexstring == hexstringWithCharactersToSkip);
+    BOOST_CHECK(baseHexstring != wrongHexstringWithCharactersToSkip);
 }
 
 BOOST_AUTO_TEST_CASE(conversion) {

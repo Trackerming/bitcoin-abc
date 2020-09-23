@@ -5,6 +5,8 @@
 #ifndef BITCOIN_QT_GUICONSTANTS_H
 #define BITCOIN_QT_GUICONSTANTS_H
 
+#include <cstdint>
+
 /* Milliseconds between model updates */
 static const int MODEL_UPDATE_DELAY = 250;
 
@@ -50,5 +52,6 @@ static const int MAX_URI_LENGTH = 255;
 #define QAPP_ORG_DOMAIN "bitcoinabc.org"
 #define QAPP_APP_NAME_DEFAULT "BitcoinABC-Qt"
 #define QAPP_APP_NAME_TESTNET "BitcoinABC-Qt-testnet"
+#define QAPP_APP_NAME_REGTEST "BitcoinABC-Qt-regtest"
 
 #endif // BITCOIN_QT_GUICONSTANTS_H

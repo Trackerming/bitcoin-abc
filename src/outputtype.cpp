@@ -5,13 +5,12 @@
 
 #include <outputtype.h>
 
-#include <keystore.h>
 #include <pubkey.h>
 #include <script/script.h>
-#include <script/standard.h>
+#include <script/sign.h>
+#include <util/vector.h>
 
 #include <cassert>
-#include <string>
 
 static const std::string OUTPUT_TYPE_STRING_LEGACY = "legacy";
 
@@ -35,17 +34,19 @@ const std::string &FormatOutputType(OutputType type) {
 CTxDestination GetDestinationForKey(const CPubKey &key, OutputType type) {
     switch (type) {
         case OutputType::LEGACY:
-            return key.GetID();
+            return PKHash(key);
         default:
             assert(false);
     }
 }
 
 std::vector<CTxDestination> GetAllDestinationsForKey(const CPubKey &key) {
-    return std::vector<CTxDestination>{key.GetID()};
+    PKHash keyid(key);
+    CTxDestination p2pkh{keyid};
+    return Vector(std::move(p2pkh));
 }
 
-CTxDestination AddAndGetDestinationForScript(CKeyStore &keystore,
+CTxDestination AddAndGetDestinationForScript(FillableSigningProvider &keystore,
                                              const CScript &script,
                                              OutputType type) {
     // Add script to keystore
@@ -53,7 +54,7 @@ CTxDestination AddAndGetDestinationForScript(CKeyStore &keystore,
     // Note that scripts over 520 bytes are not yet supported.
     switch (type) {
         case OutputType::LEGACY:
-            return CScriptID(script);
+            return ScriptHash(script);
         default:
             assert(false);
     }

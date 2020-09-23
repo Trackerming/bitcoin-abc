@@ -17,17 +17,6 @@ More independent Gitian builders are needed, which is why this guide exists.
 It is preferred you follow these steps yourself instead of using someone else's
 VM image to avoid 'contaminating' the build.
 
-Table of Contents
------------------
-
-- [Preparing the Gitian builder host](#preparing-the-gitian-builder-host)
-- [Getting and building the inputs](#getting-and-building-the-inputs)
-- [Building Bitcoin Core](#building-bitcoin-core)
-- [Building an alternative repository](#building-an-alternative-repository)
-- [Signing externally](#signing-externally)
-- [Uploading signatures](#uploading-signatures)
-
-
 Preparing the Gitian builder host
 ---------------------------------
 
@@ -37,8 +26,6 @@ This guide explains how to set up the environment, and how to start the builds.
 Gitian builds are known to be working on recent versions of Debian, Ubuntu and Fedora.
 If your machine is already running one of those operating systems, you can perform Gitian builds on the actual hardware.
 Alternatively, you can install one of the supported operating systems in a virtual machine.
-
-You can create the virtual machine using [vagrant](./gitian-building/gitian-building-vagrant.md) or chose to setup the VM manually.
 
 Any kind of virtualization can be used, for example:
 - [VirtualBox](https://www.virtualbox.org/) (covered by this guide)
@@ -66,11 +53,11 @@ In order to sign builds for MacOS, you need to download the free SDK and extract
 It is possible to download the resulting archive directly for users that desire to do so:
 
 ```bash
-cd ~/gitian-builder
-curl -LO https://storage.googleapis.com/f4936e83b2dcbca742be51fb9692b153/MacOSX10.11.sdk.tar.gz
-echo "4732b52b5ebe300c8c91cbeed6d19d59c1ff9c56c7a1dd6cfa518b9c2c72abde MacOSX10.11.sdk.tar.gz" | sha256sum -c
+cd bitcoin-abc/contrib/gitian-builder
+curl -LO https://storage.googleapis.com/27cd7b2a42a430926cc621acdc3bda72a8ed2b0efc080e3/MacOSX10.14.sdk.tar.gz
+echo "2322086a96349db832abbcadea493b79db843553a2e604163238d99fa058a286 MacOSX10.14.sdk.tar.gz" | sha256sum -c
 mkdir -p inputs
-mv MacOSX10.11.sdk.tar.gz inputs
+mv MacOSX10.14.sdk.tar.gz inputs
 ```
 
 Alternatively, you can skip the macOS build by adding `--os=lw` below.
@@ -89,7 +76,7 @@ You only need to do this once:
 ./gitian-build.py --setup satoshi 0.18.5
 ```
 
-Where `satoshi` is your Github name and `0.18.5` is the most recent tag (without `v`). 
+Where `satoshi` is your Github name and `0.18.5` is the most recent tag (without `v`).
 
 Build binaries
 --------------
@@ -109,7 +96,7 @@ You need to copy these uncommited changes to your host machine, where you can si
 
 ```bash
 export NAME=satoshi
-gpg --output $VERSION-linux/$NAME/bitcoin-abc-linux-0.18.5-build.assert.sig --detach-sign 0.18.5-linux/$NAME/bitcoin-abc-linux-0.18.5-build.assert 
-gpg --output $VERSION-osx-unsigned/$NAME/bitcoin-abc-osx-0.18.5-build.assert.sig --detach-sign 0.18.5-osx-unsigned/$NAME/bitcoin-abc-osx-0.18.5-build.assert 
-gpg --output $VERSION-win-unsigned/$NAME/bitcoin-abc-win-0.18.5-build.assert.sig --detach-sign 0.18.5-win-unsigned/$NAME/bitcoin-abc-win-0.18.5-build.assert 
+gpg --output $VERSION-linux/$NAME/bitcoin-abc-linux-0.18.5-build.assert.sig --detach-sign 0.18.5-linux/$NAME/bitcoin-abc-linux-0.18.5-build.assert
+gpg --output $VERSION-osx-unsigned/$NAME/bitcoin-abc-osx-0.18.5-build.assert.sig --detach-sign 0.18.5-osx-unsigned/$NAME/bitcoin-abc-osx-0.18.5-build.assert
+gpg --output $VERSION-win-unsigned/$NAME/bitcoin-abc-win-0.18.5-build.assert.sig --detach-sign 0.18.5-win-unsigned/$NAME/bitcoin-abc-win-0.18.5-build.assert
 ```

@@ -6,12 +6,14 @@
 #define BITCOIN_BLOCKFILTER_H
 
 #include <primitives/block.h>
+#include <primitives/blockhash.h>
 #include <serialize.h>
 #include <uint256.h>
 #include <undo.h>
 #include <util/bytevectorhash.h>
 
 #include <cstdint>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -87,6 +89,20 @@ enum class BlockFilterType : uint8_t {
     INVALID = 255,
 };
 
+/** Get the human-readable name for a filter type. Returns empty string for
+ * unknown types. */
+const std::string &BlockFilterTypeName(BlockFilterType filter_type);
+
+/** Find a filter type by its human-readable name. */
+bool BlockFilterTypeByName(const std::string &name,
+                           BlockFilterType &filter_type);
+
+/** Get a list of known filter types. */
+const std::vector<BlockFilterType> &AllBlockFilterTypes();
+
+/** Get a comma-separated list of known filter type names. */
+const std::string &ListBlockFilterTypes();
+
 /**
  * Complete block filter struct as defined in BIP 157. Serialization matches
  * payload of "cfilter" messages.
@@ -94,7 +110,7 @@ enum class BlockFilterType : uint8_t {
 class BlockFilter {
 private:
     BlockFilterType m_filter_type = BlockFilterType::INVALID;
-    uint256 m_block_hash;
+    BlockHash m_block_hash;
     GCSFilter m_filter;
 
     bool BuildParams(GCSFilter::Params &params) const;
@@ -103,7 +119,7 @@ public:
     BlockFilter() = default;
 
     //! Reconstruct a BlockFilter from parts.
-    BlockFilter(BlockFilterType filter_type, const uint256 &block_hash,
+    BlockFilter(BlockFilterType filter_type, const BlockHash &block_hash,
                 std::vector<uint8_t> filter);
 
     //! Construct a new BlockFilter of the specified type from a block.
@@ -111,7 +127,7 @@ public:
                 const CBlockUndo &block_undo);
 
     BlockFilterType GetFilterType() const { return m_filter_type; }
-    const uint256 &GetBlockHash() const { return m_block_hash; }
+    const BlockHash &GetBlockHash() const { return m_block_hash; }
     const GCSFilter &GetFilter() const { return m_filter; }
 
     const std::vector<uint8_t> &GetEncodedFilter() const {

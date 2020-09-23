@@ -3,7 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <rpc/server.h>
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 #include <util/system.h>
 
 #include <boost/test/unit_test.hpp>
@@ -15,7 +15,8 @@ BOOST_FIXTURE_TEST_SUITE(server_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(server_IsDeprecatedRPCEnabled) {
     ArgsManager testArgs;
-    testArgs.AddArg("-deprecatedrpc", "", false, OptionsCategory::OPTIONS);
+    testArgs.AddArg("-deprecatedrpc", "", ArgsManager::ALLOW_ANY,
+                    OptionsCategory::OPTIONS);
 
     const char *argv_test[] = {"bitcoind", "-deprecatedrpc=foo",
                                "-deprecatedrpc=bar"};

@@ -9,7 +9,7 @@ still compatible with the minimum supported Linux distribution versions.
 
 Example usage:
 
-    find ../gitian-builder/build -type f -executable | xargs python3 contrib/devtools/symbol-check.py
+    find contrib/gitian-builder/build -type f -executable | xargs python3 contrib/devtools/symbol-check.py
 '''
 import subprocess
 import re
@@ -48,6 +48,11 @@ MAX_VERSIONS = {
 # Ignore symbols that are exported as part of every executable
 IGNORE_EXPORTS = {
     '_edata', '_end', '__end__', '_init', '__bss_start', '__bss_start__', '_bss_end__', '__bss_end__', '_fini', '_IO_stdin_used', 'stdin', 'stdout', 'stderr',
+    # Jemalloc exported symbols
+    '__malloc_hook', 'malloc', 'calloc', 'malloc_usable_size',
+    '__free_hook', 'free',
+    '__realloc_hook', 'realloc',
+    '__memalign_hook', 'memalign', 'posix_memalign', 'aligned_alloc', 'valloc',
     # Figure out why we get these symbols exported on xenial.
     '_ZNKSt5ctypeIcE8do_widenEc', 'in6addr_any', 'optarg',
     '_ZNSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv'
@@ -69,8 +74,6 @@ ALLOWED_LIBRARIES = {
     'ld-linux-aarch64.so.1',  # 64-bit ARM dynamic linker
     'ld-linux-armhf.so.3',  # 32-bit ARM dynamic linker
     # bitcoin-qt only
-    'libX11-xcb.so.1',  # part of X11
-    'libX11.so.6',  # part of X11
     'libxcb.so.1',  # part of X11
     'libfontconfig.so.1',  # font support
     'libfreetype.so.6',  # font parsing

@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -8,21 +8,23 @@
 #include <chain.h>
 #include <chainparams.h>
 #include <config.h>
-#include <keystore.h>
 #include <net.h>
 #include <net_processing.h>
-#include <pow.h>
 #include <script/sign.h>
+#include <script/signingprovider.h>
+#include <script/standard.h>
 #include <serialize.h>
 #include <util/system.h>
+#include <util/time.h>
 #include <validation.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
 #include <cstdint>
 
+namespace {
 struct CConnmanTest : public CConnman {
     using CConnman::CConnman;
     void AddNode(CNode &node) {
@@ -37,6 +39,7 @@ struct CConnmanTest : public CConnman {
         vNodes.clear();
     }
 };
+} // namespace
 
 // Tests these internal-to-net_processing.cpp methods:
 extern bool AddOrphanTx(const CTransactionRef &tx, NodeId peer);
@@ -48,7 +51,7 @@ struct COrphanTx {
     NodeId fromPeer;
     int64_t nTimeExpire;
 };
-extern CCriticalSection g_cs_orphans;
+extern RecursiveMutex g_cs_orphans;
 extern std::map<uint256, COrphanTx>
     mapOrphanTransactions GUARDED_BY(g_cs_orphans);
 
@@ -77,7 +80,7 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
 
     auto connman = std::make_unique<CConnman>(config, 0x1337, 0x1337);
     auto peerLogic = std::make_unique<PeerLogicValidation>(
-        connman.get(), nullptr, scheduler, false);
+        connman.get(), nullptr, *m_node.scheduler, false);
 
     // Mock an outbound peer
     CAddress addr1(ip(0xa0b0c001), NODE_NONE);
@@ -93,15 +96,16 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
     // This test requires that we have a chain with non-zero work.
     {
         LOCK(cs_main);
-        BOOST_CHECK(chainActive.Tip() != nullptr);
-        BOOST_CHECK(chainActive.Tip()->nChainWork > 0);
+        BOOST_CHECK(::ChainActive().Tip() != nullptr);
+        BOOST_CHECK(::ChainActive().Tip()->nChainWork > 0);
     }
 
     // Test starts here
     {
         LOCK2(cs_main, dummyNode1.cs_sendProcessing);
         // should result in getheaders
-        peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode1, interruptDummy));
     }
     {
         LOCK2(cs_main, dummyNode1.cs_vSend);
@@ -115,7 +119,8 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
     {
         LOCK2(cs_main, dummyNode1.cs_sendProcessing);
         // should result in getheaders
-        peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode1, interruptDummy));
     }
     {
         LOCK2(cs_main, dummyNode1.cs_vSend);
@@ -126,7 +131,8 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction) {
     {
         LOCK2(cs_main, dummyNode1.cs_sendProcessing);
         // should result in disconnect
-        peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode1, interruptDummy));
     }
     BOOST_CHECK(dummyNode1.fDisconnect == true);
     SetMockTime(0);
@@ -158,21 +164,21 @@ BOOST_AUTO_TEST_CASE(stale_tip_peer_management) {
 
     auto connman = std::make_unique<CConnmanTest>(config, 0x1337, 0x1337);
     auto peerLogic = std::make_unique<PeerLogicValidation>(
-        connman.get(), nullptr, scheduler, false);
+        connman.get(), nullptr, *m_node.scheduler, false);
 
     const Consensus::Params &consensusParams =
         config.GetChainParams().GetConsensus();
-    constexpr int nMaxOutbound = 8;
+    constexpr int max_outbound_full_relay = 8;
     CConnman::Options options;
     options.nMaxConnections = 125;
-    options.nMaxOutbound = nMaxOutbound;
+    options.m_max_outbound_full_relay = max_outbound_full_relay;
     options.nMaxFeeler = 1;
 
     connman->Init(options);
     std::vector<CNode *> vNodes;
 
     // Mock some outbound peers
-    for (int i = 0; i < nMaxOutbound; ++i) {
+    for (int i = 0; i < max_outbound_full_relay; ++i) {
         AddRandomOutboundPeer(config, vNodes, *peerLogic, connman.get());
     }
 
@@ -201,7 +207,7 @@ BOOST_AUTO_TEST_CASE(stale_tip_peer_management) {
     AddRandomOutboundPeer(config, vNodes, *peerLogic, connman.get());
 
     peerLogic->CheckForStaleTipAndEvictPeers(consensusParams);
-    for (int i = 0; i < nMaxOutbound; ++i) {
+    for (int i = 0; i < max_outbound_full_relay; ++i) {
         BOOST_CHECK(vNodes[i]->fDisconnect == false);
     }
     // Last added node should get marked for eviction
@@ -214,10 +220,10 @@ BOOST_AUTO_TEST_CASE(stale_tip_peer_management) {
     UpdateLastBlockAnnounceTime(vNodes.back()->GetId(), GetTime());
 
     peerLogic->CheckForStaleTipAndEvictPeers(consensusParams);
-    for (int i = 0; i < nMaxOutbound - 1; ++i) {
+    for (int i = 0; i < max_outbound_full_relay - 1; ++i) {
         BOOST_CHECK(vNodes[i]->fDisconnect == false);
     }
-    BOOST_CHECK(vNodes[nMaxOutbound - 1]->fDisconnect == true);
+    BOOST_CHECK(vNodes[max_outbound_full_relay - 1]->fDisconnect == true);
     BOOST_CHECK(vNodes.back()->fDisconnect == false);
 
     bool dummy;
@@ -237,7 +243,7 @@ BOOST_AUTO_TEST_CASE(DoS_banning) {
                                            DEFAULT_MISBEHAVING_BANTIME);
     auto connman = std::make_unique<CConnman>(config, 0x1337, 0x1337);
     auto peerLogic = std::make_unique<PeerLogicValidation>(
-        connman.get(), banman.get(), scheduler, false);
+        connman.get(), banman.get(), *m_node.scheduler, false);
 
     banman->ClearBanned();
     CAddress addr1(ip(0xa0b0c001), NODE_NONE);
@@ -254,11 +260,12 @@ BOOST_AUTO_TEST_CASE(DoS_banning) {
     }
     {
         LOCK2(cs_main, dummyNode1.cs_sendProcessing);
-        peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode1, interruptDummy));
     }
-    BOOST_CHECK(banman->IsBanned(addr1));
-    // Different IP, not banned.
-    BOOST_CHECK(!banman->IsBanned(ip(0xa0b0c001 | 0x0000ff00)));
+    BOOST_CHECK(banman->IsDiscouraged(addr1));
+    // Different IP, not banned
+    BOOST_CHECK(!banman->IsDiscouraged(ip(0xa0b0c001 | 0x0000ff00)));
 
     CAddress addr2(ip(0xa0b0c002), NODE_NONE);
     CNode dummyNode2(id++, NODE_NETWORK, 0, INVALID_SOCKET, addr2, 1, 1,
@@ -273,21 +280,23 @@ BOOST_AUTO_TEST_CASE(DoS_banning) {
     }
     {
         LOCK2(cs_main, dummyNode2.cs_sendProcessing);
-        peerLogic->SendMessages(config, &dummyNode2, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode2, interruptDummy));
     }
     // 2 not banned yet...
-    BOOST_CHECK(!banman->IsBanned(addr2));
-    // ... but 1 still should be.
-    BOOST_CHECK(banman->IsBanned(addr1));
+    BOOST_CHECK(!banman->IsDiscouraged(addr2));
+    // ... but 1 still should be
+    BOOST_CHECK(banman->IsDiscouraged(addr1));
     {
         LOCK(cs_main);
         Misbehaving(dummyNode2.GetId(), 50, "");
     }
     {
         LOCK2(cs_main, dummyNode2.cs_sendProcessing);
-        peerLogic->SendMessages(config, &dummyNode2, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode2, interruptDummy));
     }
-    BOOST_CHECK(banman->IsBanned(addr2));
+    BOOST_CHECK(banman->IsDiscouraged(addr2));
 
     bool dummy;
     peerLogic->FinalizeNode(config, dummyNode1.GetId(), dummy);
@@ -303,7 +312,7 @@ BOOST_AUTO_TEST_CASE(DoS_banscore) {
                                            DEFAULT_MISBEHAVING_BANTIME);
     auto connman = std::make_unique<CConnman>(config, 0x1337, 0x1337);
     auto peerLogic = std::make_unique<PeerLogicValidation>(
-        connman.get(), banman.get(), scheduler, false);
+        connman.get(), banman.get(), *m_node.scheduler, false);
 
     banman->ClearBanned();
     // because 11 is my favorite number.
@@ -321,27 +330,30 @@ BOOST_AUTO_TEST_CASE(DoS_banscore) {
     }
     {
         LOCK2(cs_main, dummyNode1.cs_sendProcessing);
-        peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode1, interruptDummy));
     }
-    BOOST_CHECK(!banman->IsBanned(addr1));
+    BOOST_CHECK(!banman->IsDiscouraged(addr1));
     {
         LOCK(cs_main);
         Misbehaving(dummyNode1.GetId(), 10, "");
     }
     {
         LOCK2(cs_main, dummyNode1.cs_sendProcessing);
-        peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode1, interruptDummy));
     }
-    BOOST_CHECK(!banman->IsBanned(addr1));
+    BOOST_CHECK(!banman->IsDiscouraged(addr1));
     {
         LOCK(cs_main);
         Misbehaving(dummyNode1.GetId(), 1, "");
     }
     {
         LOCK2(cs_main, dummyNode1.cs_sendProcessing);
-        peerLogic->SendMessages(config, &dummyNode1, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode1, interruptDummy));
     }
-    BOOST_CHECK(banman->IsBanned(addr1));
+    BOOST_CHECK(banman->IsDiscouraged(addr1));
     gArgs.ForceSetArg("-banscore", std::to_string(DEFAULT_BANSCORE_THRESHOLD));
 
     bool dummy;
@@ -357,7 +369,7 @@ BOOST_AUTO_TEST_CASE(DoS_bantime) {
                                            DEFAULT_MISBEHAVING_BANTIME);
     auto connman = std::make_unique<CConnman>(config, 0x1337, 0x1337);
     auto peerLogic = std::make_unique<PeerLogicValidation>(
-        connman.get(), banman.get(), scheduler, false);
+        connman.get(), banman.get(), *m_node.scheduler, false);
 
     banman->ClearBanned();
     int64_t nStartTime = GetTime();
@@ -378,15 +390,10 @@ BOOST_AUTO_TEST_CASE(DoS_bantime) {
     }
     {
         LOCK2(cs_main, dummyNode.cs_sendProcessing);
-        peerLogic->SendMessages(config, &dummyNode, interruptDummy);
+        BOOST_CHECK(
+            peerLogic->SendMessages(config, &dummyNode, interruptDummy));
     }
-    BOOST_CHECK(banman->IsBanned(addr));
-
-    SetMockTime(nStartTime + 60 * 60);
-    BOOST_CHECK(banman->IsBanned(addr));
-
-    SetMockTime(nStartTime + 60 * 60 * 24 + 1);
-    BOOST_CHECK(!banman->IsBanned(addr));
+    BOOST_CHECK(banman->IsDiscouraged(addr));
 
     bool dummy;
     peerLogic->FinalizeNode(config, dummyNode.GetId(), dummy);
@@ -405,8 +412,8 @@ static CTransactionRef RandomOrphan() {
 BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
     CKey key;
     key.MakeNewKey(true);
-    CBasicKeyStore keystore;
-    keystore.AddKey(key);
+    FillableSigningProvider keystore;
+    BOOST_CHECK(keystore.AddKey(key));
 
     // 50 orphan transactions:
     for (int i = 0; i < 50; i++) {
@@ -417,7 +424,7 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         tx.vout.resize(1);
         tx.vout[0].nValue = 1 * CENT;
         tx.vout[0].scriptPubKey =
-            GetScriptForDestination(key.GetPubKey().GetID());
+            GetScriptForDestination(PKHash(key.GetPubKey()));
 
         AddOrphanTx(MakeTransactionRef(tx), i);
     }
@@ -432,8 +439,9 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         tx.vout.resize(1);
         tx.vout[0].nValue = 1 * CENT;
         tx.vout[0].scriptPubKey =
-            GetScriptForDestination(key.GetPubKey().GetID());
-        SignSignature(keystore, *txPrev, tx, 0, SigHashType());
+            GetScriptForDestination(PKHash(key.GetPubKey()));
+        BOOST_CHECK(SignSignature(keystore, *txPrev, tx, 0,
+                                  SigHashType().withForkId()));
 
         AddOrphanTx(MakeTransactionRef(tx), i);
     }
@@ -446,12 +454,13 @@ BOOST_AUTO_TEST_CASE(DoS_mapOrphans) {
         tx.vout.resize(1);
         tx.vout[0].nValue = 1 * CENT;
         tx.vout[0].scriptPubKey =
-            GetScriptForDestination(key.GetPubKey().GetID());
+            GetScriptForDestination(PKHash(key.GetPubKey()));
         tx.vin.resize(2777);
         for (size_t j = 0; j < tx.vin.size(); j++) {
             tx.vin[j].prevout = COutPoint(txPrev->GetId(), j);
         }
-        SignSignature(keystore, *txPrev, tx, 0, SigHashType());
+        BOOST_CHECK(SignSignature(keystore, *txPrev, tx, 0,
+                                  SigHashType().withForkId()));
         // Re-use same signature for other inputs
         // (they don't have to be valid for this test)
         for (unsigned int j = 1; j < tx.vin.size(); j++) {

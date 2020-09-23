@@ -16,26 +16,16 @@ class Config;
 class CScheduler;
 class CWallet;
 class HTTPRPCRequestProcessor;
+struct NodeContext;
 class RPCServer;
-
-namespace interfaces {
-class Chain;
-class ChainClient;
-} // namespace interfaces
-
-//! Pointers to interfaces used during init and destroyed on shutdown.
-struct InitInterfaces {
-    std::unique_ptr<interfaces::Chain> chain;
-    std::vector<std::unique_ptr<interfaces::ChainClient>> chain_clients;
-};
 
 namespace boost {
 class thread_group;
 } // namespace boost
 
 /** Interrupt threads */
-void Interrupt();
-void Shutdown(InitInterfaces &interfaces);
+void Interrupt(NodeContext &node);
+void Shutdown(NodeContext &node);
 //! Initialize the logging infrastructure
 void InitLogging();
 //! Parameter interaction: change current parameters depending on various rules
@@ -80,7 +70,7 @@ bool AppInitLockDataDirectory();
  */
 bool AppInitMain(Config &config, RPCServer &rpcServer,
                  HTTPRPCRequestProcessor &httpRPCRequestProcessor,
-                 InitInterfaces &interfaces);
+                 NodeContext &node);
 
 /**
  * Setup the arguments for gArgs.

@@ -6,13 +6,13 @@
 #include <txdb.h>
 
 #include <chain.h>
-#include <chainparams.h>
-#include <hash.h>
-#include <pow.h>
+#include <pow/pow.h>
 #include <random.h>
 #include <shutdown.h>
 #include <ui_interface.h>
 #include <util/system.h>
+#include <util/translation.h>
+#include <util/vector.h>
 
 #include <boost/thread.hpp> // boost::this_thread::interruption_point() (mingw)
 
@@ -105,7 +105,7 @@ bool CCoinsViewDB::BatchWrite(CCoinsMap &mapCoins, const BlockHash &hashBlock) {
     // A vector is used for future extensibility, as we may want to support
     // interrupting after partial writes from multiple independent reorgs.
     batch.Erase(DB_BEST_BLOCK);
-    batch.Write(DB_HEAD_BLOCKS, std::vector<BlockHash>{hashBlock, old_tip});
+    batch.Write(DB_HEAD_BLOCKS, Vector(hashBlock, old_tip));
 
     for (CCoinsMap::iterator it = mapCoins.begin(); it != mapCoins.end();) {
         if (it->second.flags & CCoinsCacheEntry::DIRTY) {
@@ -171,8 +171,8 @@ bool CBlockTreeDB::WriteReindexing(bool fReindexing) {
     }
 }
 
-void CBlockTreeDB::ReadReindexing(bool &fReindexing) {
-    fReindexing = Exists(DB_REINDEX_FLAG);
+bool CBlockTreeDB::IsReindexing() const {
+    return Exists(DB_REINDEX_FLAG);
 }
 
 bool CBlockTreeDB::ReadLastBlockFile(int &nFile) {
@@ -272,9 +272,12 @@ bool CBlockTreeDB::LoadBlockIndexGuts(
 
     pcursor->Seek(std::make_pair(DB_BLOCK_INDEX, uint256()));
 
-    // Load mapBlockIndex
+    // Load m_block_index
     while (pcursor->Valid()) {
         boost::this_thread::interruption_point();
+        if (ShutdownRequested()) {
+            return false;
+        }
         std::pair<char, uint256> key;
         if (!pcursor->GetKey(key) || key.first != DB_BLOCK_INDEX) {
             break;
@@ -332,7 +335,7 @@ public:
     template <typename Stream> void Unserialize(Stream &s) {
         uint32_t nCode = 0;
         // version
-        unsigned int nVersionDummy;
+        unsigned int nVersionDummy = 0;
         ::Unserialize(s, VARINT(nVersionDummy));
         // header code
         ::Unserialize(s, VARINT(nCode));
@@ -381,7 +384,7 @@ bool CCoinsViewDB::Upgrade() {
     int64_t count = 0;
     LogPrintf("Upgrading utxo-set database...\n");
     LogPrintfToBeContinued("[0%%]...");
-    uiInterface.ShowProgress(_("Upgrading UTXO database"), 0, true);
+    uiInterface.ShowProgress(_("Upgrading UTXO database").translated, 0, true);
     size_t batch_size = 1 << 24;
     CDBBatch batch(db);
     int reportDone = 0;
@@ -401,7 +404,7 @@ bool CCoinsViewDB::Upgrade() {
             uint32_t high =
                 0x100 * *key.second.begin() + *(key.second.begin() + 1);
             int percentageDone = (int)(high * 100.0 / 65536.0 + 0.5);
-            uiInterface.ShowProgress(_("Upgrading UTXO database"),
+            uiInterface.ShowProgress(_("Upgrading UTXO database").translated,
                                      percentageDone, true);
             if (reportDone < percentageDone / 10) {
                 // report max. every 10% step

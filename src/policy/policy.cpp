@@ -6,13 +6,10 @@
 // NOTE: This file is intended to be customised by the end user, and includes
 // only local node policy logic
 
+#include <coins.h>
 #include <policy/policy.h>
-
 #include <script/interpreter.h>
-#include <tinyformat.h>
-#include <util/strencodings.h>
 #include <util/system.h>
-#include <validation.h>
 
 Amount GetDustThreshold(const CTxOut &txout, const CFeeRate &dustRelayFeeIn) {
     /**
@@ -69,7 +66,8 @@ bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType) {
     return true;
 }
 
-bool IsStandardTx(const CTransaction &tx, std::string &reason) {
+bool IsStandardTx(const CTransaction &tx, bool permit_bare_multisig,
+                  const CFeeRate &dust_relay_fee, std::string &reason) {
     if (tx.nVersion > CTransaction::MAX_STANDARD_VERSION || tx.nVersion < 1) {
         reason = "version";
         return false;
@@ -80,7 +78,7 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason) {
     // computing signature hashes is O(ninputs*txsize). Limiting transactions
     // to MAX_STANDARD_TX_SIZE mitigates CPU exhaustion attacks.
     uint32_t sz = tx.GetTotalSize();
-    if (sz >= MAX_STANDARD_TX_SIZE) {
+    if (sz > MAX_STANDARD_TX_SIZE) {
         reason = "tx-size";
         return false;
     }
@@ -106,10 +104,10 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason) {
 
         if (whichType == TX_NULL_DATA) {
             nDataOut++;
-        } else if ((whichType == TX_MULTISIG) && (!fIsBareMultisigStd)) {
+        } else if ((whichType == TX_MULTISIG) && (!permit_bare_multisig)) {
             reason = "bare-multisig";
             return false;
-        } else if (IsDust(txout, ::dustRelayFee)) {
+        } else if (IsDust(txout, dust_relay_fee)) {
             reason = "dust";
             return false;
         }
@@ -154,19 +152,11 @@ bool AreInputsStandard(const CTransaction &tx, const CCoinsViewCache &mapInputs,
         txnouttype whichType = Solver(prev.scriptPubKey, vSolutions);
         if (whichType == TX_NONSTANDARD) {
             return false;
-        } else if (whichType == TX_SCRIPTHASH) {
-            if (prev.scriptPubKey.GetSigOpCount(flags, in.scriptSig) >
-                MAX_P2SH_SIGOPS) {
-                return false;
-            }
         }
     }
 
     return true;
 }
-
-CFeeRate dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
-uint32_t nBytesPerSigOp = DEFAULT_BYTES_PER_SIGOP;
 
 int64_t GetVirtualTransactionSize(int64_t nSize, int64_t nSigOpCount,
                                   unsigned int bytes_per_sigop) {

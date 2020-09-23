@@ -20,7 +20,7 @@ foreach(_raw_file ${BENCH_DATA_RAW_FILES})
 
 	add_custom_command(
 		OUTPUT "${_generated_header_output}"
-		COMMAND 
+		COMMAND
 			"${Python_EXECUTABLE}"
 			"data/convert-raw-to-header.py"
 			"${_test_name}"
@@ -37,31 +37,58 @@ add_executable(bitcoin-bench
 	base58.cpp
 	bench.cpp
 	bench_bitcoin.cpp
+	block_assemble.cpp
 	cashaddr.cpp
 	ccoins_caching.cpp
+	chacha_poly_aead.cpp
+	chacha20.cpp
 	checkblock.cpp
 	checkqueue.cpp
 	crypto_aes.cpp
 	crypto_hash.cpp
+	data.cpp
 	duplicate_inputs.cpp
 	examples.cpp
 	gcs_filter.cpp
 	lockedpool.cpp
 	mempool_eviction.cpp
+	mempool_stress.cpp
 	merkle_root.cpp
+	poly1305.cpp
 	prevector.cpp
 	rollingbloom.cpp
+	rpc_blockchain.cpp
 	rpc_mempool.cpp
+	util_time.cpp
 
 	# Add the generated headers to trigger the conversion command
 	${BENCH_DATA_GENERATED_HEADERS}
 )
 
-target_link_libraries(bitcoin-bench common bitcoinconsensus server)
+target_link_libraries(bitcoin-bench testutil)
 
 if(BUILD_BITCOIN_WALLET)
-	target_sources(bitcoin-bench PRIVATE coin_selection.cpp)
+	target_sources(bitcoin-bench
+		PRIVATE
+			coin_selection.cpp
+			wallet_balance.cpp
+	)
 	target_link_libraries(bitcoin-bench wallet)
 endif()
 
-add_custom_target(bench-bitcoin COMMAND bitcoin-bench USES_TERMINAL)
+include(InstallationHelper)
+install_target(bitcoin-bench EXCLUDE_FROM_ALL)
+
+include(TestSuite)
+if(ENABLE_JUNIT_REPORT)
+	set(JUNIT_ARGS -printer=junit > "${JUNIT_REPORT_DIRECTORY}/bench-bitcoin.xml")
+endif()
+
+add_test_custom_target(bench-bitcoin
+	TEST_COMMAND
+		"$<TARGET_FILE:bitcoin-bench>"
+		${JUNIT_ARGS}
+	CUSTOM_TARGET_ARGS
+		DEPENDS bitcoin-bench
+		USES_TERMINAL
+)

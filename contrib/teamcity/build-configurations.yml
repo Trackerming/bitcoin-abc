@@ -1,0 +1,411 @@
+---
+# Templates can be referenced in builds to avoid duplication
+templates:
+  gitian_builds:
+    script: gitian.sh
+    timeout: 7200
+    artifacts:
+      gitian-results: ''
+
+  check+secp256k1:
+    targets:
+      - - all
+        - install
+        - install-secp256k1
+      - - check
+        - check-secp256k1
+        - check-functional
+
+  secp256k1:
+    Werror: true
+    targets:
+      - - secp256k1
+        - install-secp256k1
+      - - check-secp256k1
+
+# The build descriptions.
+# If a script is defined, then this will be the only step to run.
+# Otherwise a list of targets can be specified, grouped by parallel runs.
+# Example:
+#   targets:
+#     - - build11
+#       - build12
+#     - - build21
+#       - build22
+# Will run:
+#   ninja build11 build12
+#   ninja build21 build22
+builds:
+  build-asan:
+    Werror: true
+    clang: true
+    cmake_flags:
+      - '-DCMAKE_CXX_FLAGS=-DARENA_DEBUG'
+      - '-DCMAKE_BUILD_TYPE=Debug'
+      - '-DCRYPTO_USE_ASM=OFF'
+      - '-DENABLE_SANITIZERS=address'
+    templates:
+      - check+secp256k1
+    timeout: 1800
+    env:
+      ASAN_OPTIONS: log_path=stdout
+      LSAN_OPTIONS: log_path=stdout
+
+  build-bench:
+    Werror: true
+    cmake_flags:
+      - '-DSECP256K1_ENABLE_MODULE_ECDH=ON'
+      - '-DSECP256K1_ENABLE_MODULE_MULTISET=ON'
+    targets:
+      - - all
+        - install-bitcoin-bench
+        - install-secp256k1-bench
+      - - bench-bitcoin
+      - - bench-secp256k1
+    timeout: 1200
+
+  build-clang-10:
+    runOnDiff: true
+    Werror: true
+    cmake_flags:
+      - '-DCMAKE_C_COMPILER=clang-10'
+      - '-DCMAKE_CXX_COMPILER=clang++-10'
+    targets:
+      - - all
+        - install
+        - install-secp256k1
+      - - check
+        - check-secp256k1
+    timeout: 1200
+
+  build-clang-tidy:
+    runOnDiff: true
+    clang: true
+    cmake_flags:
+      - '-DCMAKE_EXPORT_COMPILE_COMMANDS=ON'
+    targets:
+      - - all
+    post_build: |
+      CLANG_TIDY_WARNING_FILE="${BUILD_DIR}/clang-tidy-warnings.txt"
+
+      pushd "${TOPLEVEL}"
+      git diff -U0 HEAD^ | clang-tidy-diff-8.py \
+        -clang-tidy-binary "$(command -v clang-tidy-8)" \
+        -path "${BUILD_DIR}/compile_commands.json" \
+        -p1 > "${CLANG_TIDY_WARNING_FILE}"
+
+      if [ $(wc -l < "${CLANG_TIDY_WARNING_FILE}") -gt 1 ]; then
+        echo "clang-tidy found issues !"
+        cat "${CLANG_TIDY_WARNING_FILE}"
+        exit 1
+      fi
+      popd
+    timeout: 600
+    artifacts:
+      clang-tidy-warnings.txt: clang-tidy-warnings.txt
+
+  build-coverage:
+    gcc: true
+    cmake_flags:
+      - '-DENABLE_COVERAGE=ON'
+      - '-DENABLE_BRANCH_COVERAGE=ON'
+    targets:
+      - - coverage-check-extended
+    post_build: |
+      "${TOPLEVEL}/contrib/teamcity/upload-coverage.sh" check-extended
+    timeout: 4800
+    artifacts:
+      coverage.tar.gz: coverage.tar.gz
+
+  build-diff:
+    runOnDiff: true
+    Werror: true
+    targets:
+      - - all
+        - install
+        - install-secp256k1
+      - - check-all
+        - check-upgrade-activated
+    timeout: 1200
+
+  build-docs:
+    targets:
+      - - doc-rpc
+    timeout: 600
+    artifacts:
+      doc/*: doc
+
+  build-ibd:
+    targets:
+      - - bitcoind
+    post_build: |
+      "${TOPLEVEL}/contrib/teamcity/ibd.sh" -disablewallet -debug=net
+    timeout: 14400
+    artifacts:
+      ibd/debug.log: log/debug.log
+
+  build-ibd-no-assumevalid-checkpoint:
+    targets:
+      - - bitcoind
+    post_build: |
+      "${TOPLEVEL}/contrib/teamcity/ibd.sh" -disablewallet -assumevalid=0 -checkpoints=0 -debug=net
+    timeout: 21600
+    artifacts:
+      ibd/debug.log: log/debug.log
+
+  build-linux32:
+    cross_build:
+      static_depends: linux32
+      toolchain: Linux32
+    templates:
+      - check+secp256k1
+    timeout: 3600
+
+  build-linux64:
+    cross_build:
+      static_depends: linux64
+      toolchain: Linux64
+    templates:
+      - check+secp256k1
+    timeout: 3600
+
+  build-linux-aarch64:
+    cross_build:
+      static_depends: linux-aarch64
+      toolchain: LinuxAArch64
+      emulator: qemu-aarch64-static
+    cmake_flags:
+      # The ZMQ functional test will fail with qemu (due to a qemu limitation),
+      # so disable it to avoid the failure.
+      # Extracted from stderr:
+      #   Unknown host QEMU_IFLA type: 50
+      #   Unknown host QEMU_IFLA type: 51
+      #   Unknown QEMU_IFLA_BRPORT type 33
+      - "-DBUILD_BITCOIN_ZMQ=OFF"
+      # This is an horrible hack to workaround a qemu bug:
+      # https://bugs.launchpad.net/qemu/+bug/1748612
+      # Qemu emits a message for unsupported features called by the guest.
+      # Because the output filtering is not working at all, it causes the
+      # qemu stderr to end up in the node stderr and fail the functional
+      # tests.
+      # Disabling the unsupported feature (here bypassing the config
+      # detection) fixes the issue.
+      # FIXME: get rid of the hack, either by using a better qemu version
+      # or by filtering stderr at the framework level.
+      - "-DHAVE_DECL_GETIFADDRS=OFF"
+    templates:
+      - check+secp256k1
+    timeout: 3600
+    env:
+      QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
+
+  build-linux-arm:
+    cross_build:
+      static_depends: linux-arm
+      toolchain: LinuxARM
+      emulator: qemu-arm-static
+    cmake_flags:
+      # The ZMQ functional test will fail with qemu (due to a qemu limitation),
+      # so disable it to avoid the failure.
+      # Extracted from stderr:
+      #   Unknown host QEMU_IFLA type: 50
+      #   Unknown host QEMU_IFLA type: 51
+      #   Unknown QEMU_IFLA_BRPORT type 33
+      - "-DBUILD_BITCOIN_ZMQ=OFF"
+      # This is an horrible hack to workaround a qemu bug:
+      # https://bugs.launchpad.net/qemu/+bug/1748612
+      # Qemu emits a message for unsupported features called by the guest.
+      # Because the output filtering is not working at all, it causes the
+      # qemu stderr to end up in the node stderr and fail the functional
+      # tests.
+      # Disabling the unsupported feature (here bypassing the config
+      # detection) fixes the issue.
+      # FIXME: get rid of the hack, either by using a better qemu version
+      # or by filtering stderr at the framework level.
+      - "-DHAVE_DECL_GETIFADDRS=OFF"
+    templates:
+      - check+secp256k1
+    timeout: 3600
+    env:
+      QEMU_LD_PREFIX: /usr/arm-linux-gnueabihf
+
+  build-make-generator:
+    generator:
+      name: 'Unix Makefiles'
+      command: make
+      flags:
+        - '-k'
+    templates:
+      - check+secp256k1
+    timeout: 1200
+
+  build-master:
+    Werror: true
+    targets:
+      - - all
+        - install
+        - install-secp256k1
+      - - check-extended
+        - check-upgrade-activated-extended
+    timeout: 4800
+
+  build-osx:
+    cross_build:
+      static_depends: osx
+      toolchain: OSX
+    targets:
+      - - all
+        - install
+        - install-secp256k1
+        - install-tests
+    post_build: |
+      export PYTHONPATH="${TOPLEVEL}/depends/x86_64-apple-darwin16/native/lib/python3/dist-packages:${PYTHONPATH:-}"
+      ninja osx-dmg
+    timeout: 3600
+    artifacts:
+      Bitcoin-ABC.dmg: Bitcoin-ABC.dmg
+
+  build-secp256k1:
+    cmake_flags:
+      - '-DSECP256K1_ENABLE_MODULE_ECDH=ON'
+      - '-DSECP256K1_ENABLE_MODULE_MULTISET=ON'
+    templates:
+      - secp256k1
+    timeout: 600
+
+  build-secp256k1-endomorphism:
+    cmake_flags:
+      - "-DSECP256K1_ENABLE_ENDOMORPHISM=ON"
+    templates:
+      - secp256k1
+    timeout: 600
+
+  build-secp256k1-java:
+    cmake_flags:
+      - '-DSECP256K1_ENABLE_MODULE_ECDH=ON'
+      - '-DSECP256K1_ENABLE_JNI=ON'
+      - '-DUSE_JEMALLOC=OFF'
+    templates:
+      - secp256k1
+    timeout: 600
+
+  build-tsan:
+    Werror: true
+    clang: true
+    cmake_flags:
+      - '-DENABLE_SANITIZERS=thread'
+    targets:
+      - - all
+        - install
+      - - check
+        - check-functional
+    timeout: 1800
+    env:
+      TSAN_OPTIONS: log_path=stdout
+
+  build-ubsan:
+    Werror: true
+    clang: true
+    cmake_flags:
+      - '-DCMAKE_BUILD_TYPE=Debug'
+      - '-DENABLE_SANITIZERS=undefined'
+    templates:
+      - check+secp256k1
+    timeout: 1800
+    env:
+      UBSAN_OPTIONS: log_path=stdout
+
+  build-win64:
+    cross_build:
+      static_depends: win64
+      toolchain: Win64
+    cmake_flags:
+      - "-DBUILD_BITCOIN_SEEDER=OFF"
+      - "-DCPACK_STRIP_FILES=ON"
+      - "-DUSE_JEMALLOC=OFF"
+    targets:
+      - - all
+        - install
+        - install-secp256k1
+        - install-tests
+      - - package
+    post_build: |
+      wine "${ARTIFACT_DIR}/bin/test_bitcoin.exe" --run_test=\!radix_tests,rcu_tests
+    timeout: 3600
+    artifacts:
+      bitcoin-abc-*-x86_64-w64-mingw32.exe: bitcoin-abc-x86_64-w64-mingw32.exe
+
+  build-without-cli:
+    Werror: true
+    cmake_flags:
+      - '-DBUILD_BITCOIN_CLI=OFF'
+    targets:
+      - - all
+        - install
+      - - check-functional
+    timeout: 1200
+
+  build-without-wallet:
+    runOnDiff: true
+    Werror: true
+    cmake_flags:
+      - '-DBUILD_BITCOIN_WALLET=OFF'
+    targets:
+      - - all
+        - install
+      - - check
+        - check-functional
+    timeout: 1200
+
+  build-without-zmq:
+    Werror: true
+    cmake_flags:
+      - '-DBUILD_BITCOIN_ZMQ=OFF'
+    targets:
+      - - all
+        - install
+      - - check
+        - check-functional
+    timeout: 1800
+
+  check-buildbot:
+    targets:
+      - - check-buildbot
+    timeout: 600
+
+  check-seeds:
+    targets:
+      - - bitcoind
+        - bitcoin-cli
+    post_build: |
+      # Run on different ports to avoid a race where the rpc port used in the first run
+      # may not be closed in time for the second to start.
+      SEEDS_DIR="${TOPLEVEL}"/contrib/seeds
+      RPC_PORT=18832 "${SEEDS_DIR}"/check-seeds.sh main 80
+      RPC_PORT=18833 "${SEEDS_DIR}"/check-seeds.sh test 70
+    timeout: 600
+
+  check-source-control-tools:
+    cmake_flags:
+      - '-DENABLE_SOURCE_CONTROL_TOOLS_TESTS=ON'
+    targets:
+      - - check-source-control-tools
+    timeout: 600
+
+  gitian-linux:
+    templates:
+      - gitian_builds
+    env:
+      OS_NAME: linux
+
+  gitian-osx:
+    templates:
+      - gitian_builds
+    env:
+      OS_NAME: osx
+
+  gitian-win:
+    templates:
+      - gitian_builds
+    env:
+      OS_NAME: win

@@ -4,23 +4,18 @@
 
 #include <qt/test/rpcnestedtests.h>
 
-#include <chainparams.h>
 #include <config.h>
-#include <consensus/validation.h>
-#include <fs.h>
 #include <interfaces/node.h>
 #include <qt/rpcconsole.h>
-#include <rpc/register.h>
 #include <rpc/server.h>
 #include <util/system.h>
-#include <validation.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
+
+#include <univalue.h>
 
 #include <QDir>
 #include <QtGlobal>
-
-#include <univalue.h>
 
 static UniValue rpcNestedTest_rpc(const Config &config,
                                   const JSONRPCRequest &request) {
@@ -30,7 +25,7 @@ static UniValue rpcNestedTest_rpc(const Config &config,
     return request.params.write(0, 0);
 }
 
-static const ContextFreeRPCCommand vRPCCommands[] = {
+static const CRPCCommand vRPCCommands[] = {
     {"test", "rpcNestedTest", &rpcNestedTest_rpc, {}},
 };
 
@@ -38,14 +33,13 @@ void RPCNestedTests::rpcNestedTests() {
     // do some test setup
     // could be moved to a more generic place when we add more tests on QT level
     tableRPC.appendCommand("rpcNestedTest", &vRPCCommands[0]);
-    // mempool.setSanityCheck(1.0);
 
     TestingSetup test;
 
     std::string result;
     std::string result2;
     std::string filtered;
-    auto node = interfaces::MakeNode();
+    interfaces::Node *node = &m_node;
 
     // Simple result filtering with path.
     RPCConsole::RPCExecuteCommandLine(*node, result,

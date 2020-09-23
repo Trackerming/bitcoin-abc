@@ -7,7 +7,6 @@
 
 #include <consensus/consensus.h>
 #include <hash.h>
-#include <util/strencodings.h>
 
 CMerkleBlock::CMerkleBlock(const CBlock &block, CBloomFilter *filter,
                            const std::set<TxId> *txids) {
@@ -67,7 +66,7 @@ uint256 CPartialMerkleTree::CalcHash(int height, size_t pos,
     }
 
     // Combine subhashes.
-    return Hash(BEGIN(left), END(left), BEGIN(right), END(right));
+    return Hash(left.begin(), left.end(), right.begin(), right.end());
 }
 
 void CPartialMerkleTree::TraverseAndBuild(int height, size_t pos,
@@ -140,7 +139,7 @@ uint256 CPartialMerkleTree::TraverseAndExtract(int height, size_t pos,
     }
 
     // and combine them before returning.
-    return Hash(BEGIN(left), END(left), BEGIN(right), END(right));
+    return Hash(left.begin(), left.end(), right.begin(), right.end());
 }
 
 CPartialMerkleTree::CPartialMerkleTree(const std::vector<uint256> &vTxid,

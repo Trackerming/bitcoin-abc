@@ -1,17 +1,20 @@
-packages:=boost openssl libevent zeromq
-native_packages := native_ccache
+packages:=boost openssl libevent
 
-qt_native_packages = native_protobuf
-qt_packages = qrencode protobuf zlib
+protobuf_native_packages = native_protobuf
+protobuf_packages = protobuf
 
-qt_linux_packages:=qt expat dbus libxcb xcb_proto libXau xproto freetype fontconfig libX11 xextproto libXext xtrans
+qt_packages = zlib
 
-rapidcheck_packages = rapidcheck
+qrencode_packages = qrencode
+
+qt_linux_packages:=qt expat libxcb xcb_proto libXau xproto freetype fontconfig
 
 qt_darwin_packages=qt
 qt_mingw32_packages=qt
 
 wallet_packages=bdb
+
+zmq_packages=zeromq
 
 upnp_packages=miniupnpc
 
@@ -20,3 +23,5 @@ darwin_native_packages = native_biplist native_ds_store native_mac_alias
 ifneq ($(build_os),darwin)
 darwin_native_packages += native_cctools native_cdrkit native_libdmg-hfsplus
 endif
+
+jemalloc_packages = jemalloc

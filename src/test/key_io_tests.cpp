@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -9,7 +9,7 @@
 #include <key.h>
 #include <key_io.h>
 #include <script/script.h>
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 #include <util/strencodings.h>
 
 #include <boost/test/unit_test.hpp>
@@ -124,7 +124,7 @@ BOOST_AUTO_TEST_CASE(key_io_valid_gen) {
         } else {
             CTxDestination dest;
             CScript exp_script(exp_payload.begin(), exp_payload.end());
-            ExtractDestination(exp_script, dest);
+            BOOST_CHECK(ExtractDestination(exp_script, dest));
             std::string address = EncodeLegacyAddr(dest, Params());
 
             BOOST_CHECK_EQUAL(address, exp_base58string);

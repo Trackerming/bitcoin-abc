@@ -4,31 +4,36 @@ export LC_ALL=C
 
 set -euxo pipefail
 
-cd "$(dirname "$0")"
+: "${TOPLEVEL:=$(git rev-parse --show-toplevel)}"
+: "${BUILD_DIR:=${TOPLEVEL}/build}"
+: "${THREADS:=$(nproc || sysctl -n hw.ncpu)}"
 
-COMMIT=$(git rev-parse HEAD)
+COMMIT=$(git -C "${TOPLEVEL}" rev-parse HEAD)
 export COMMIT
-PROJECT_ROOT=$(git rev-parse --show-toplevel)
-export PROJECT_ROOT
-export USE_LXC=1
-export GITIAN_HOST_IP=10.0.3.1
-export LXC_BRIDGE=lxcbr0
-export LXC_GUEST_IP=10.0.3.5
+export USE_DOCKER=1
 
-cd ~/gitian-builder
+cd "${TOPLEVEL}/contrib/gitian-builder"
+
+./bin/make-base-vm --docker --arch amd64 --distro debian --suite buster
 
 if [[ "${OS_NAME}" == "osx" ]]; then
-  wget https://storage.googleapis.com/f4936e83b2dcbca742be51fb9692b153/MacOSX10.11.sdk.tar.gz
-  echo "4732b52b5ebe300c8c91cbeed6d19d59c1ff9c56c7a1dd6cfa518b9c2c72abde  MacOSX10.11.sdk.tar.gz" | sha256sum -c
+  OSX_SDK="MacOSX10.14.sdk.tar.gz"
+  OSX_SDK_SHA256="2322086a96349db832abbcadea493b79db843553a2e604163238d99fa058a286"
+  OSX_SDK_DIR=~/.abc-build-cache/osx-sdk
+  mkdir -p "${OSX_SDK_DIR}"
+  pushd "${OSX_SDK_DIR}"
+  if ! echo "${OSX_SDK_SHA256}  ${OSX_SDK}" | sha256sum -c; then
+    rm -f "${OSX_SDK}"
+    wget https://storage.googleapis.com/27cd7b2a42a430926cc621acdc3bda72a8ed2b0efc080e3/"${OSX_SDK}"
+    echo "${OSX_SDK_SHA256}  ${OSX_SDK}" | sha256sum -c
+  fi
+  popd
+
   mkdir -p inputs
-  echo "Downloaded"
-  mv MacOSX10.11.sdk.tar.gz inputs
+  cp "${OSX_SDK_DIR}/${OSX_SDK}" inputs/"${OSX_SDK}"
 fi
 
-## Determine the number of build threads
-THREADS=$(nproc || sysctl -n hw.ncpu)
-
-RESULT_DIR="${PROJECT_ROOT}/gitian-results"
+RESULT_DIR="${BUILD_DIR}/gitian-results"
 OS_DIR="${RESULT_DIR}/${OS_NAME}"
 mkdir -p "${OS_DIR}"
 
@@ -38,7 +43,7 @@ move_log() {
 }
 trap "move_log" ERR
 
-./bin/gbuild -j${THREADS} -m3500 --commit bitcoin=${COMMIT} --url bitcoin="${PROJECT_ROOT}" "${PROJECT_ROOT}/contrib/gitian-descriptors/gitian-${OS_NAME}.yml"
+./bin/gbuild -j${THREADS} -m3500 --commit bitcoin=${COMMIT} --url bitcoin="${TOPLEVEL}" "${TOPLEVEL}/contrib/gitian-descriptors/gitian-${OS_NAME}.yml"
 
 move_log
 mv result/*.yml "${OS_DIR}/"

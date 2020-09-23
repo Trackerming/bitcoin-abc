@@ -14,7 +14,6 @@
 #include <util/system.h>
 
 #include <cassert>
-#include <memory>
 
 static CBlock CreateGenesisBlock(const char *pszTimestamp,
                                  const CScript &genesisOutputScript,
@@ -98,6 +97,9 @@ public:
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
 
+        // two days
+        consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
+
         // nPowTargetTimespan / nPowTargetSpacing
         consensus.nMinerConfirmationWindow = 2016;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY] = {
@@ -108,43 +110,6 @@ public:
             .nStartTime = 1199145601,
             // December 31, 2008
             .nTimeout = 1230767999,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND] = {
-            .bit = 0,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_ABC] = {
-            .bit = 1,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_BCHD] = {
-            .bit = 2,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus
-            .vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_ELECTRON_CASH] = {
-            .bit = 3,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
         };
 
         // The miner fund is enabled by default on mainnet.
@@ -172,10 +137,13 @@ public:
         consensus.gravitonHeight = 609135;
 
         // May 15, 2020 12:00:00 UTC protocol upgrade
-        consensus.phononActivationTime = 1589544000;
+        consensus.phononHeight = 635258;
 
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
         consensus.axionActivationTime = 1605441600;
+
+        // May 15, 2021 12:00:00 UTC protocol upgrade
+        consensus.tachyonActivationTime = 1621080000;
 
         /**
          * The message start string is designed to be unlikely to occur in
@@ -192,6 +160,10 @@ public:
         netMagic[3] = 0xe8;
         nDefaultPort = 8333;
         nPruneAfterHeight = 100000;
+        m_assumed_blockchain_size =
+            ChainParamsConstants::MAINNET_ASSUMED_BLOCKCHAIN_SIZE;
+        m_assumed_chain_state_size =
+            ChainParamsConstants::MAINNET_ASSUMED_CHAINSTATE_SIZE;
 
         genesis = CreateGenesisBlock(1231006505, 2083236893, 0x1d00ffff, 1,
                                      50 * COIN);
@@ -211,11 +183,11 @@ public:
         // Bitcoin ABC seeder
         vSeeds.emplace_back("seed.bitcoinabc.org");
         // bitcoinforks seeders
-        vSeeds.emplace_back("seed-abc.bitcoinforks.org");
+        vSeeds.emplace_back("seed-bch.bitcoinforks.org");
         // BU backed seeder
         vSeeds.emplace_back("btccash-seeder.bitcoinunlimited.info");
-        // Bitprim
-        vSeeds.emplace_back("seed.bitprim.org");
+        // Jason B. Cox
+        vSeeds.emplace_back("seeder.jasonbcox.com");
         // Amaury SÉCHET
         vSeeds.emplace_back("seed.deadalnix.me");
         // BCHD
@@ -233,7 +205,8 @@ public:
 
         fDefaultConsistencyChecks = false;
         fRequireStandard = true;
-        fMineBlocksOnDemand = false;
+        m_is_test_chain = false;
+        m_is_mockable_chain = false;
 
         checkpointData = {
             .mapCheckpoints = {
@@ -281,6 +254,9 @@ public:
                 // Graviton activation.
                 {609136, BlockHash::fromHex("000000000000000000b48bb207faac5ac6"
                                             "55c313e41ac909322eaa694f5bc5b1")},
+                // Phonon activation.
+                {635259, BlockHash::fromHex("00000000000000000033dfef1fc2d6a5d5"
+                                            "520b078c55193a9bf498c5b27530f7")},
             }};
 
         // Data as of block
@@ -325,6 +301,9 @@ public:
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = false;
 
+        // two days
+        consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
+
         // nPowTargetTimespan / nPowTargetSpacing
         consensus.nMinerConfirmationWindow = 2016;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY] = {
@@ -335,43 +314,6 @@ public:
             .nStartTime = 1199145601,
             // December 31, 2008
             .nTimeout = 1230767999,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND] = {
-            .bit = 0,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_ABC] = {
-            .bit = 1,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_BCHD] = {
-            .bit = 2,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus
-            .vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_ELECTRON_CASH] = {
-            .bit = 3,
-            // 66% of 2016
-            .nActivationThreshold = 1344,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
         };
 
         // The miner fund is disabled by default on testnet.
@@ -399,10 +341,13 @@ public:
         consensus.gravitonHeight = 1341711;
 
         // May 15, 2020 12:00:00 UTC protocol upgrade
-        consensus.phononActivationTime = 1589544000;
+        consensus.phononHeight = 1378460;
 
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
         consensus.axionActivationTime = 1605441600;
+
+        // May 15, 2021 12:00:00 UTC protocol upgrade
+        consensus.tachyonActivationTime = 1621080000;
 
         diskMagic[0] = 0x0b;
         diskMagic[1] = 0x11;
@@ -414,6 +359,10 @@ public:
         netMagic[3] = 0xf4;
         nDefaultPort = 18333;
         nPruneAfterHeight = 1000;
+        m_assumed_blockchain_size =
+            ChainParamsConstants::TESTNET_ASSUMED_BLOCKCHAIN_SIZE;
+        m_assumed_chain_state_size =
+            ChainParamsConstants::TESTNET_ASSUMED_CHAINSTATE_SIZE;
 
         genesis =
             CreateGenesisBlock(1296688602, 414098458, 0x1d00ffff, 1, 50 * COIN);
@@ -431,9 +380,7 @@ public:
         // Bitcoin ABC seeder
         vSeeds.emplace_back("testnet-seed.bitcoinabc.org");
         // bitcoinforks seeders
-        vSeeds.emplace_back("testnet-seed-abc.bitcoinforks.org");
-        // Bitprim
-        vSeeds.emplace_back("testnet-seed.bitprim.org");
+        vSeeds.emplace_back("testnet-seed-bch.bitcoinforks.org");
         // Amaury SÉCHET
         vSeeds.emplace_back("testnet-seed.deadalnix.me");
         // BCHD
@@ -450,7 +397,8 @@ public:
 
         fDefaultConsistencyChecks = false;
         fRequireStandard = false;
-        fMineBlocksOnDemand = false;
+        m_is_test_chain = true;
+        m_is_mockable_chain = false;
 
         checkpointData = {
             .mapCheckpoints = {
@@ -472,6 +420,10 @@ public:
                 {1341712,
                  BlockHash::fromHex("00000000fffc44ea2e202bd905a9fbbb9491ef9e9d"
                                     "5a9eed4039079229afa35b")},
+                // Phonon activation.
+                {1378461, BlockHash::fromHex(
+                              "0000000099f5509b5f36b1926bcf82b21d936ebeade"
+                              "e811030dfbbb7fae915d7")},
             }};
 
         // Data as of block
@@ -491,15 +443,14 @@ public:
         consensus.nSubsidyHalvingInterval = 150;
         // always enforce P2SH BIP16 on regtest
         consensus.BIP16Height = 0;
-        // BIP34 has not activated on regtest (far in the future so block v1 are
-        // not rejected in tests)
-        consensus.BIP34Height = 100000000;
+        // BIP34 activated on regtest (Used in functional tests)
+        consensus.BIP34Height = 500;
         consensus.BIP34Hash = BlockHash();
-        // BIP65 activated on regtest (Used in rpc activation tests)
+        // BIP65 activated on regtest (Used in functional tests)
         consensus.BIP65Height = 1351;
-        // BIP66 activated on regtest (Used in rpc activation tests)
+        // BIP66 activated on regtest (Used in functional tests)
         consensus.BIP66Height = 1251;
-        // CSV activated on regtest (Used in rpc activation tests)
+        // CSV activated on regtest (Used in functional tests)
         consensus.CSVHeight = 576;
         consensus.powLimit = uint256S(
             "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
@@ -509,49 +460,15 @@ public:
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = true;
 
+        // two days
+        consensus.nDAAHalfLife = 2 * 24 * 60 * 60;
+
         // Faster than normal for regtest (144 instead of 2016)
         consensus.nMinerConfirmationWindow = 144;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY] = {
             .bit = 28,
             // 75% of 144
             .nActivationThreshold = 108,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND] = {
-            .bit = 0,
-            // 66% of 144
-            .nActivationThreshold = 96,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_ABC] = {
-            .bit = 1,
-            // 66% of 144
-            .nActivationThreshold = 96,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus.vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_BCHD] = {
-            .bit = 2,
-            // 66% of 144
-            .nActivationThreshold = 96,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
-        };
-        consensus
-            .vDeployments[Consensus::DEPLOYEMENT_MINER_FUND_ELECTRON_CASH] = {
-            .bit = 3,
-            // 66% of 144
-            .nActivationThreshold = 96,
-            // Nov 15, 2019 12:00:00 UTC
-            .nStartTime = 1573819200,
-            // May 15, 2020 12:00:00 UTC
-            .nTimeout = 1589544000,
         };
 
         // The miner fund is disabled by default on regnet.
@@ -577,10 +494,13 @@ public:
         consensus.gravitonHeight = 0;
 
         // May 15, 2020 12:00:00 UTC protocol upgrade
-        consensus.phononActivationTime = 1589544000;
+        consensus.phononHeight = 0;
 
         // Nov 15, 2020 12:00:00 UTC protocol upgrade
         consensus.axionActivationTime = 1605441600;
+
+        // May 15, 2021 12:00:00 UTC protocol upgrade
+        consensus.tachyonActivationTime = 1621080000;
 
         diskMagic[0] = 0xfa;
         diskMagic[1] = 0xbf;
@@ -592,6 +512,8 @@ public:
         netMagic[3] = 0xfa;
         nDefaultPort = 18444;
         nPruneAfterHeight = 1000;
+        m_assumed_blockchain_size = 0;
+        m_assumed_chain_state_size = 0;
 
         genesis = CreateGenesisBlock(1296688602, 2, 0x207fffff, 1, 50 * COIN);
         consensus.hashGenesisBlock = genesis.GetHash();
@@ -608,8 +530,9 @@ public:
         vSeeds.clear();
 
         fDefaultConsistencyChecks = true;
-        fRequireStandard = false;
-        fMineBlocksOnDemand = true;
+        fRequireStandard = true;
+        m_is_test_chain = true;
+        m_is_mockable_chain = true;
 
         checkpointData = {
             .mapCheckpoints = {

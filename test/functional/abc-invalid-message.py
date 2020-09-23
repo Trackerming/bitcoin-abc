@@ -12,7 +12,6 @@ import struct
 
 from test_framework.messages import NODE_NETWORK, msg_version
 from test_framework.mininode import (
-    MAGIC_BYTES,
     mininode_lock,
     msg_ping,
     P2PInterface,
@@ -22,11 +21,11 @@ from test_framework.util import wait_until
 
 
 def msg_bad_checksum(connection, original_message):
-    message_data = bytearray(connection._build_message(original_message))
+    message_data = bytearray(connection.build_message(original_message))
 
     data = original_message.serialize()
     i = 0
-    i += len(MAGIC_BYTES[connection.network])
+    i += len(connection.magic_bytes)
     i += 12
     i += len(struct.pack("<I", len(data)))
 

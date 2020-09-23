@@ -34,7 +34,7 @@ import multiprocessing
 from queue import Queue, Empty
 
 # Formatting. Default colors to empty strings.
-BOLD, BLUE, RED, GREY = ("", ""), ("", ""), ("", ""), ("", "")
+BOLD, GREEN, RED, GREY = ("", ""), ("", ""), ("", ""), ("", "")
 try:
     # Make sure python thinks it can write unicode to its stdout
     "\u2713".encode("utf_8").decode(sys.stdout.encoding)
@@ -46,11 +46,29 @@ except UnicodeDecodeError:
     CROSS = "x "
     CIRCLE = "o "
 
-if os.name == 'posix':
+if os.name != 'nt' or sys.getwindowsversion() >= (10, 0, 14393):
+    if os.name == 'nt':
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 4
+        STD_OUTPUT_HANDLE = -11
+        STD_ERROR_HANDLE = -12
+        # Enable ascii color control to stdout
+        stdout = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        stdout_mode = ctypes.c_int32()
+        kernel32.GetConsoleMode(stdout, ctypes.byref(stdout_mode))
+        kernel32.SetConsoleMode(
+            stdout, stdout_mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+        # Enable ascii color control to stderr
+        stderr = kernel32.GetStdHandle(STD_ERROR_HANDLE)
+        stderr_mode = ctypes.c_int32()
+        kernel32.GetConsoleMode(stderr, ctypes.byref(stderr_mode))
+        kernel32.SetConsoleMode(
+            stderr, stderr_mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
     # primitive formatting on supported
     # terminal via ANSI escape sequences:
     BOLD = ('\033[0m', '\033[1m')
-    BLUE = ('\033[0m', '\033[0;34m')
+    GREEN = ('\033[0m', '\033[0;32m')
     RED = ('\033[0m', '\033[0;31m')
     GREY = ('\033[0m', '\033[1;30m')
 
@@ -75,10 +93,12 @@ TEST_PARAMS = {
     #    testName
     #    testName --param1 --param2
     #    testname --param3
+    "rpc_deriveaddresses.py": [["--usecli"]],
     "wallet_txn_doublespend.py": [["--mineblock"]],
     "wallet_txn_clone.py": [["--mineblock"]],
     "wallet_createwallet.py": [["--usecli"]],
     "wallet_multiwallet.py": [["--usecli"]],
+    "wallet_watchonly.py": [["--usecli"]],
 }
 
 # Used to limit the number of tests, when list of tests is not provided on command line
@@ -94,24 +114,28 @@ class TestCase():
     Data structure to hold and run information necessary to launch a test case.
     """
 
-    def __init__(self, test_num, test_case, tests_dir, tmpdir, flags=None):
+    def __init__(self, test_num, test_case, tests_dir,
+                 tmpdir, failfast_event, flags=None):
         self.tests_dir = tests_dir
         self.tmpdir = tmpdir
         self.test_case = test_case
         self.test_num = test_num
+        self.failfast_event = failfast_event
         self.flags = flags
 
     def run(self, portseed_offset):
-        t = self.test_case
+        if self.failfast_event.is_set():
+            return TestResult(self.test_num, self.test_case,
+                              "", "Skipped", 0, "", "")
+
         portseed = self.test_num + portseed_offset
         portseed_arg = ["--portseed={}".format(portseed)]
         log_stdout = tempfile.SpooledTemporaryFile(max_size=2**16)
         log_stderr = tempfile.SpooledTemporaryFile(max_size=2**16)
-        test_argv = t.split()
+        test_argv = self.test_case.split()
         testdir = os.path.join("{}", "{}_{}").format(
             self.tmpdir, re.sub(".py$", "", test_argv[0]), portseed)
         tmpdir_arg = ["--tmpdir={}".format(testdir)]
-        name = t
         time0 = time.time()
         process = subprocess.Popen([sys.executable, os.path.join(self.tests_dir, test_argv[0])] + test_argv[1:] + self.flags + portseed_arg + tmpdir_arg,
                                    universal_newlines=True,
@@ -120,8 +144,8 @@ class TestCase():
 
         process.wait()
         log_stdout.seek(0), log_stderr.seek(0)
-        [stdout, stderr] = [l.read().decode('utf-8')
-                            for l in (log_stdout, log_stderr)]
+        [stdout, stderr] = [log.read().decode('utf-8')
+                            for log in (log_stdout, log_stderr)]
         log_stdout.close(), log_stderr.close()
         if process.returncode == TEST_EXIT_PASSED and stderr == "":
             status = "Passed"
@@ -130,8 +154,8 @@ class TestCase():
         else:
             status = "Failed"
 
-        return TestResult(self.test_num, name, testdir, status,
-                          int(time.time() - time0), stdout, stderr)
+        return TestResult(self.test_num, self.test_case, testdir, status,
+                          time.time() - time0, stdout, stderr)
 
 
 def on_ci():
@@ -179,11 +203,14 @@ def main():
                         help='only print results summary and failure logs')
     parser.add_argument('--tmpdirprefix', '-t',
                         default=os.path.join(build_dir, 'test', 'tmp'), help="Root directory for datadirs")
-    parser.add_argument('--junitoutput', '-J', default='junit_results.xml',
+    parser.add_argument(
+        '--failfast',
+        action='store_true',
+        help='stop execution after the first test failure')
+    parser.add_argument('--junitoutput', '-J',
                         help="File that will store JUnit formatted test results. If no absolute path is given it is treated as relative to the temporary directory.")
     parser.add_argument('--testsuitename', '-n', default='Bitcoin ABC functional tests',
                         help="Name of the test suite, as it will appear in the logs and in the JUnit report.")
-
     args, unknown_args = parser.parse_known_args()
 
     # args to be passed on always start with two dashes; tests are the
@@ -198,13 +225,20 @@ def main():
     logging.info("Starting {}".format(args.testsuitename))
 
     # Create base test directory
-    tmpdir = os.path.join("{}", "bitcoin_test_runner_{:%Y%m%d_%H%M%S}").format(
+    tmpdir = os.path.join("{}", "test_runner_₿₵_🏃_{:%Y%m%d_%H%M%S}").format(
         args.tmpdirprefix, datetime.datetime.now())
+
+    # If we fixed the command-line and filename encoding issue on Windows,
+    # these two lines could be removed
+    if config["environment"]["EXEEXT"] == ".exe":
+        tmpdir = os.path.join("{}", "test_runner_{:%Y%m%d_%H%M%S}").format(
+            args.tmpdirprefix, datetime.datetime.now())
+
     os.makedirs(tmpdir)
 
     logging.debug("Temporary test directory at {}".format(tmpdir))
 
-    if not os.path.isabs(args.junitoutput):
+    if args.junitoutput and not os.path.isabs(args.junitoutput):
         args.junitoutput = os.path.join(tmpdir, args.junitoutput)
 
     enable_bitcoind = config["components"].getboolean("ENABLE_BITCOIND")
@@ -265,7 +299,7 @@ def main():
     # Remove the test cases that the user has explicitly asked to exclude.
     if args.exclude:
         tests_excl = [re.sub(r"\.py$", "", t)
-                      + ".py" for t in args.exclude.split(',')]
+                      + (".py" if ".py" not in t else "") for t in args.exclude.split(',')]
         for exclude_test in tests_excl:
             if exclude_test in test_list:
                 test_list.remove(exclude_test)
@@ -300,16 +334,32 @@ def main():
             [sys.executable, os.path.join(tests_dir, test_list[0]), '-h'])
         sys.exit(0)
 
+    check_script_prefixes(all_scripts)
+
     if not args.keepcache:
         shutil.rmtree(os.path.join(build_dir, "test",
                                    "cache"), ignore_errors=True)
 
-    run_tests(test_list, build_dir, tests_dir, args.junitoutput,
-              tmpdir, args.jobs, args.testsuitename, args.coverage, passon_args, args.combinedlogslen, build_timings)
+    run_tests(
+        test_list,
+        build_dir,
+        tests_dir,
+        args.junitoutput,
+        tmpdir,
+        num_jobs=args.jobs,
+        test_suite_name=args.testsuitename,
+        enable_coverage=args.coverage,
+        args=passon_args,
+        combined_logs_len=args.combinedlogslen,
+        build_timings=build_timings,
+        failfast=args.failfast
+    )
 
 
 def run_tests(test_list, build_dir, tests_dir, junitoutput, tmpdir, num_jobs, test_suite_name,
-              enable_coverage=False, args=[], combined_logs_len=0, build_timings=None):
+              enable_coverage=False, args=None, combined_logs_len=0, build_timings=None, failfast=False):
+    args = args or []
+
     # Warn if bitcoind is already running (unix only)
     try:
         pidofOutput = subprocess.check_output(["pidof", "bitcoind"])
@@ -347,36 +397,46 @@ def run_tests(test_list, build_dir, tests_dir, junitoutput, tmpdir, num_jobs, te
     # Run Tests
     time0 = time.time()
     test_results = execute_test_processes(
-        num_jobs, test_list, tests_dir, tmpdir, flags)
-    runtime = int(time.time() - time0)
+        num_jobs, test_list, tests_dir, tmpdir, flags, failfast)
+    runtime = time.time() - time0
 
     max_len_name = len(max(test_list, key=len))
     print_results(test_results, tests_dir, max_len_name,
                   runtime, combined_logs_len)
-    save_results_as_junit(test_results, junitoutput, runtime, test_suite_name)
+
+    if junitoutput is not None:
+        save_results_as_junit(
+            test_results,
+            junitoutput,
+            runtime,
+            test_suite_name)
 
     if (build_timings is not None):
         build_timings.save_timings(test_results)
 
     if coverage:
-        coverage.report_rpc_coverage()
+        coverage_passed = coverage.report_rpc_coverage()
 
         logging.debug("Cleaning up coverage data")
         coverage.cleanup()
+    else:
+        coverage_passed = True
 
     # Clear up the temp directory if all subdirectories are gone
     if not os.listdir(tmpdir):
         os.rmdir(tmpdir)
 
-    all_passed = all(
-        map(lambda test_result: test_result.was_successful, test_results))
+    all_passed = all(map(
+        lambda test_result: test_result.was_successful, test_results)) and coverage_passed
 
     sys.exit(not all_passed)
 
 
-def execute_test_processes(num_jobs, test_list, tests_dir, tmpdir, flags):
+def execute_test_processes(
+        num_jobs, test_list, tests_dir, tmpdir, flags, failfast=False):
     update_queue = Queue()
     job_queue = Queue()
+    failfast_event = threading.Event()
     test_results = []
     poll_timeout = 10  # seconds
     # In case there is a graveyard of zombie bitcoinds, we can apply a
@@ -405,17 +465,21 @@ def execute_test_processes(num_jobs, test_list, tests_dir, tmpdir, flags):
 
             if test_result.status == "Passed":
                 print("{}{}{} passed, Duration: {} s".format(
-                    BOLD[1], test_result.name, BOLD[0], test_result.time))
+                    BOLD[1], test_result.name, BOLD[0], TimeResolution.seconds(test_result.time)))
             elif test_result.status == "Skipped":
                 print("{}{}{} skipped".format(
                     BOLD[1], test_result.name, BOLD[0]))
             else:
                 print("{}{}{} failed, Duration: {} s\n".format(
-                    BOLD[1], test_result.name, BOLD[0], test_result.time))
+                    BOLD[1], test_result.name, BOLD[0], TimeResolution.seconds(test_result.time)))
                 print(BOLD[1] + 'stdout:' + BOLD[0])
                 print(test_result.stdout)
                 print(BOLD[1] + 'stderr:' + BOLD[0])
                 print(test_result.stderr)
+
+                if failfast:
+                    logging.debug("Early exiting after test failure")
+                    failfast_event.set()
             return
 
         assert False, "we should not be here"
@@ -472,19 +536,19 @@ def execute_test_processes(num_jobs, test_list, tests_dir, tmpdir, flags):
     ##
 
     # Start our result collection thread.
-    t = threading.Thread(target=handle_update_messages)
-    t.setDaemon(True)
-    t.start()
+    resultCollector = threading.Thread(target=handle_update_messages)
+    resultCollector.daemon = True
+    resultCollector.start()
 
     # Start some worker threads
     for j in range(num_jobs):
         t = threading.Thread(target=handle_test_cases)
-        t.setDaemon(True)
+        t.daemon = True
         t.start()
 
     # Push all our test cases into the job queue.
     for i, t in enumerate(test_list):
-        job_queue.put(TestCase(i, t, tests_dir, tmpdir, flags))
+        job_queue.put(TestCase(i, t, tests_dir, tmpdir, failfast_event, flags))
 
     # Wait for all the jobs to be completed
     job_queue.join()
@@ -523,8 +587,14 @@ def print_results(test_results, tests_dir, max_len_name,
             print('\n============')
             print('{}Combined log for {}:{}'.format(BOLD[1], testdir, BOLD[0]))
             print('============\n')
-            combined_logs, _ = subprocess.Popen([sys.executable, os.path.join(
-                tests_dir, 'combine_logs.py'), '-c', testdir], universal_newlines=True, stdout=subprocess.PIPE).communicate()
+            combined_logs_args = [
+                sys.executable, os.path.join(
+                    tests_dir, 'combine_logs.py'), testdir]
+
+            if BOLD[0]:
+                combined_logs_args += ['--color']
+                combined_logs, _ = subprocess.Popen(
+                    combined_logs_args, universal_newlines=True, stdout=subprocess.PIPE).communicate()
             print(
                 "\n".join(
                     deque(
@@ -535,10 +605,10 @@ def print_results(test_results, tests_dir, max_len_name,
     if not all_passed:
         results += RED[1]
     results += BOLD[1] + "\n{} | {} | {} s (accumulated) \n".format(
-        "ALL".ljust(max_len_name), status.ljust(9), time_sum) + BOLD[0]
+        "ALL".ljust(max_len_name), status.ljust(9), TimeResolution.seconds(time_sum)) + BOLD[0]
     if not all_passed:
         results += RED[0]
-    results += "Runtime: {} s\n".format(runtime)
+    results += "Runtime: {} s\n".format(TimeResolution.seconds(runtime))
     print(results)
 
 
@@ -567,7 +637,7 @@ class TestResult():
 
     def __repr__(self):
         if self.status == "Passed":
-            color = BLUE
+            color = GREEN
             glyph = TICK
         elif self.status == "Failed":
             color = RED
@@ -577,7 +647,7 @@ class TestResult():
             glyph = CIRCLE
 
         return color[1] + "{} | {}{} | {} s\n".format(
-            self.name.ljust(self.padding), glyph, self.status.ljust(7), self.time) + color[0]
+            self.name.ljust(self.padding), glyph, self.status.ljust(7), TimeResolution.seconds(self.time)) + color[0]
 
     @property
     def was_successful(self):
@@ -590,6 +660,37 @@ def get_all_scripts_from_disk(test_dir, non_scripts):
     """
     python_files = set([t for t in os.listdir(test_dir) if t[-3:] == ".py"])
     return list(python_files - set(non_scripts))
+
+
+def check_script_prefixes(all_scripts):
+    """Check that no more than `EXPECTED_VIOLATION_COUNT` of the
+       test scripts don't start with one of the allowed name prefixes."""
+    EXPECTED_VIOLATION_COUNT = 16
+
+    # LEEWAY is provided as a transition measure, so that pull-requests
+    # that introduce new tests that don't conform with the naming
+    # convention don't immediately cause the tests to fail.
+    LEEWAY = 0
+
+    good_prefixes_re = re.compile(
+        "(abc_)?(example|feature|interface|mempool|mining|p2p|rpc|wallet|tool)_")
+    bad_script_names = [
+        script for script in all_scripts if good_prefixes_re.match(script) is None]
+
+    if len(bad_script_names) < EXPECTED_VIOLATION_COUNT:
+        print(
+            "{}HURRAY!{} Number of functional tests violating naming convention reduced!".format(
+                BOLD[1],
+                BOLD[0]))
+        print("Consider reducing EXPECTED_VIOLATION_COUNT from {} to {}".format(
+            EXPECTED_VIOLATION_COUNT, len(bad_script_names)))
+    elif len(bad_script_names) > EXPECTED_VIOLATION_COUNT:
+        print(
+            "INFO: {} tests not meeting naming conventions (expected {}):".format(len(bad_script_names), EXPECTED_VIOLATION_COUNT))
+        print("  {}".format("\n  ".join(sorted(bad_script_names))))
+        assert len(bad_script_names) <= EXPECTED_VIOLATION_COUNT + \
+            LEEWAY, "Too many tests not following naming convention! ({} found, expected: <= {})".format(
+                len(bad_script_names), EXPECTED_VIOLATION_COUNT)
 
 
 def get_tests_to_run(test_list, test_params, cutoff, src_timings):
@@ -650,8 +751,10 @@ class RPCCoverage():
         if uncovered:
             print("Uncovered RPC commands:")
             print("".join(("  - {}\n".format(i)) for i in sorted(uncovered)))
+            return False
         else:
             print("All RPC commands covered.")
+            return True
 
     def cleanup(self):
         return shutil.rmtree(self.dir)
@@ -701,7 +804,7 @@ def save_results_as_junit(test_results, file_name, time, test_suite_name):
                                "failures": str(len([t for t in test_results if t.status == "Failed"])),
                                "id": "0",
                                "skipped": str(len([t for t in test_results if t.status == "Skipped"])),
-                               "time": str(time),
+                               "time": str(TimeResolution.milliseconds(time)),
                                "timestamp": datetime.datetime.now().isoformat('T')
                                })
 
@@ -709,7 +812,7 @@ def save_results_as_junit(test_results, file_name, time, test_suite_name):
         e_test_case = ET.SubElement(e_test_suite, "testcase",
                                     {"name": test_result.name,
                                      "classname": test_result.name,
-                                     "time": str(test_result.time)
+                                     "time": str(TimeResolution.milliseconds(test_result.time))
                                      }
                                     )
         if test_result.status == "Skipped":
@@ -764,12 +867,22 @@ class Timings():
         # we only save test that have passed - timings for failed test might be
         # wrong (timeouts or early fails)
         passed_results = [t for t in test_results if t.status == 'Passed']
-        new_timings = list(map(lambda t: {'name': t.name, 'time': t.time},
+        new_timings = list(map(lambda t: {'name': t.name, 'time': TimeResolution.seconds(t.time)},
                                passed_results))
         merged_timings = self.get_merged_timings(new_timings)
 
         with open(self.timing_file, 'w', encoding="utf8") as f:
             json.dump(merged_timings, f, indent=True)
+
+
+class TimeResolution:
+    @staticmethod
+    def seconds(time_fractional_second):
+        return round(time_fractional_second)
+
+    @staticmethod
+    def milliseconds(time_fractional_second):
+        return round(time_fractional_second, 3)
 
 
 if __name__ == '__main__':

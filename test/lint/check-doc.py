@@ -25,33 +25,36 @@ REGEX_ARG = r'(?:ForceSet|SoftSet|Get|Is)(?:Bool)?Args?(?:Set)?\(\s*"(-[^"]+)"'
 REGEX_DOC = r'AddArg\(\s*"(-[^"=]+?)(?:=|")'
 
 # list false positive unknows arguments
-SET_FALSE_POSITIVE_UNKNOWNS = set(['-zmqpubhashblock',
-                                   '-zmqpubhashtx',
-                                   '-zmqpubrawblock',
-                                   '-zmqpubrawtx'])
+SET_FALSE_POSITIVE_UNKNOWNS = set([
+    '-includeconf',
+    '-regtest',
+    '-testnet',
+    '-zmqpubhashblock',
+    '-zmqpubhashtx',
+    '-zmqpubrawblock',
+    '-zmqpubrawtx',
+    '-zmqpubhashblockhwm',
+    '-zmqpubhashtxhwm',
+    '-zmqpubrawblockhwm',
+    '-zmqpubrawtxhwm',
+
+])
 
 # list false positive undocumented arguments
-SET_FALSE_POSITIVE_UNDOCUMENTED = set(['-benchmark',
-                                       '-blockminsize',
-                                       '-dbcrashratio',
-                                       '-debugnet',
+SET_FALSE_POSITIVE_UNDOCUMENTED = set(['-dbcrashratio',
                                        '-enableminerfund',
                                        '-forcecompactdb',
                                        '-parkdeepreorg',
                                        '-automaticunparking',
-                                       # Remove after May 2020 upgrade
-                                       '-phononactivationtime',
+                                       # Remove after November 2020 upgrade
+                                       '-axionactivationtime',
                                        '-replayprotectionactivationtime',
-                                       '-rpcssl',
-                                       '-socks',
-                                       '-tor',
-                                       '-usehd',
-                                       '-whitelistalwaysrelay'])
+                                       ])
 
 
 def main():
     top_level = check_output(TOP_LEVEL, shell=True,
-                             universal_newlines=True).strip()
+                             universal_newlines=True, encoding='utf8').strip()
     source_files = []
     test_files = []
 

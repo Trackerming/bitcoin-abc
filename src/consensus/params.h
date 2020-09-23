@@ -15,10 +15,6 @@ namespace Consensus {
 
 enum DeploymentPos {
     DEPLOYMENT_TESTDUMMY,
-    DEPLOYEMENT_MINER_FUND,
-    DEPLOYEMENT_MINER_FUND_ABC,
-    DEPLOYEMENT_MINER_FUND_BCHD,
-    DEPLOYEMENT_MINER_FUND_ELECTRON_CASH,
     // NOTE: Also add new deployments to VersionBitsDeploymentInfo in
     // versionbitsinfo.cpp
     MAX_VERSION_BITS_DEPLOYMENTS,
@@ -82,10 +78,12 @@ struct Params {
     int magneticAnomalyHeight;
     /** Block height at which the graviton activation becomes active */
     int gravitonHeight;
-    /** Unix time used for MTP activation of 15 May 2020 12:00:00 UTC upgrade */
-    int phononActivationTime;
+    /** Block height at which the phonon activation becomes active */
+    int phononHeight;
     /** Unix time used for MTP activation of 15 Nov 2020 12:00:00 UTC upgrade */
     int axionActivationTime;
+    /** Unix time used for MTP activation of 15 May 2021 12:00:00 UTC upgrade */
+    int tachyonActivationTime;
 
     /**
      * Don't warn about unknown BIP 9 activations below this height.
@@ -95,13 +93,14 @@ struct Params {
     uint32_t nMinerConfirmationWindow;
     BIP9Deployment vDeployments[MAX_VERSION_BITS_DEPLOYMENTS];
 
-    /** Enable or disable te miner fund by default */
+    /** Enable or disable the miner fund by default */
     bool enableMinerFund;
 
     /** Proof of work parameters */
     uint256 powLimit;
     bool fPowAllowMinDifficultyBlocks;
     bool fPowNoRetargeting;
+    int64_t nDAAHalfLife;
     int64_t nPowTargetSpacing;
     int64_t nPowTargetTimespan;
     int64_t DifficultyAdjustmentInterval() const {

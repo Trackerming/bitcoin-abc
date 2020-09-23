@@ -7,8 +7,7 @@
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
-    connect_nodes_bi,
-    sync_blocks,
+    connect_nodes,
 )
 
 
@@ -51,6 +50,7 @@ class PreciousTest(BitcoinTestFramework):
         self.log.info(
             "Ensure submitblock can in principle reorg to a competing chain")
         # A non-wallet address to mine to
+
         def gen_address(
             i): return self.nodes[i].get_deterministic_priv_key().address
         self.nodes[0].generatetoaddress(1, gen_address(0))
@@ -71,7 +71,7 @@ class PreciousTest(BitcoinTestFramework):
         # Submit competing blocks via RPC so any reorg should occur before we
         # proceed (no way to wait on inaction for p2p sync)
         node_sync_via_rpc(self.nodes[0:2])
-        connect_nodes_bi(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[0], self.nodes[1])
         assert_equal(self.nodes[0].getbestblockhash(), hashC)
         assert_equal(self.nodes[1].getbestblockhash(), hashG)
         self.log.info("Make Node0 prefer block G")
@@ -83,7 +83,7 @@ class PreciousTest(BitcoinTestFramework):
         self.log.info("Make Node1 prefer block C")
         self.nodes[1].preciousblock(hashC)
         # wait because node 1 may not have downloaded hashC
-        sync_blocks(self.nodes[0:2])
+        self.sync_blocks(self.nodes[0:2])
         assert_equal(self.nodes[1].getbestblockhash(), hashC)
         self.log.info("Make Node1 prefer block G again")
         self.nodes[1].preciousblock(hashG)
@@ -98,7 +98,7 @@ class PreciousTest(BitcoinTestFramework):
             "Mine another block (E-F-G-)H on Node 0 and reorg Node 1")
         self.nodes[0].generatetoaddress(1, gen_address(0))
         assert_equal(self.nodes[0].getblockcount(), 6)
-        sync_blocks(self.nodes[0:2])
+        self.sync_blocks(self.nodes[0:2])
         hashH = self.nodes[0].getbestblockhash()
         assert_equal(self.nodes[1].getbestblockhash(), hashH)
         self.log.info("Node1 should not be able to prefer block C anymore")
@@ -110,8 +110,8 @@ class PreciousTest(BitcoinTestFramework):
         hashL = self.nodes[2].getbestblockhash()
         self.log.info("Connect nodes and check no reorg occurs")
         node_sync_via_rpc(self.nodes[1:3])
-        connect_nodes_bi(self.nodes[1], self.nodes[2])
-        connect_nodes_bi(self.nodes[0], self.nodes[2])
+        connect_nodes(self.nodes[1], self.nodes[2])
+        connect_nodes(self.nodes[0], self.nodes[2])
         assert_equal(self.nodes[0].getbestblockhash(), hashH)
         assert_equal(self.nodes[1].getbestblockhash(), hashH)
         assert_equal(self.nodes[2].getbestblockhash(), hashL)

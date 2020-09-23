@@ -15,11 +15,11 @@
 #include <qt/bantablemodel.h>
 #include <qt/clientmodel.h>
 #include <qt/forms/ui_debugwindow.h>
-#include <qt/guiutil.h>
 #include <qt/platformstyle.h>
 #include <qt/walletmodel.h>
 #include <rpc/client.h>
 #include <rpc/server.h>
+#include <util/strencodings.h>
 #include <util/system.h>
 
 #ifdef ENABLE_WALLET
@@ -27,6 +27,8 @@
 
 #include <db_cxx.h>
 #endif
+
+#include <univalue.h>
 
 #include <QKeyEvent>
 #include <QMenu>
@@ -36,11 +38,8 @@
 #include <QSettings>
 #include <QSignalMapper>
 #include <QStringList>
-#include <QThread>
 #include <QTime>
 #include <QTimer>
-
-#include <univalue.h>
 
 // TODO: add a scrollback limit, as there is currently none
 // TODO: make it possible to filter out categories (esp debug messages when
@@ -79,7 +78,7 @@ const QStringList historyFilter = QStringList() << "importprivkey"
 class RPCExecutor : public QObject {
     Q_OBJECT
 public:
-    RPCExecutor(interfaces::Node &node) : m_node(node) {}
+    explicit RPCExecutor(interfaces::Node &node) : m_node(node) {}
 
 public Q_SLOTS:
     void request(const QString &command, const WalletModel *wallet_model);
@@ -140,7 +139,7 @@ public:
  * interpretation takes place
  *
  * @param[in]    node    optional node to execute command on
- * @param[out]   result      stringified Result from the executed command(chain)
+ * @param[out]   strResult   stringified result from the executed command(chain)
  * @param[in]    strCommand  Command line to split
  * @param[in]    fExecute    set true if you want the command to be executed
  * @param[out]   pstrFilteredOut  Command line, filtered to remove any sensitive
@@ -229,7 +228,7 @@ bool RPCConsole::RPCParseCommandLine(interfaces::Node *node,
                                 UniValue subelement;
                                 if (lastResult.isArray()) {
                                     for (char argch : curarg) {
-                                        if (!std::isdigit(argch)) {
+                                        if (!IsDigit(argch)) {
                                             throw std::runtime_error(
                                                 "Invalid result query");
                                         }
@@ -530,7 +529,7 @@ RPCConsole::RPCConsole(interfaces::Node &node,
     ui->blocksDir->setToolTip(ui->blocksDir->toolTip().arg(
         QString(nonbreaking_hyphen) + "blocksdir"));
     ui->openDebugLogfileButton->setToolTip(
-        ui->openDebugLogfileButton->toolTip().arg(tr(PACKAGE_NAME)));
+        ui->openDebugLogfileButton->toolTip().arg(PACKAGE_NAME));
 
     if (platformStyle->getImagesOnButtons()) {
         ui->openDebugLogfileButton->setIcon(
@@ -723,10 +722,14 @@ void RPCConsole::setClientModel(ClientModel *model) {
                 static_cast<void (QSignalMapper::*)()>(&QSignalMapper::map));
         connect(banAction365d, &QAction::triggered, signalMapper,
                 static_cast<void (QSignalMapper::*)()>(&QSignalMapper::map));
-        connect(
-            signalMapper,
-            static_cast<void (QSignalMapper::*)(int)>(&QSignalMapper::mapped),
-            this, &RPCConsole::banSelectedNode);
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 15, 0))
+        const auto mappedIntEvent = &QSignalMapper::mappedInt;
+#else
+        const auto mappedIntEvent =
+            static_cast<void (QSignalMapper::*)(int)>(&QSignalMapper::mapped);
+#endif
+        connect(signalMapper, mappedIntEvent, this,
+                &RPCConsole::banSelectedNode);
 
         // peer table context menu signals
         connect(ui->peerWidget, &QTableView::customContextMenuRequested, this,
@@ -939,8 +942,7 @@ void RPCConsole::clear(bool clearHistory) {
 #endif
 
     message(CMD_REPLY,
-            (tr("Welcome to the %1 RPC console.").arg(tr(PACKAGE_NAME)) +
-             "<br>" +
+            (tr("Welcome to the %1 RPC console.").arg(PACKAGE_NAME) + "<br>" +
              tr("Use up and down arrows to navigate history, and "
                 "%1 to clear screen.")
                  .arg("<b>" + clsKey + "</b>") +
@@ -1296,11 +1298,11 @@ void RPCConsole::updateNodeDetail(const CNodeCombinedStats *stats) {
     ui->peerConnTime->setText(GUIUtil::formatDurationStr(
         GetSystemTimeInSeconds() - stats->nodeStats.nTimeConnected));
     ui->peerPingTime->setText(
-        GUIUtil::formatPingTime(stats->nodeStats.dPingTime));
+        GUIUtil::formatPingTime(stats->nodeStats.m_ping_usec));
     ui->peerPingWait->setText(
-        GUIUtil::formatPingTime(stats->nodeStats.dPingWait));
+        GUIUtil::formatPingTime(stats->nodeStats.m_ping_wait_usec));
     ui->peerMinPing->setText(
-        GUIUtil::formatPingTime(stats->nodeStats.dMinPing));
+        GUIUtil::formatPingTime(stats->nodeStats.m_min_ping_usec));
     ui->timeoffset->setText(
         GUIUtil::formatTimeOffset(stats->nodeStats.nTimeOffset));
     ui->peerVersion->setText(
@@ -1311,8 +1313,8 @@ void RPCConsole::updateNodeDetail(const CNodeCombinedStats *stats) {
                                                          : tr("Outbound"));
     ui->peerHeight->setText(
         QString("%1").arg(QString::number(stats->nodeStats.nStartingHeight)));
-    ui->peerWhitelisted->setText(stats->nodeStats.fWhitelisted ? tr("Yes")
-                                                               : tr("No"));
+    ui->peerWhitelisted->setText(
+        stats->nodeStats.m_legacyWhitelisted ? tr("Yes") : tr("No"));
 
     // This check fails for example if the lock was busy and
     // nodeStateStats couldn't be fetched.
@@ -1418,7 +1420,7 @@ void RPCConsole::banSelectedNode(int bantime) {
         const CNodeCombinedStats *stats =
             clientModel->getPeerTableModel()->getNodeStats(detailNodeRow);
         if (stats) {
-            m_node.ban(stats->nodeStats.addr, BanReasonManuallyAdded, bantime);
+            m_node.ban(stats->nodeStats.addr, bantime);
             m_node.disconnect(stats->nodeStats.addr);
         }
     }

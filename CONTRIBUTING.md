@@ -12,7 +12,7 @@ To get in contact with ABC developers, we monitor a telegram supergroup.  The
 intent of this group is specifically to facilitate development of Bitcoin-ABC,
 and to welcome people who wish to participate.
 
-https://t.me/joinchat/HCYr50mxRWjA2uLqii-psw
+[Join the ABC Development telegram group](https://t.me/joinchat/HCYr50mxRWjA2uLqii-psw)
 
 Acceptable use of this supergroup includes the following:
 
@@ -34,8 +34,8 @@ This means that there should be quick turnaround for patches to be proposed,
 reviewed, and committed. Changes should not sit in a queue for long.
 
 Here are some tips to help keep the development working as intended. These
-are guidelines for the normal and expected development process. Developers 
-can use their judgement to deviate from these guidelines when they have a 
+are guidelines for the normal and expected development process. Developers
+can use their judgement to deviate from these guidelines when they have a
 good reason to do so.
 
 - Keep each change small and self-contained.
@@ -50,13 +50,13 @@ on their own.
 - Sometimes you want to replace one subsystem by another implementation,
 in which case it is not possible to do things incrementally. In such cases,
 you keep both implementations in the codebase for a while, as described
-[here](https://www.gamasutra.com/view/news/128325/Opinion_Parallel_Implementations.php)
+[here](https://www.gamasutra.com/view/news/128325/Opinion_Parallel_Implementations.php).
 - There are no "development" branches, all Diffs apply to the master
 branch, and should always improve it (no regressions).
 - Don't break the build, it is important to keep master green as much as possible.
 If a Diff is landed, and breaks the build, fix it quickly. If it cannot be fixed
 quickly, it should be reverted, and re-applied later when it no longer breaks the build.
-- As soon as you see a bug, you fix it. Do not continue on. Fixing the bug becomes the 
+- As soon as you see a bug, you fix it. Do not continue on. Fixing the bug becomes the
 top priority, more important than completing other tasks.
 - Automate as much as possible, and spend time on things only humans can do.
 
@@ -64,7 +64,7 @@ Here are some handy links for development practices aligned with Bitcoin ABC:
 
 - [Developer Notes](doc/developer-notes.md)
 - [Statement of Bitcoin ABC Values and Visions](https://www.yours.org/content/bitcoin-abc---our-values-and-vision-a282afaade7c)
-- [How to Do Code Reviews Like a Human - Part 1](https://mtlynch.io/human-code-reviews-1/) 
+- [How to Do Code Reviews Like a Human - Part 1](https://mtlynch.io/human-code-reviews-1/)
 - [How to Do Code Reviews Like a Human - Part 2](https://mtlynch.io/human-code-reviews-2/)
 - [Large Diffs Are Hurting Your Ability To Ship](https://medium.com/@kurtisnusbaum/large-diffs-are-hurting-your-ability-to-ship-e0b2b41e8acf)
 - [Stacked Diffs: Keeping Phabricator Diffs Small](https://medium.com/@kurtisnusbaum/stacked-diffs-keeping-phabricator-diffs-small-d9964f4dcfa6)
@@ -75,20 +75,20 @@ Here are some handy links for development practices aligned with Bitcoin ABC:
 - [Slow Deployment Causes Meetings](https://www.facebook.com/notes/kent-beck/slow-deployment-causes-meetings/1055427371156793/)
 - [Good Work, Great Work, and Right Work](https://forum.dlang.org/post/q7u6g1$94p$1@digitalmars.com)
 - [Accelerate: The Science of Lean Software and DevOps](https://www.amazon.com/Accelerate-Software-Performing-Technology-Organizations/dp/1942788339)
+- [Facebook Engineering Process with Kent Beck](https://softwareengineeringdaily.com/2019/08/28/facebook-engineering-process-with-kent-beck/)
 
 Getting set up with the Bitcoin ABC Repository
 ----------------------------------------------
 
-1. Create an account at https://reviews.bitcoinabc.org/
+1. Create an account at [reviews.bitcoinabc.org](https://reviews.bitcoinabc.org/)
 
 2. Install Git and Arcanist on your machine
 
-Git documentation can be found at: https://git-scm.com/
+Git documentation can be found at [git-scm.com](https://git-scm.com/).
 
-Arcanist documentation can be found at:
-https://secure.phabricator.com/book/phabricator/article/arcanist_quick_start/
-
-And: https://secure.phabricator.com/book/phabricator/article/arcanist/
+For Arcanist documentation, you can read
+[Arcanist Quick Start](https://secure.phabricator.com/book/phabricator/article/arcanist_quick_start/)
+and the [Arcanist User Guide](https://secure.phabricator.com/book/phabricator/article/arcanist/).
 
 To install these packages on Debian or Ubuntu, type: `sudo apt-get install git arcanist`
 
@@ -98,7 +98,7 @@ Type: `ssh-keygen -t rsa -b 4096 -C "your_email@example.com"`
 
 Enter a file in which to save the key (/home/*username*/.ssh/id_rsa): [Press enter]
 
-4. Upload your SSH public key to reviews.bitcoinabc.org
+4. Upload your SSH public key to <https://reviews.bitcoinabc.org>
 
   - Go to: `https://reviews.bitcoinabc.org/settings/user/*username*/page/ssh/`
 
@@ -127,17 +127,23 @@ Follow instructions provided by `arc install-certificate` to provide your API to
 During submission of patches, arcanist will automatically run `arc lint` to
 enforce Bitcoin ABC code formatting standards, and often suggests changes.
 If code formatting tools do not install automatically on your system, you
-will have to install clang-format-8, clang-tidy (version >=8), autopep8, flake8,
-phpcs and shellcheck.
+will have to install the following:
 
-To install clang-format-8 and clang-tidy on Ubuntu (>= 18.04+updates) or Debian (>= 10):
+On Ubuntu (>= 18.04+updates):
 ```
-sudo apt-get install clang-format-8 clang-tidy-8 clang-tools-8
+sudo apt-get install clang-format-8 clang-tidy-8 clang-tools-8 cppcheck python-autopep8 flake8 php-codesniffer yamllint
 ```
 
+On Debian (>= 10), the clang-8 family of tools is available from the `buster-backports` repository:
+```
+echo "deb http://deb.debian.org/debian buster-backports main" | sudo tee -a /etc/apt/sources.list
+sudo apt-get update
+sudo apt-get install cppcheck python-autopep8 flake8 php-codesniffer
+sudo apt-get -t buster-backports install clang-format-8 clang-tidy-8 clang-tools-8
+```
 
 If not available in the distribution, `clang-format-8` and `clang-tidy` can be
-installed from https://releases.llvm.org/download.html or https://apt.llvm.org.
+installed from <https://releases.llvm.org/download.html> or <https://apt.llvm.org>.
 
 For example, for macOS:
 ```
@@ -146,10 +152,19 @@ ln -s $PWD/clang+llvm-8.0.0-x86_64-apple-darwin/bin/clang-format /usr/local/bin/
 ln -s $PWD/clang+llvm-8.0.0-x86_64-apple-darwin/bin/clang-tidy /usr/local/bin/clang-tidy
 ```
 
+If you are modifying a shell script, you will need to install the `shellcheck` linter.
+A recent version is required and may not be packaged for your distribution.
+Standalone binaries are available for download on
+[the project's github release page](https://github.com/koalaman/shellcheck/releases).
 
-To install autopep8, flake8 and phpcs on Ubuntu:
+**Note**: In order for arcanist to detect the `shellcheck` executable, you need to make it available in your `PATH`;
+if another version is already installed, make sure the recent one is found first.
+Arcanist will tell you what version is expected and what is found when running `arc lint` against a shell script.
+
+
+If you are running Debian 10, it is also available in the backports repository:
 ```
-sudo apt-get install python-autopep8 flake8 php-codesniffer shellcheck
+sudo apt-get -t buster-backports install shellcheck
 ```
 
 
@@ -209,7 +224,7 @@ What to work on
 ---------------
 
 If you are looking for a useful task to contribute to the project, a good place
-to start is the list of tasks at https://reviews.bitcoinabc.org/maniphest/
+to start is the list of tasks at <https://reviews.bitcoinabc.org/maniphest>.
 
 You could also try [backporting](doc/backporting.md) some code from Bitcoin Core.
 

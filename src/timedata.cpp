@@ -11,12 +11,12 @@
 #include <netaddress.h>
 #include <sync.h>
 #include <ui_interface.h>
-#include <util/strencodings.h>
 #include <util/system.h>
+#include <util/translation.h>
 #include <warnings.h>
 
-static CCriticalSection cs_nTimeOffset;
-static int64_t nTimeOffset = 0;
+static RecursiveMutex cs_nTimeOffset;
+static int64_t nTimeOffset GUARDED_BY(cs_nTimeOffset) = 0;
 
 /**
  * "Never go to sea with two chronometers; take one or three."
@@ -35,8 +35,9 @@ int64_t GetAdjustedTime() {
     return GetTime() + GetTimeOffset();
 }
 
-static int64_t abs64(int64_t n) {
-    return (n >= 0 ? n : -n);
+static uint64_t abs64(int64_t n) {
+    const uint64_t un = n;
+    return (n >= 0) ? un : -un;
 }
 
 #define BITCOIN_TIMEDATA_MAX_SAMPLES 200
@@ -81,8 +82,9 @@ void AddTimeData(const CNetAddr &ip, int64_t nOffsetSample) {
         std::vector<int64_t> vSorted = vTimeOffsets.sorted();
         // Only let other nodes change our time by so much
         if (abs64(nMedian) <=
-            std::max<int64_t>(0, gArgs.GetArg("-maxtimeadjustment",
-                                              DEFAULT_MAX_TIME_ADJUSTMENT))) {
+            uint64_t(std::max<int64_t>(
+                0, gArgs.GetArg("-maxtimeadjustment",
+                                DEFAULT_MAX_TIME_ADJUSTMENT)))) {
             nTimeOffset = nMedian;
         } else {
             nTimeOffset = 0;
@@ -103,8 +105,9 @@ void AddTimeData(const CNetAddr &ip, int64_t nOffsetSample) {
                     std::string strMessage =
                         strprintf(_("Please check that your computer's date "
                                     "and time are correct! If your clock is "
-                                    "wrong, %s will not work properly."),
-                                  _(PACKAGE_NAME));
+                                    "wrong, %s will not work properly.")
+                                      .translated,
+                                  PACKAGE_NAME);
                     SetMiscWarning(strMessage);
                     uiInterface.ThreadSafeMessageBox(
                         strMessage, "", CClientUIInterface::MSG_WARNING);

@@ -20,7 +20,6 @@
 
 #include <QObject>
 
-#include <map>
 #include <memory>
 #include <vector>
 
@@ -147,7 +146,6 @@ public:
         DuplicateAddress,
         // Error returned when wallet is still locked
         TransactionCreationFailed,
-        TransactionCommitFailed,
         AbsurdFee,
         PaymentRequestExpired
     };

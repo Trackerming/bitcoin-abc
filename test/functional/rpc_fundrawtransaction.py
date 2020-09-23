@@ -13,7 +13,7 @@ from test_framework.util import (
     assert_greater_than,
     assert_greater_than_or_equal,
     assert_raises_rpc_error,
-    connect_nodes_bi,
+    connect_nodes,
     find_vout_for_address,
 )
 
@@ -38,10 +38,10 @@ class RawTransactionsTest(BitcoinTestFramework):
     def setup_network(self):
         self.setup_nodes()
 
-        connect_nodes_bi(self.nodes[0], self.nodes[1])
-        connect_nodes_bi(self.nodes[1], self.nodes[2])
-        connect_nodes_bi(self.nodes[0], self.nodes[2])
-        connect_nodes_bi(self.nodes[0], self.nodes[3])
+        connect_nodes(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[1], self.nodes[2])
+        connect_nodes(self.nodes[0], self.nodes[2])
+        connect_nodes(self.nodes[0], self.nodes[3])
 
     def run_test(self):
         min_relay_tx_fee = self.nodes[0].getnetworkinfo()['relayfee']
@@ -496,10 +496,10 @@ class RawTransactionsTest(BitcoinTestFramework):
         for node in self.nodes:
             node.settxfee(min_relay_tx_fee)
 
-        connect_nodes_bi(self.nodes[0], self.nodes[1])
-        connect_nodes_bi(self.nodes[1], self.nodes[2])
-        connect_nodes_bi(self.nodes[0], self.nodes[2])
-        connect_nodes_bi(self.nodes[0], self.nodes[3])
+        connect_nodes(self.nodes[0], self.nodes[1])
+        connect_nodes(self.nodes[1], self.nodes[2])
+        connect_nodes(self.nodes[0], self.nodes[2])
+        connect_nodes(self.nodes[0], self.nodes[3])
         # Again lock the watchonly UTXO or nodes[0] may spend it, because
         # lockunspent is memory-only and thus lost on restart
         self.nodes[0].lockunspent(
@@ -681,8 +681,9 @@ class RawTransactionsTest(BitcoinTestFramework):
         inputs = []
         outputs = {self.nodes[3].getnewaddress(): 1}
         rawTx = self.nodes[3].createrawtransaction(inputs, outputs)
+        # uses min_relay_tx_fee (set by settxfee)
         result = self.nodes[3].fundrawtransaction(
-            rawTx)  # uses min_relay_tx_fee (set by settxfee)
+            rawTx)
         result2 = self.nodes[3].fundrawtransaction(
             rawTx, {"feeRate": 2 * min_relay_tx_fee})
         result_fee_rate = result['fee'] * 1000 / \
@@ -692,7 +693,12 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         result3 = self.nodes[3].fundrawtransaction(
             rawTx, {"feeRate": 10 * min_relay_tx_fee})
-        # allow this transaction to be underfunded by 10 bytes.  This is due
+        assert_raises_rpc_error(-4,
+                                "Fee exceeds maximum configured by -maxtxfee",
+                                self.nodes[3].fundrawtransaction,
+                                rawTx,
+                                {"feeRate": 1})
+        # allow this transaction to be underfunded by 10 bytes. This is due
         # to the first transaction possibly being overfunded by up to .9
         # satoshi due to  fee ceilings being used.
         assert_fee_amount(

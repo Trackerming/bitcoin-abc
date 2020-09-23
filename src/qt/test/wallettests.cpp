@@ -1,7 +1,6 @@
 #include <qt/test/util.h>
 #include <qt/test/wallettests.h>
 
-#include <base58.h>
 #include <cashaddrenc.h>
 #include <chain.h>
 #include <chainparams.h>
@@ -23,7 +22,7 @@
 #include <validation.h>
 #include <wallet/wallet.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -74,7 +73,9 @@ TxId SendCoins(CWallet &wallet, SendCoinsDialog &sendCoinsDialog,
                 }
             });
     ConfirmSend();
-    QMetaObject::invokeMethod(&sendCoinsDialog, "on_sendButton_clicked");
+    bool invoked =
+        QMetaObject::invokeMethod(&sendCoinsDialog, "on_sendButton_clicked");
+    assert(invoked);
     return txid;
 }
 
@@ -104,44 +105,55 @@ QModelIndex FindTx(const QAbstractItemModel &model, const uint256 &txid) {
 //     src/qt/test/test_bitcoin-qt -platform xcb      # Linux
 //     src/qt/test/test_bitcoin-qt -platform windows  # Windows
 //     src/qt/test/test_bitcoin-qt -platform cocoa    # macOS
-void TestGUI() {
+void TestGUI(interfaces::Node &node) {
     // Set up wallet and chain with 105 blocks (5 mature blocks for spending).
     TestChain100Setup test;
     for (int i = 0; i < 5; ++i) {
         test.CreateAndProcessBlock(
             {}, GetScriptForRawPubKey(test.coinbaseKey.GetPubKey()));
     }
-
-    auto chain = interfaces::MakeChain();
+    node.context()->connman = std::move(test.m_node.connman);
     std::shared_ptr<CWallet> wallet = std::make_shared<CWallet>(
-        Params(), *chain, WalletLocation(), WalletDatabase::CreateMock());
+        Params(), node.context()->chain.get(), WalletLocation(),
+        WalletDatabase::CreateMock());
 
     bool firstRun;
     wallet->LoadWallet(firstRun);
     {
+        auto spk_man = wallet->GetLegacyScriptPubKeyMan();
+        auto locked_chain = wallet->chain().lock();
         LOCK(wallet->cs_wallet);
+        AssertLockHeld(spk_man->cs_wallet);
         wallet->SetAddressBook(
             GetDestinationForKey(test.coinbaseKey.GetPubKey(),
                                  wallet->m_default_address_type),
             "", "receive");
-        wallet->AddKeyPubKey(test.coinbaseKey, test.coinbaseKey.GetPubKey());
+        spk_man->AddKeyPubKey(test.coinbaseKey, test.coinbaseKey.GetPubKey());
+        wallet->SetLastBlockProcessed(105,
+                                      ::ChainActive().Tip()->GetBlockHash());
     }
     {
         auto locked_chain = wallet->chain().lock();
-        WalletRescanReserver reserver(wallet.get());
+        LockAssertion lock(::cs_main);
+
+        WalletRescanReserver reserver(*wallet);
         reserver.reserve();
-        wallet->ScanForWalletTransactions(chainActive.Genesis(), nullptr,
-                                          reserver, true);
+        CWallet::ScanResult result = wallet->ScanForWalletTransactions(
+            locked_chain->getBlockHash(0), BlockHash(), reserver,
+            true /* fUpdate */);
+        QCOMPARE(result.status, CWallet::ScanResult::SUCCESS);
+        QCOMPARE(result.last_scanned_block,
+                 ::ChainActive().Tip()->GetBlockHash());
+        QVERIFY(result.last_failed_block.IsNull());
     }
     wallet->SetBroadcastTransactions(true);
 
     // Create widgets for sending coins and listing transactions.
     std::unique_ptr<const PlatformStyle> platformStyle(
         PlatformStyle::instantiate("other"));
-    auto node = interfaces::MakeNode();
-    OptionsModel optionsModel(*node);
+    OptionsModel optionsModel(node);
     AddWallet(wallet);
-    WalletModel walletModel(std::move(node->getWallets().back()), *node,
+    WalletModel walletModel(interfaces::MakeWallet(wallet), node,
                             platformStyle.get(), &optionsModel);
     RemoveWallet(wallet);
 
@@ -151,9 +163,9 @@ void TestGUI() {
         walletModel.getTransactionTableModel();
     QCOMPARE(transactionTableModel->rowCount({}), 105);
     TxId txid1 = SendCoins(*wallet.get(), sendCoinsDialog,
-                           CTxDestination(CKeyID()), 5 * COIN);
+                           CTxDestination(PKHash()), 5 * COIN);
     TxId txid2 = SendCoins(*wallet.get(), sendCoinsDialog,
-                           CTxDestination(CKeyID()), 10 * COIN);
+                           CTxDestination(PKHash()), 10 * COIN);
     QCOMPARE(transactionTableModel->rowCount({}), 107);
     QVERIFY(FindTx(*transactionTableModel, txid1).isValid());
     QVERIFY(FindTx(*transactionTableModel, txid2).isValid());
@@ -250,5 +262,5 @@ void WalletTests::walletTests() {
         return;
     }
 #endif
-    TestGUI();
+    TestGUI(m_node);
 }

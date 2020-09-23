@@ -5,13 +5,18 @@
 #ifndef BITCOIN_QT_TEST_RPCNESTEDTESTS_H
 #define BITCOIN_QT_TEST_RPCNESTEDTESTS_H
 
-#include <txdb.h>
-#include <txmempool.h>
-
 #include <QObject>
 #include <QTest>
 
+namespace interfaces {
+class Node;
+} // namespace interfaces
+
 class RPCNestedTests : public QObject {
+public:
+    explicit RPCNestedTests(interfaces::Node &node) : m_node(node) {}
+    interfaces::Node &m_node;
+
     Q_OBJECT
 
 private Q_SLOTS:

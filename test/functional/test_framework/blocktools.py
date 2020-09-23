@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2015-2016 The Bitcoin Core developers
+# Copyright (c) 2015-2019 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Utilities for manipulating blocks and transactions."""
@@ -27,18 +27,22 @@ from .messages import (
 from .txtools import pad_tx
 from .util import assert_equal, satoshi_round
 
-# Create a block (with regtest difficulty)
+# Genesis block time (regtest)
+TIME_GENESIS_BLOCK = 1296688602
 
 
-def create_block(hashprev, coinbase, nTime=None):
+def create_block(hashprev, coinbase, ntime=None, *, version=1):
+    """Create a block (with regtest difficulty)."""
     block = CBlock()
-    if nTime is None:
+    block.nVersion = version
+    if ntime is None:
         import time
         block.nTime = int(time.time() + 600)
     else:
-        block.nTime = nTime
+        block.nTime = ntime
     block.hashPrevBlock = hashprev
-    block.nBits = 0x207fffff  # Will break after a difficulty adjustment...
+    # difficulty retargeting is disabled in REGTEST chainparams
+    block.nBits = 0x207fffff
     block.vtx.append(coinbase)
     block.hashMerkleRoot = block.calc_merkle_root()
     block.calc_sha256()
@@ -67,12 +71,12 @@ def serialize_script_num(value):
         r[-1] |= 0x80
     return r
 
-# Create a coinbase transaction, assuming no miner fees.
-# If pubkey is passed in, the coinbase output will be a P2PK output;
-# otherwise an anyone-can-spend output.
-
 
 def create_coinbase(height, pubkey=None):
+    """Create a coinbase transaction, assuming no miner fees.
+
+    If pubkey is passed in, the coinbase output will be a P2PK output;
+    otherwise an anyone-can-spend output."""
     coinbase = CTransaction()
     coinbase.vin.append(CTxIn(COutPoint(0, 0xffffffff),
                               ser_string(serialize_script_num(height)), 0xffffffff))
@@ -134,21 +138,21 @@ def create_raw_transaction(node, txid, to_address, amount):
     return signresult['hex']
 
 
-def get_legacy_sigopcount_block(block, fAccurate=True):
+def get_legacy_sigopcount_block(block, accurate=True):
     count = 0
     for tx in block.vtx:
-        count += get_legacy_sigopcount_tx(tx, fAccurate)
+        count += get_legacy_sigopcount_tx(tx, accurate)
     return count
 
 
-def get_legacy_sigopcount_tx(tx, fAccurate=True):
+def get_legacy_sigopcount_tx(tx, accurate=True):
     count = 0
     for i in tx.vout:
-        count += i.scriptPubKey.GetSigOpCount(fAccurate)
+        count += i.scriptPubKey.GetSigOpCount(accurate)
     for j in tx.vin:
         # scriptSig might be of type bytes, so convert to CScript for the
         # moment
-        count += CScript(j.scriptSig).GetSigOpCount(fAccurate)
+        count += CScript(j.scriptSig).GetSigOpCount(accurate)
     return count
 
 
@@ -224,6 +228,6 @@ def send_big_transactions(node, utxos, num, fee_multiplier):
         ctx.vout[0].nValue -= int(fee_multiplier * node.calculate_fee(ctx))
         signresult = node.signrawtransactionwithwallet(
             ToHex(ctx), None, "NONE|FORKID")
-        txid = node.sendrawtransaction(signresult["hex"], True)
+        txid = node.sendrawtransaction(signresult["hex"], 0)
         txids.append(txid)
     return txids

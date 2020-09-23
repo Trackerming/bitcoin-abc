@@ -11,7 +11,6 @@ packages:
 - "automake"
 - "bsdmainutils"
 - "ca-certificates"
-- "cmake"
 - "curl"
 - "faketime"
 - "fonts-tuffy"
@@ -36,20 +35,23 @@ packages:
 - "libboost-all-dev"
 - "libevent-dev"
 - "libssl-dev"
+repositories:
+- "distribution": "buster-backports"
+  "source": "deb http://deb.debian.org/debian/ buster-backports main"
+  packages:
+  - "cmake"
 remotes:
 - "url": "https://github.com/Bitcoin-ABC/bitcoin-abc.git"
   "dir": "bitcoin"
 files:
-- "MacOSX10.11.sdk.tar.gz"
+- "MacOSX10.14.sdk.tar.gz"
 script: |
   WRAP_DIR=$HOME/wrapped
-  HOSTS="x86_64-apple-darwin14"
+  HOSTS="x86_64-apple-darwin16"
 
   # CMake toolchain file name differ from host name
   declare -A CMAKE_TOOLCHAIN_FILE
-  CMAKE_TOOLCHAIN_FILE[x86_64-apple-darwin14]=OSX.cmake
-
-  INSTALL_COMPONENTS="bitcoind bitcoin-qt bitcoin-seeder"
+  CMAKE_TOOLCHAIN_FILE[x86_64-apple-darwin16]=OSX.cmake
 
   FAKETIME_HOST_PROGS=""
   FAKETIME_PROGS="ar ranlib date dmg genisoimage"
@@ -104,7 +106,7 @@ script: |
   BASEPREFIX=`pwd`/depends
 
   mkdir -p ${BASEPREFIX}/SDKs
-  tar -C ${BASEPREFIX}/SDKs -xf ${BUILD_DIR}/MacOSX10.11.sdk.tar.gz
+  tar -C ${BASEPREFIX}/SDKs -xf ${BUILD_DIR}/MacOSX10.14.sdk.tar.gz
 
   # Build dependencies for each host
   for i in $HOSTS; do
@@ -130,7 +132,9 @@ script: |
     -DBUILD_LIBBITCOINCONSENSUS=OFF \
     -DENABLE_CLANG_TIDY=OFF \
     -DENABLE_QRCODE=OFF \
-    -DENABLE_UPNP=OFF
+    -DENABLE_UPNP=OFF \
+    -DUSE_JEMALLOC=OFF
+
   ninja package_source
   SOURCEDIST=`echo bitcoin-abc-*.tar.gz`
   mv ${SOURCEDIST} ..
@@ -165,9 +169,7 @@ script: |
 
     ninja
 
-    for _component in ${INSTALL_COMPONENTS}; do
-       cmake -DCOMPONENT=${_component} -P cmake_install.cmake
-    done
+    ninja install/strip
 
     export PYTHONPATH="${BASEPREFIX}/${i}/native/lib/python3/dist-packages:${PYTHONPATH}"
     ninja osx-deploydir
@@ -189,14 +191,7 @@ script: |
     ${WRAP_DIR}/dmg dmg "${OSX_VOLNAME}.dmg" ${OUTDIR}/${DISTNAME}-osx-unsigned.dmg
 
     cd installed
-    # The install/strip target should do exactly that. However there is a bug in
-    # in the Buster CMake version that causes strip to be called with the wrong
-    # parameters when an Apple strip tool is used. This is fixed starting with
-    # CMake versions >= 3.14, see:
-    # https://gitlab.kitware.com/cmake/cmake/merge_requests/2892
     find -path "*.app*" -type f -executable -exec mv {} ${DISTNAME}/bin/bitcoin-qt \;
-    find ${DISTNAME}/bin -type f -executable -exec ${i}-strip -u -r {} \;
-    find ${DISTNAME}/lib -type f -executable -exec ${i}-strip -x {} \;
     find ${DISTNAME} -not -path "*.app*" | sort | tar --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ${OUTDIR}/${DISTNAME}-${i}.tar.gz
     cd ../../
   done

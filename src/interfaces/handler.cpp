@@ -7,7 +7,6 @@
 #include <util/system.h>
 
 #include <boost/signals2/connection.hpp>
-#include <memory>
 #include <utility>
 
 namespace interfaces {
@@ -15,7 +14,7 @@ namespace {
 
     class HandlerImpl : public Handler {
     public:
-        HandlerImpl(boost::signals2::connection connection)
+        explicit HandlerImpl(boost::signals2::connection connection)
             : m_connection(std::move(connection)) {}
 
         void disconnect() override { m_connection.disconnect(); }

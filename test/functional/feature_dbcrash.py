@@ -79,6 +79,7 @@ class ChainstateWriteCrashTest(BitcoinTestFramework):
     def setup_network(self):
         self.add_nodes(self.num_nodes, extra_args=self.extra_args)
         self.start_nodes()
+        self.import_deterministic_coinbase_privkeys()
         # Leave them unconnected, we'll use submitblock directly in this test
 
     def restart_node(self, node_index, expected_tip):
@@ -251,11 +252,23 @@ class ChainstateWriteCrashTest(BitcoinTestFramework):
 
         starting_tip_height = self.nodes[3].getblockcount()
 
+        # Set mock time to the last block time. This will allow us to increase
+        # the time at each loop so the block hash will always differ for the
+        # same block height, and avoid duplication.
+        # Note that the current time can be behind the block time due to the
+        # way the miner sets the block time.
+        tip = self.nodes[3].getbestblockhash()
+        block_time = self.nodes[3].getblockheader(tip)['time']
+        self.nodes[3].setmocktime(block_time)
+
         # Main test loop:
         # each time through the loop, generate a bunch of transactions,
         # and then either mine a single new block on the tip, or some-sized
         # reorg.
         for i in range(40):
+            block_time += 10
+            self.nodes[3].setmocktime(block_time)
+
             self.log.info(
                 "Iteration {}, generating 2500 transactions {}".format(
                     i, self.restart_counts))
@@ -279,10 +292,14 @@ class ChainstateWriteCrashTest(BitcoinTestFramework):
             self.log.debug("Mining longer tip")
             block_hashes = []
             while current_height + 1 > self.nodes[3].getblockcount():
-                block_hashes.extend(self.nodes[3].generate(
-                    min(10, current_height + 1 - self.nodes[3].getblockcount())))
-            self.log.debug(
-                "Syncing {} new blocks...".format(len(block_hashes)))
+                block_hashes.extend(self.nodes[3].generatetoaddress(
+                    nblocks=min(10, current_height + 1 -
+                                self.nodes[3].getblockcount()),
+                    # new address to avoid mining a block that has just been
+                    # invalidated
+                    address=self.nodes[3].getnewaddress(),
+                ))
+            self.log.debug("Syncing %d new blocks...", len(block_hashes))
             self.sync_node3blocks(block_hashes)
             utxo_list = self.nodes[3].listunspent()
             self.log.debug("Node3 utxo count: {}".format(len(utxo_list)))

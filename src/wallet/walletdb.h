@@ -9,14 +9,12 @@
 
 #include <amount.h>
 #include <key.h>
-#include <primitives/transaction.h>
+#include <script/sign.h>
 #include <script/standard.h> // for CTxDestination
 #include <wallet/db.h>
 
 #include <cstdint>
-#include <list>
 #include <string>
-#include <utility>
 #include <vector>
 
 /**
@@ -34,8 +32,6 @@
 
 static const bool DEFAULT_FLUSHWALLET = true;
 
-class CAccount;
-class CAccountingEntry;
 struct CBlockLocator;
 class CKeyPool;
 class CMasterKey;
@@ -95,14 +91,20 @@ class CKeyMetadata {
 public:
     static const int VERSION_BASIC = 1;
     static const int VERSION_WITH_HDDATA = 10;
-    static const int CURRENT_VERSION = VERSION_WITH_HDDATA;
+    static const int VERSION_WITH_KEY_ORIGIN = 12;
+    static const int CURRENT_VERSION = VERSION_WITH_KEY_ORIGIN;
     int nVersion;
     // 0 means unknown.
     int64_t nCreateTime;
-    // optional HD/bip32 keypath.
+    // optional HD/bip32 keypath. Still used to determine whether a key is a
+    // seed. Also kept for backwards compatibility
     std::string hdKeypath;
     // Id of the HD seed used to derive this key.
     CKeyID hd_seed_id;
+    // Key origin info with path and fingerprint
+    KeyOriginInfo key_origin;
+    //< Whether the key_origin is useful
+    bool has_key_origin = false;
 
     CKeyMetadata() { SetNull(); }
     explicit CKeyMetadata(int64_t nCreateTime_) {
@@ -120,6 +122,10 @@ public:
             READWRITE(hdKeypath);
             READWRITE(hd_seed_id);
         }
+        if (this->nVersion >= VERSION_WITH_KEY_ORIGIN) {
+            READWRITE(key_origin);
+            READWRITE(has_key_origin);
+        }
     }
 
     void SetNull() {
@@ -127,14 +133,19 @@ public:
         nCreateTime = 0;
         hdKeypath.clear();
         hd_seed_id.SetNull();
+        key_origin.clear();
+        has_key_origin = false;
     }
 };
 
 /**
  * Access to the wallet database.
- * This represents a single transaction at the database. It will be committed
- * when the object goes out of scope. Optionally (on by default) it will flush
- * to disk as well.
+ * Opens the database and provides read and write access to it. Each read and
+ * write is its own transaction. Multiple operation transactions can be started
+ * using TxnBegin() and committed using TxnCommit() Otherwise the transaction
+ * will be committed when the object goes out of scope. Optionally (on by
+ * default) it will flush to disk on close. Every 1000 writes will automatically
+ * trigger a flush to disk.
  */
 class WalletBatch {
 private:
@@ -144,6 +155,9 @@ private:
             return false;
         }
         m_database.IncrementUpdateCounter();
+        if (m_database.nUpdateCounter % 1000 == 0) {
+            m_batch.Flush();
+        }
         return true;
     }
 
@@ -152,6 +166,9 @@ private:
             return false;
         }
         m_database.IncrementUpdateCounter();
+        if (m_database.nUpdateCounter % 1000 == 0) {
+            m_batch.Flush();
+        }
         return true;
     }
 
@@ -172,6 +189,8 @@ public:
     bool WriteTx(const CWalletTx &wtx);
     bool EraseTx(uint256 hash);
 
+    bool WriteKeyMetadata(const CKeyMetadata &meta, const CPubKey &pubkey,
+                          const bool overwrite);
     bool WriteKey(const CPubKey &vchPubKey, const CPrivKey &vchPrivKey,
                   const CKeyMetadata &keyMeta);
     bool WriteCryptedKey(const CPubKey &vchPubKey,
@@ -195,24 +214,11 @@ public:
 
     bool WriteMinVersion(int nVersion);
 
-    /// This writes directly to the database, and will not update the CWallet's
-    /// cached accounting entries!
-    /// Use wallet.AddAccountingEntry instead, to write *and* update its caches.
-    bool WriteAccountingEntry(const uint64_t nAccEntryNum,
-                              const CAccountingEntry &acentry);
-    bool ReadAccount(const std::string &strAccount, CAccount &account);
-    bool WriteAccount(const std::string &strAccount, const CAccount &account);
-    bool EraseAccount(const std::string &strAccount);
-
     /// Write destination data key,value tuple to database.
     bool WriteDestData(const CTxDestination &address, const std::string &key,
                        const std::string &value);
     /// Erase destination data tuple from wallet database.
     bool EraseDestData(const CTxDestination &address, const std::string &key);
-
-    Amount GetAccountCreditDebit(const std::string &strAccount);
-    void ListAccountCreditDebit(const std::string &strAccount,
-                                std::list<CAccountingEntry> &acentries);
 
     DBErrors LoadWallet(CWallet *pwallet);
     DBErrors FindWalletTx(std::vector<TxId> &txIds,
@@ -243,7 +249,7 @@ public:
                                   std::string &errorStr);
     /* verifies the database file */
     static bool VerifyDatabaseFile(const fs::path &wallet_path,
-                                   std::string &warningStr,
+                                   std::vector<std::string> &warnings,
                                    std::string &errorStr);
 
     //! write the hdchain model (external chain child index counter)
@@ -256,10 +262,6 @@ public:
     bool TxnCommit();
     //! Abort current transaction
     bool TxnAbort();
-    //! Read wallet version
-    bool ReadVersion(int &nVersion);
-    //! Write wallet version
-    bool WriteVersion(int nVersion);
 
 private:
     BerkeleyBatch m_batch;

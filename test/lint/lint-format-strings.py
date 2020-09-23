@@ -18,13 +18,19 @@ FALSE_POSITIVES = [
     ("src/index/base.cpp", "FatalError(const char *fmt, const Args &... args)"),
     ("src/netbase.cpp", "LogConnectFailure(bool manual_connection, const char *fmt, const Args &... args)"),
     ("src/util/system.cpp",
-     "strprintf(_(COPYRIGHT_HOLDERS), _(COPYRIGHT_HOLDERS_SUBSTITUTION))"),
-    ("src/seeder/main.cpp", "fprintf(stderr, help, argv[0])"),
+     "strprintf(_(COPYRIGHT_HOLDERS).translated, COPYRIGHT_HOLDERS_SUBSTITUTION)"),
+    ("src/validationinterface.cpp",
+     "LogPrint(BCLog::VALIDATION, fmt \"\\n\", __VA_ARGS__)"),
     ("src/tinyformat.h", "printf(const char *fmt, const Args &... args)"),
     ("src/tinyformat.h", "printf(const char *fmt, TINYFORMAT_VARARGS(n))"),
     ("src/wallet/wallet.h",
      "LogPrintf((\"%s \" + fmt).c_str(), GetDisplayName(), parameters...)"),
     ("src/logging.h", "LogPrintf(const char *fmt, const Args &... args)"),
+    ("src/wallet/scriptpubkeyman.h",
+     "WalletLogPrintf(const std::string& fmt, const Params&... parameters)"),
+    ("src/wallet/scriptpubkeyman.cpp", "WalletLogPrintf(fmt, parameters...)"),
+    ("src/wallet/scriptpubkeyman.cpp",
+     "WalletLogPrintf(const std::string& fmt, const Params&... parameters)"),
 ]
 
 FUNCTION_NAMES_AND_NUMBER_OF_LEADING_ARGUMENTS = [
@@ -37,6 +43,7 @@ FUNCTION_NAMES_AND_NUMBER_OF_LEADING_ARGUMENTS = [
     ("snprintf", 2),
     ("sprintf", 1),
     ("strprintf", 0),
+    ("tfm::format", 1),  # Assuming tfm::::format(std::ostream&, ...
     ("vfprintf", 1),
     ("vprintf", 1),
     ("vsnprintf", 1),

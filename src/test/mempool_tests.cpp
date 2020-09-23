@@ -1,19 +1,19 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <txmempool.h>
 
-#include <policy/policy.h>
+#include <policy/settings.h>
 #include <reverse_iterator.h>
 #include <util/system.h>
+#include <util/time.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
 #include <algorithm>
-#include <list>
 #include <vector>
 
 BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
@@ -182,6 +182,8 @@ BOOST_AUTO_TEST_CASE(TestPackageAccounting) {
     }
 }
 
+static constexpr auto REMOVAL_REASON_DUMMY = MemPoolRemovalReason::REPLACED;
+
 BOOST_AUTO_TEST_CASE(MempoolRemoveTest) {
     // Test CTxMemPool::remove functionality
 
@@ -219,13 +221,13 @@ BOOST_AUTO_TEST_CASE(MempoolRemoveTest) {
 
     // Nothing in pool, remove should do nothing:
     unsigned int poolSize = testPool.size();
-    testPool.removeRecursive(CTransaction(txParent));
+    testPool.removeRecursive(CTransaction(txParent), REMOVAL_REASON_DUMMY);
     BOOST_CHECK_EQUAL(testPool.size(), poolSize);
 
     // Just the parent:
     testPool.addUnchecked(entry.FromTx(txParent));
     poolSize = testPool.size();
-    testPool.removeRecursive(CTransaction(txParent));
+    testPool.removeRecursive(CTransaction(txParent), REMOVAL_REASON_DUMMY);
     BOOST_CHECK_EQUAL(testPool.size(), poolSize - 1);
 
     // Parent, children, grandchildren:
@@ -236,18 +238,19 @@ BOOST_AUTO_TEST_CASE(MempoolRemoveTest) {
     }
     // Remove Child[0], GrandChild[0] should be removed:
     poolSize = testPool.size();
-    testPool.removeRecursive(CTransaction(txChild[0]));
+    testPool.removeRecursive(CTransaction(txChild[0]), REMOVAL_REASON_DUMMY);
     BOOST_CHECK_EQUAL(testPool.size(), poolSize - 2);
     // ... make sure grandchild and child are gone:
     poolSize = testPool.size();
-    testPool.removeRecursive(CTransaction(txGrandChild[0]));
+    testPool.removeRecursive(CTransaction(txGrandChild[0]),
+                             REMOVAL_REASON_DUMMY);
     BOOST_CHECK_EQUAL(testPool.size(), poolSize);
     poolSize = testPool.size();
-    testPool.removeRecursive(CTransaction(txChild[0]));
+    testPool.removeRecursive(CTransaction(txChild[0]), REMOVAL_REASON_DUMMY);
     BOOST_CHECK_EQUAL(testPool.size(), poolSize);
     // Remove parent, all children/grandchildren should go:
     poolSize = testPool.size();
-    testPool.removeRecursive(CTransaction(txParent));
+    testPool.removeRecursive(CTransaction(txParent), REMOVAL_REASON_DUMMY);
     BOOST_CHECK_EQUAL(testPool.size(), poolSize - 5);
     BOOST_CHECK_EQUAL(testPool.size(), 0UL);
 
@@ -261,7 +264,7 @@ BOOST_AUTO_TEST_CASE(MempoolRemoveTest) {
     // Now remove the parent, as might happen if a block-re-org occurs but the
     // parent cannot be put into the mempool (maybe because it is non-standard):
     poolSize = testPool.size();
-    testPool.removeRecursive(CTransaction(txParent));
+    testPool.removeRecursive(CTransaction(txParent), REMOVAL_REASON_DUMMY);
     BOOST_CHECK_EQUAL(testPool.size(), poolSize - 6);
     BOOST_CHECK_EQUAL(testPool.size(), 0UL);
 }
@@ -503,11 +506,14 @@ BOOST_AUTO_TEST_CASE(MempoolIndexingTest) {
     BOOST_CHECK_EQUAL(pool.size(), 10UL);
 
     // Now try removing tx10 and verify the sort order returns to normal
-    pool.removeRecursive(pool.mapTx.find(tx10.GetId())->GetTx());
+    pool.removeRecursive(pool.mapTx.find(tx10.GetId())->GetTx(),
+                         REMOVAL_REASON_DUMMY);
     CheckSort<descendant_score>(pool, snapshotOrder, "MempoolIndexingTest7");
 
-    pool.removeRecursive(pool.mapTx.find(tx9.GetId())->GetTx());
-    pool.removeRecursive(pool.mapTx.find(tx8.GetId())->GetTx());
+    pool.removeRecursive(pool.mapTx.find(tx9.GetId())->GetTx(),
+                         REMOVAL_REASON_DUMMY);
+    pool.removeRecursive(pool.mapTx.find(tx8.GetId())->GetTx(),
+                         REMOVAL_REASON_DUMMY);
 }
 
 BOOST_AUTO_TEST_CASE(MempoolAncestorIndexingTest) {
@@ -813,8 +819,6 @@ BOOST_AUTO_TEST_CASE(MempoolSizeLimitTest) {
         pool.GetMinFee(pool.DynamicMemoryUsage() * 9 / 2).GetFeePerK(),
         (maxFeeRateRemoved.GetFeePerK() + feeIncrement) / 8 + SATOSHI);
     // ... with a 1/4 halflife when mempool is < 1/4 its target size
-
-    SetMockTime(0);
 }
 
 // expectedSize can be smaller than correctlyOrderedIds.size(), since we
@@ -930,13 +934,6 @@ make_tx(std::vector<Amount> &&output_values,
     return MakeTransactionRef(tx);
 }
 
-#define MK_OUTPUTS(amounts...)                                                 \
-    std::vector<Amount> { amounts }
-#define MK_INPUTS(txs...)                                                      \
-    std::vector<CTransactionRef> { txs }
-#define MK_INPUT_IDX(idxes...)                                                 \
-    std::vector<uint32_t> { idxes }
-
 BOOST_AUTO_TEST_CASE(MempoolAncestryTests) {
     size_t ancestors, descendants;
 
@@ -948,7 +945,7 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests) {
     //
     // [tx1]
     //
-    CTransactionRef tx1 = make_tx(MK_OUTPUTS(10 * COIN));
+    CTransactionRef tx1 = make_tx(/* output_values */ {10 * COIN});
     pool.addUnchecked(entry.Fee(10000 * SATOSHI).FromTx(tx1));
 
     // Ancestors / descendants should be 1 / 1 (itself / itself)
@@ -961,7 +958,7 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests) {
     // [tx1].0 <- [tx2]
     //
     CTransactionRef tx2 =
-        make_tx(MK_OUTPUTS(495 * CENT, 5 * COIN), MK_INPUTS(tx1));
+        make_tx(/* output_values */ {495 * CENT, 5 * COIN}, /* inputs */ {tx1});
     pool.addUnchecked(entry.Fee(10000 * SATOSHI).FromTx(tx2));
 
     // Ancestors / descendants should be:
@@ -980,8 +977,8 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests) {
     //
     // [tx1].0 <- [tx2].0 <- [tx3]
     //
-    CTransactionRef tx3 =
-        make_tx(MK_OUTPUTS(290 * CENT, 200 * CENT), MK_INPUTS(tx2));
+    CTransactionRef tx3 = make_tx(/* output_values */ {290 * CENT, 200 * CENT},
+                                  /* inputs */ {tx2});
     pool.addUnchecked(entry.Fee(10000 * SATOSHI).FromTx(tx3));
 
     // Ancestors / descendants should be:
@@ -1006,8 +1003,8 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests) {
     //              |
     //              \---1 <- [tx4]
     //
-    CTransactionRef tx4 = make_tx(MK_OUTPUTS(290 * CENT, 250 * CENT),
-                                  MK_INPUTS(tx2), MK_INPUT_IDX(1));
+    CTransactionRef tx4 = make_tx(/* output_values */ {290 * CENT, 250 * CENT},
+                                  /* inputs */ {tx2}, /* input_indices */ {1});
     pool.addUnchecked(entry.Fee(10000 * SATOSHI).FromTx(tx4));
 
     // Ancestors / descendants should be:
@@ -1043,15 +1040,18 @@ BOOST_AUTO_TEST_CASE(MempoolAncestryTests) {
     Amount v = 5 * COIN;
     for (uint64_t i = 0; i < 5; i++) {
         CTransactionRef &tyi = *ty[i];
-        tyi = make_tx(MK_OUTPUTS(v), i > 0 ? MK_INPUTS(*ty[i - 1])
-                                           : std::vector<CTransactionRef>());
+        tyi = make_tx(/* output_values */ {v},
+                      /* inputs */ i > 0
+                          ? std::vector<CTransactionRef>{*ty[i - 1]}
+                          : std::vector<CTransactionRef>{});
         v -= 50 * CENT;
         pool.addUnchecked(entry.Fee(10000 * SATOSHI).FromTx(tyi));
         pool.GetTransactionAncestry(tyi->GetId(), ancestors, descendants);
         BOOST_CHECK_EQUAL(ancestors, i + 1);
         BOOST_CHECK_EQUAL(descendants, i + 1);
     }
-    CTransactionRef ty6 = make_tx(MK_OUTPUTS(5 * COIN), MK_INPUTS(tx3, ty5));
+    CTransactionRef ty6 =
+        make_tx(/* output_values */ {5 * COIN}, /* inputs */ {tx3, ty5});
     pool.addUnchecked(entry.Fee(10000 * SATOSHI).FromTx(ty6));
 
     // Ancestors / descendants should be:

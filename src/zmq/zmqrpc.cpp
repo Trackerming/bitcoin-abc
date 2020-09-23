@@ -15,22 +15,24 @@ namespace {
 
 UniValue getzmqnotifications(const Config &config,
                              const JSONRPCRequest &request) {
-    if (request.fHelp || request.params.size() != 0) {
-        throw std::runtime_error(
-            "getzmqnotifications\n"
-            "\nReturns information about the active ZeroMQ notifications.\n"
-            "\nResult:\n"
+    RPCHelpMan{
+        "getzmqnotifications",
+        "Returns information about the active ZeroMQ notifications.\n",
+        {},
+        RPCResult{
             "[\n"
             "  {                        (json object)\n"
             "    \"type\": \"pubhashtx\",   (string) Type of notification\n"
             "    \"address\": \"...\"       (string) Address of the publisher\n"
+            "    \"hwm\": n               (numeric) Outbound message high "
+            "water mark\n"
             "  },\n"
             "  ...\n"
-            "]\n"
-            "\nExamples:\n" +
-            HelpExampleCli("getzmqnotifications", "") +
-            HelpExampleRpc("getzmqnotifications", ""));
+            "]\n"},
+        RPCExamples{HelpExampleCli("getzmqnotifications", "") +
+                    HelpExampleRpc("getzmqnotifications", "")},
     }
+        .Check(request);
 
     UniValue result(UniValue::VARR);
     if (g_zmq_notification_interface != nullptr) {
@@ -39,6 +41,7 @@ UniValue getzmqnotifications(const Config &config,
             UniValue obj(UniValue::VOBJ);
             obj.pushKV("type", n->GetType());
             obj.pushKV("address", n->GetAddress());
+            obj.pushKV("hwm", n->GetOutboundMessageHighWaterMark());
             result.push_back(obj);
         }
     }
@@ -47,7 +50,7 @@ UniValue getzmqnotifications(const Config &config,
 }
 
 // clang-format off
-static const ContextFreeRPCCommand commands[] = {
+static const CRPCCommand commands[] = {
     //  category          name                     actor (function)        argNames
     //  ----------------- ------------------------ ----------------------- ----------
     { "zmq",            "getzmqnotifications",   getzmqnotifications,    {} },

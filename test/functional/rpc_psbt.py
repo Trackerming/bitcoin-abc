@@ -8,9 +8,11 @@
 import json
 import os
 
+from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
+    assert_greater_than,
     assert_raises_rpc_error,
     find_output,
 )
@@ -80,6 +82,28 @@ class PSBTTest(BitcoinTestFramework):
         self.nodes[1].sendrawtransaction(
             self.nodes[1].finalizepsbt(walletprocesspsbt_out['psbt'])['hex'])
 
+        # feeRate of 0.1 BCH / KB produces a total fee slightly below -maxtxfee
+        res = self.nodes[1].walletcreatefundedpsbt([
+            {"txid": txid, "vout": p2sh_pos},
+            {"txid": txid, "vout": p2pkh_pos}
+        ], {self.nodes[1].getnewaddress(): 29.99}, 0, {"feeRate": 0.1})
+        assert_greater_than(res["fee"], 0.06)
+        assert_greater_than(0.07, res["fee"])
+
+        # feeRate of 10 BCH / KB produces a total fee well above -maxtxfee
+        # previously this was silently capped at -maxtxfee
+        assert_raises_rpc_error(
+            -4,
+            "Fee exceeds maximum configured by -maxtxfee",
+            self.nodes[1].walletcreatefundedpsbt,
+            [
+                {"txid": txid, "vout": p2sh_pos},
+                {"txid": txid, "vout": p2pkh_pos},
+            ],
+            {self.nodes[1].getnewaddress(): 29.99},
+            0,
+            {"feeRate": 10})
+
         # partially sign multisig things with node 1
         psbtx = self.nodes[1].walletcreatefundedpsbt([{"txid": txid, "vout": p2sh_pos}], {
                                                      self.nodes[1].getnewaddress(): 9.99})['psbt']
@@ -106,6 +130,21 @@ class PSBTTest(BitcoinTestFramework):
         new_psbt = self.nodes[0].converttopsbt(rawtx['hex'])
         self.nodes[0].decodepsbt(new_psbt)
 
+        # Make sure that a non-psbt with signatures cannot be converted
+        # Error is "Inputs must not have scriptSigs"
+        signedtx = self.nodes[0].signrawtransactionwithwallet(rawtx['hex'])
+        assert_raises_rpc_error(-22,
+                                "",
+                                self.nodes[0].converttopsbt,
+                                signedtx['hex'])
+        assert_raises_rpc_error(-22,
+                                "",
+                                self.nodes[0].converttopsbt,
+                                signedtx['hex'],
+                                False)
+        # Unless we allow it to convert and strip signatures
+        self.nodes[0].converttopsbt(signedtx['hex'], True)
+
         # Explicilty allow converting non-empty txs
         new_psbt = self.nodes[0].converttopsbt(rawtx['hex'])
         self.nodes[0].decodepsbt(new_psbt)
@@ -115,10 +154,10 @@ class PSBTTest(BitcoinTestFramework):
         node2_addr = self.nodes[2].getnewaddress()
         txid1 = self.nodes[0].sendtoaddress(node1_addr, 13)
         txid2 = self.nodes[0].sendtoaddress(node2_addr, 13)
-        self.nodes[0].generate(6)
+        blockhash = self.nodes[0].generate(6)[0]
         self.sync_all()
-        vout1 = find_output(self.nodes[1], txid1, 13)
-        vout2 = find_output(self.nodes[2], txid2, 13)
+        vout1 = find_output(self.nodes[1], txid1, 13, blockhash=blockhash)
+        vout2 = find_output(self.nodes[2], txid2, 13, blockhash=blockhash)
 
         # Create a psbt spending outputs from nodes 1 and 2
         psbt_orig = self.nodes[0].createpsbt([{"txid": txid1, "vout": vout1}, {
@@ -138,6 +177,19 @@ class PSBTTest(BitcoinTestFramework):
         self.nodes[0].sendrawtransaction(finalized)
         self.nodes[0].generate(6)
         self.sync_all()
+
+        unspent = self.nodes[0].listunspent()[0]
+
+        # Regression test for 14473 (mishandling of already-signed
+        # transaction):
+        psbtx_info = self.nodes[0].walletcreatefundedpsbt([{"txid": unspent["txid"], "vout":unspent["vout"]}], [
+                                                          {self.nodes[2].getnewaddress():unspent["amount"] + 1}])
+        complete_psbt = self.nodes[0].walletprocesspsbt(psbtx_info["psbt"])
+        double_processed_psbt = self.nodes[0].walletprocesspsbt(
+            complete_psbt["psbt"])
+        assert_equal(complete_psbt, double_processed_psbt)
+        # We don't care about the decode result, but decoding must succeed.
+        self.nodes[0].decodepsbt(double_processed_psbt["psbt"])
 
         # BIP 174 Test Vectors
 
@@ -186,6 +238,12 @@ class PSBTTest(BitcoinTestFramework):
             combined = self.nodes[2].combinepsbt(combiner['combine'])
             assert_equal(combined, combiner['result'])
 
+        # Empty combiner test
+        assert_raises_rpc_error(-8,
+                                "Parameter 'txs' cannot be empty",
+                                self.nodes[0].combinepsbt,
+                                [])
+
         # Finalizer test
         for finalizer in finalizers:
             finalized = self.nodes[2].finalizepsbt(
@@ -197,6 +255,121 @@ class PSBTTest(BitcoinTestFramework):
             extracted = self.nodes[2].finalizepsbt(
                 extractor['extract'], True)['hex']
             assert_equal(extracted, extractor['result'])
+
+        # Test decoding error: invalid base64
+        assert_raises_rpc_error(-22,
+                                "TX decode failed invalid base64",
+                                self.nodes[0].decodepsbt,
+                                ";definitely not base64;")
+
+        # Test that psbts with p2pkh outputs are created properly
+        p2pkh = self.nodes[0].getnewaddress()
+        psbt = self.nodes[1].walletcreatefundedpsbt(
+            [], [{p2pkh: 1}], 0, {"includeWatching": True}, True)
+        self.nodes[0].decodepsbt(psbt['psbt'])
+
+        # Send to all types of addresses
+        addr1 = self.nodes[1].getnewaddress("")  # originally bech32
+        txid1 = self.nodes[0].sendtoaddress(addr1, 11)
+        vout1 = find_output(self.nodes[0], txid1, 11)
+        addr2 = self.nodes[1].getnewaddress("")  # originally legacy
+        txid2 = self.nodes[0].sendtoaddress(addr2, 11)
+        vout2 = find_output(self.nodes[0], txid2, 11)
+        addr3 = self.nodes[1].getnewaddress("")  # originally p2sh-segwit
+        txid3 = self.nodes[0].sendtoaddress(addr3, 11)
+        vout3 = find_output(self.nodes[0], txid3, 11)
+        self.sync_all()
+
+        def test_psbt_input_keys(psbt_input, keys):
+            """Check that the psbt input has only the expected keys."""
+            assert_equal(set(keys), set(psbt_input.keys()))
+
+        # Create a PSBT. None of the inputs are filled initially
+        psbt = self.nodes[1].createpsbt([{"txid": txid1, "vout": vout1}, {"txid": txid2, "vout": vout2}, {
+                                        "txid": txid3, "vout": vout3}], {self.nodes[0].getnewaddress(): 32.999})
+        decoded = self.nodes[1].decodepsbt(psbt)
+        test_psbt_input_keys(decoded['inputs'][0], [])
+        test_psbt_input_keys(decoded['inputs'][1], [])
+        test_psbt_input_keys(decoded['inputs'][2], [])
+
+        # Update a PSBT with UTXOs from the node
+        updated = self.nodes[1].utxoupdatepsbt(psbt)
+        decoded = self.nodes[1].decodepsbt(updated)
+        test_psbt_input_keys(decoded['inputs'][1], [])
+        test_psbt_input_keys(decoded['inputs'][2], [])
+
+        # Try again, now while providing descriptors
+        descs = [self.nodes[1].getaddressinfo(addr)['desc'] for addr in [
+            addr1, addr2, addr3]]
+        updated = self.nodes[1].utxoupdatepsbt(psbt=psbt, descriptors=descs)
+        decoded = self.nodes[1].decodepsbt(updated)
+        test_psbt_input_keys(decoded['inputs'][1], [])
+
+        # Two PSBTs with a common input should not be joinable
+        psbt1 = self.nodes[1].createpsbt([{"txid": txid1, "vout": vout1}], {
+                                         self.nodes[0].getnewaddress(): Decimal('10.999')})
+        assert_raises_rpc_error(-8, "exists in multiple PSBTs",
+                                self.nodes[1].joinpsbts, [psbt1, updated])
+
+        # Join two distinct PSBTs
+        addr4 = self.nodes[1].getnewaddress("")
+        txid4 = self.nodes[0].sendtoaddress(addr4, 5)
+        vout4 = find_output(self.nodes[0], txid4, 5)
+        self.nodes[0].generate(6)
+        self.sync_all()
+        psbt2 = self.nodes[1].createpsbt([{"txid": txid4, "vout": vout4}], {
+                                         self.nodes[0].getnewaddress(): Decimal('4.999')})
+        psbt2 = self.nodes[1].walletprocesspsbt(psbt2)['psbt']
+        psbt2_decoded = self.nodes[0].decodepsbt(psbt2)
+        assert "final_scriptSig" in psbt2_decoded['inputs'][0]
+        joined = self.nodes[0].joinpsbts([psbt, psbt2])
+        joined_decoded = self.nodes[0].decodepsbt(joined)
+        assert len(joined_decoded['inputs']) == 4 and len(
+            joined_decoded['outputs']) == 2 and "final_scriptSig" not in joined_decoded['inputs'][3]
+
+        # Fail when trying to join less than two PSBTs
+        assert_raises_rpc_error(-8,
+                                "At least two PSBTs are required to join PSBTs.", self.nodes[1].joinpsbts, [])
+        assert_raises_rpc_error(-8,
+                                "At least two PSBTs are required to join PSBTs.", self.nodes[1].joinpsbts, [psbt2])
+
+        # Check that joining shuffles the inputs and outputs
+        # 10 attempts should be enough to get a shuffled join
+        shuffled = False
+        for i in range(0, 10):
+            shuffled_joined = self.nodes[0].joinpsbts([psbt, psbt2])
+            shuffled |= joined != shuffled_joined
+            if shuffled:
+                break
+        assert shuffled
+
+        # Newly created PSBT needs UTXOs and updating
+        addr = self.nodes[1].getnewaddress("")
+        txid = self.nodes[0].sendtoaddress(addr, 7)
+        blockhash = self.nodes[0].generate(6)[0]
+        self.sync_all()
+        vout = find_output(self.nodes[0], txid, 7, blockhash=blockhash)
+        psbt = self.nodes[1].createpsbt([{"txid": txid, "vout": vout}], {
+                                        self.nodes[0].getnewaddress(""): Decimal('6.999')})
+        analyzed = self.nodes[0].analyzepsbt(psbt)
+        assert not analyzed['inputs'][0]['has_utxo'] and not analyzed['inputs'][0][
+            'is_final'] and analyzed['inputs'][0]['next'] == 'updater' and analyzed['next'] == 'updater'
+
+        # After update with wallet, only needs signing
+        updated = self.nodes[1].walletprocesspsbt(
+            psbt, False, 'ALL|FORKID', True)['psbt']
+        analyzed = self.nodes[0].analyzepsbt(updated)
+        assert analyzed['inputs'][0]['has_utxo'] and not analyzed['inputs'][0][
+            'is_final'] and analyzed['inputs'][0]['next'] == 'signer' and analyzed['next'] == 'signer'
+
+        # Check fee and size things
+        assert analyzed['fee'] == Decimal(
+            '0.001') and analyzed['estimated_vsize'] == 191 and analyzed['estimated_feerate'] == Decimal('0.00523560')
+
+        # After signing and finalizing, needs extracting
+        signed = self.nodes[1].walletprocesspsbt(updated)['psbt']
+        analyzed = self.nodes[0].analyzepsbt(signed)
+        assert analyzed['inputs'][0]['has_utxo'] and analyzed['inputs'][0]['is_final'] and analyzed['next'] == 'extractor'
 
 
 if __name__ == '__main__':

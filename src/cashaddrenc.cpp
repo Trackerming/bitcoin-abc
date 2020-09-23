@@ -59,7 +59,8 @@ std::vector<uint8_t> PackAddrData(const T &id, uint8_t type) {
     // hash, with version byte.  Add half a byte(4) so integer math provides
     // the next multiple-of-5 that would fit all the data.
     converted.reserve(((size + 1) * 8 + 4) / 5);
-    ConvertBits<8, 5, true>(converted, std::begin(data), std::end(data));
+    ConvertBits<8, 5, true>([&](uint8_t c) { converted.push_back(c); },
+                            std::begin(data), std::end(data));
 
     return converted;
 }
@@ -67,14 +68,14 @@ std::vector<uint8_t> PackAddrData(const T &id, uint8_t type) {
 // Implements encoding of CTxDestination using cashaddr.
 class CashAddrEncoder : public boost::static_visitor<std::string> {
 public:
-    CashAddrEncoder(const CChainParams &p) : params(p) {}
+    explicit CashAddrEncoder(const CChainParams &p) : params(p) {}
 
-    std::string operator()(const CKeyID &id) const {
+    std::string operator()(const PKHash &id) const {
         std::vector<uint8_t> data = PackAddrData(id, PUBKEY_TYPE);
         return cashaddr::Encode(params.CashAddrPrefix(), data);
     }
 
-    std::string operator()(const CScriptID &id) const {
+    std::string operator()(const ScriptHash &id) const {
         std::vector<uint8_t> data = PackAddrData(id, SCRIPT_TYPE);
         return cashaddr::Encode(params.CashAddrPrefix(), data);
     }
@@ -123,23 +124,12 @@ CashAddrContent DecodeCashAddrContent(const std::string &addr,
         return {};
     }
 
-    // Check that the padding is zero.
-    size_t extrabits = payload.size() * 5 % 8;
-    if (extrabits >= 5) {
-        // We have more padding than allowed.
-        return {};
-    }
-
-    uint8_t last = payload.back();
-    uint8_t mask = (1 << extrabits) - 1;
-    if (last & mask) {
-        // We have non zero bits as padding.
-        return {};
-    }
-
     std::vector<uint8_t> data;
     data.reserve(payload.size() * 5 / 8);
-    ConvertBits<5, 8, false>(data, begin(payload), end(payload));
+    if (!ConvertBits<5, 8, false>([&](uint8_t c) { data.push_back(c); },
+                                  begin(payload), end(payload))) {
+        return {};
+    }
 
     // Decode type and size from the version.
     uint8_t version = data[0];
@@ -175,9 +165,9 @@ CTxDestination DecodeCashAddrDestination(const CashAddrContent &content) {
 
     switch (content.type) {
         case PUBKEY_TYPE:
-            return CKeyID(hash);
+            return PKHash(hash);
         case SCRIPT_TYPE:
-            return CScriptID(hash);
+            return ScriptHash(hash);
         default:
             return CNoDestination{};
     }

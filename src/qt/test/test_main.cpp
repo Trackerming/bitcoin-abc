@@ -6,11 +6,9 @@
 #include <config/bitcoin-config.h>
 #endif
 
-#include <chainparams.h>
 #include <compat/setenv.h>
 #include <interfaces/node.h>
 #include <key.h>
-#include <util/system.h>
 
 #include <qt/bitcoin.h>
 #include <qt/test/apptests.h>
@@ -26,6 +24,8 @@
 #endif // ENABLE_BIP70
 #include <qt/test/wallettests.h>
 #endif // ENABLE_WALLET
+
+#include <test/util/setup_common.h>
 
 #include <QApplication>
 #include <QObject>
@@ -49,22 +49,17 @@ Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin);
 #endif
 #endif
 
-extern void noui_connect();
-
 // This is all you need to run all the tests
 int main(int argc, char *argv[]) {
-    SetupEnvironment();
-    SetupNetworking();
-    SelectParams(CBaseChainParams::REGTEST);
-    noui_connect();
-    ClearDatadirCache();
-    fs::path pathTemp =
-        fs::temp_directory_path() / strprintf("test_bitcoin-qt_%lu_%i",
-                                              (unsigned long)GetTime(),
-                                              (int)GetRand(100000));
-    fs::create_directories(pathTemp);
-    gArgs.ForceSetArg("-datadir", pathTemp.string());
-    auto node = interfaces::MakeNode();
+    // Initialize persistent globals with the testing setup state for sanity.
+    // E.g. -datadir in gArgs is set to a temp directory dummy value (instead
+    // of defaulting to the default datadir), or globalChainParams is set to
+    // regtest params.
+    //
+    // All tests must use their own testing setup (if needed).
+    { BasicTestingSetup dummy{CBaseChainParams::REGTEST}; }
+
+    std::unique_ptr<interfaces::Node> node = interfaces::MakeNode();
 
     bool fInvalid = false;
 
@@ -98,7 +93,7 @@ int main(int argc, char *argv[]) {
         fInvalid = true;
     }
 #endif
-    RPCNestedTests test3;
+    RPCNestedTests test3(*node);
     if (QTest::qExec(&test3) != 0) {
         fInvalid = true;
     }
@@ -115,17 +110,15 @@ int main(int argc, char *argv[]) {
         fInvalid = true;
     }
 #ifdef ENABLE_WALLET
-    WalletTests test7;
+    WalletTests test7(*node);
     if (QTest::qExec(&test7) != 0) {
         fInvalid = true;
     }
-    AddressBookTests test8;
+    AddressBookTests test8(*node);
     if (QTest::qExec(&test8) != 0) {
         fInvalid = true;
     }
 #endif
-
-    fs::remove_all(pathTemp);
 
     return fInvalid;
 }

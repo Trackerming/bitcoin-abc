@@ -4,14 +4,10 @@
 
 #include <qt/platformstyle.h>
 
-#include <qt/guiconstants.h>
-
 #include <QApplication>
 #include <QColor>
-#include <QIcon>
 #include <QImage>
 #include <QPalette>
-#include <QPixmap>
 
 static const struct {
     const char *platformId;

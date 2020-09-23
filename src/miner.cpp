@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -15,33 +15,22 @@
 #include <consensus/merkle.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
-#include <hash.h>
 #include <minerfund.h>
 #include <net.h>
 #include <policy/policy.h>
-#include <pow.h>
+#include <policy/settings.h>
+#include <pow/pow.h>
 #include <primitives/transaction.h>
-#include <script/standard.h>
 #include <timedata.h>
-#include <txmempool.h>
 #include <util/moneystr.h>
 #include <util/system.h>
+#include <util/validation.h>
 #include <validation.h>
-#include <validationinterface.h>
 
 #include <algorithm>
-#include <queue>
 #include <utility>
 
-// Unconfirmed transactions in the memory pool often depend on other
-// transactions in the memory pool. When we select transactions from the
-// pool, we select by highest fee rate of a transaction combined with all
-// its ancestors.
-
-uint64_t nLastBlockTx = 0;
-uint64_t nLastBlockSize = 0;
-
-int64_t UpdateTime(CBlockHeader *pblock, const Consensus::Params &params,
+int64_t UpdateTime(CBlockHeader *pblock, const CChainParams &chainParams,
                    const CBlockIndex *pindexPrev) {
     int64_t nOldTime = pblock->nTime;
     int64_t nNewTime =
@@ -52,8 +41,8 @@ int64_t UpdateTime(CBlockHeader *pblock, const Consensus::Params &params,
     }
 
     // Updating time can change work required on testnet:
-    if (params.fPowAllowMinDifficultyBlocks) {
-        pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, params);
+    if (chainParams.GetConsensus().fPowAllowMinDifficultyBlocks) {
+        pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, chainParams);
     }
 
     return nNewTime - nOldTime;
@@ -72,7 +61,7 @@ BlockAssembler::Options::Options()
 BlockAssembler::BlockAssembler(const CChainParams &params,
                                const CTxMemPool &_mempool,
                                const Options &options)
-    : chainparams(params), mempool(&_mempool) {
+    : chainParams(params), mempool(&_mempool) {
     blockMinFeeRate = options.blockMinFeeRate;
     // Limit size to between 1K and options.nExcessiveBlockSize -1K for sanity:
     nMaxGeneratedBlockSize = std::max<uint64_t>(
@@ -127,6 +116,9 @@ void BlockAssembler::resetBlock() {
     nFees = Amount::zero();
 }
 
+Optional<int64_t> BlockAssembler::m_last_block_num_txs{nullopt};
+Optional<int64_t> BlockAssembler::m_last_block_size{nullopt};
+
 std::unique_ptr<CBlockTemplate>
 BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     int64_t nTimeStart = GetTimeMicros();
@@ -145,16 +137,16 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     pblocktemplate->entries.emplace_back(CTransactionRef(), -SATOSHI, -1);
 
     LOCK2(cs_main, mempool->cs);
-    CBlockIndex *pindexPrev = chainActive.Tip();
+    CBlockIndex *pindexPrev = ::ChainActive().Tip();
     assert(pindexPrev != nullptr);
     nHeight = pindexPrev->nHeight + 1;
 
-    const Consensus::Params &consensusParams = chainparams.GetConsensus();
+    const Consensus::Params &consensusParams = chainParams.GetConsensus();
 
     pblock->nVersion = ComputeBlockVersion(pindexPrev, consensusParams);
     // -regtest only: allow overriding block.nVersion with
     // -blockversion=N to test forking scenarios
-    if (chainparams.MineBlocksOnDemand()) {
+    if (chainParams.MineBlocksOnDemand()) {
         pblock->nVersion = gArgs.GetArg("-blockversion", pblock->nVersion);
     }
 
@@ -164,11 +156,6 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
         (STANDARD_LOCKTIME_VERIFY_FLAGS & LOCKTIME_MEDIAN_TIME_PAST)
             ? nMedianTimePast
             : pblock->GetBlockTime();
-
-    // After the sigchecks activation we repurpose the 'sigops' tracking in
-    // mempool/mining to actually track sigchecks instead. (Proper SigOps will
-    // not need to be counted any more since it's getting deactivated.)
-    fUseSigChecks = IsPhononEnabled(chainparams.GetConsensus(), pindexPrev);
 
     int nPackagesSelected = 0;
     int nDescendantsUpdated = 0;
@@ -191,8 +178,8 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
 
     int64_t nTime1 = GetTimeMicros();
 
-    nLastBlockTx = nBlockTx;
-    nLastBlockSize = nBlockSize;
+    m_last_block_num_txs = nBlockTx;
+    m_last_block_size = nBlockSize;
 
     // Create coinbase transaction.
     CMutableTransaction coinbaseTx;
@@ -207,7 +194,7 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     const std::vector<CTxDestination> whitelisted =
         GetMinerFundWhitelist(consensusParams, pindexPrev);
     if (!whitelisted.empty()) {
-        const Amount fund = coinbaseTx.vout[0].nValue / MINER_FUND_RATIO;
+        const Amount fund = GetMinerFundAmount(coinbaseTx.vout[0].nValue);
         coinbaseTx.vout[0].nValue -= fund;
         coinbaseTx.vout.emplace_back(fund,
                                      GetScriptForDestination(whitelisted[0]));
@@ -231,14 +218,13 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
 
     // Fill in header.
     pblock->hashPrevBlock = pindexPrev->GetBlockHash();
-    UpdateTime(pblock, consensusParams, pindexPrev);
-    pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, consensusParams);
+    UpdateTime(pblock, chainParams, pindexPrev);
+    pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, chainParams);
     pblock->nNonce = 0;
-    pblocktemplate->entries[0].sigOpCount = GetSigOpCountWithoutP2SH(
-        *pblocktemplate->entries[0].tx, STANDARD_SCRIPT_VERIFY_FLAGS);
+    pblocktemplate->entries[0].sigOpCount = 0;
 
-    CValidationState state;
-    if (!TestBlockValidity(state, chainparams, *pblock, pindexPrev,
+    BlockValidationState state;
+    if (!TestBlockValidity(state, chainParams, *pblock, pindexPrev,
                            BlockValidationOptions(nMaxGeneratedBlockSize)
                                .withCheckPoW(false)
                                .withCheckMerkleRoot(false))) {
@@ -270,11 +256,6 @@ void BlockAssembler::onlyUnconfirmed(CTxMemPool::setEntries &testSet) {
     }
 }
 
-uint64_t BlockAssembler::MaxBlockSigOpsCountForSize(uint64_t blockSize) const {
-    return fUseSigChecks ? nMaxGeneratedBlockSigChecks
-                         : GetMaxBlockSigOpsCount(blockSize);
-}
-
 bool BlockAssembler::TestPackage(uint64_t packageSize,
                                  int64_t packageSigOps) const {
     auto blockSizeWithPackage = nBlockSize + packageSize;
@@ -282,8 +263,7 @@ bool BlockAssembler::TestPackage(uint64_t packageSize,
         return false;
     }
 
-    if (nBlockSigOps + packageSigOps >=
-        MaxBlockSigOpsCountForSize(blockSizeWithPackage)) {
+    if (nBlockSigOps + packageSigOps >= nMaxGeneratedBlockSigChecks) {
         return false;
     }
 
@@ -299,8 +279,8 @@ bool BlockAssembler::TestPackageTransactions(
     const CTxMemPool::setEntries &package) {
     uint64_t nPotentialBlockSize = nBlockSize;
     for (CTxMemPool::txiter it : package) {
-        CValidationState state;
-        if (!ContextualCheckTransaction(chainparams.GetConsensus(), it->GetTx(),
+        TxValidationState state;
+        if (!ContextualCheckTransaction(chainParams.GetConsensus(), it->GetTx(),
                                         state, nHeight, nLockTimeCutoff,
                                         nMedianTimePast)) {
             return false;

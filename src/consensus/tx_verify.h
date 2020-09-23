@@ -12,14 +12,7 @@ struct Amount;
 class CBlockIndex;
 class CCoinsViewCache;
 class CTransaction;
-class CValidationState;
-
-/**
- * Context-independent validity checks for coinbase and non-coinbase
- * transactions.
- */
-bool CheckRegularTransaction(const CTransaction &tx, CValidationState &state);
-bool CheckCoinbase(const CTransaction &tx, CValidationState &state);
+class TxValidationState;
 
 namespace Consensus {
 struct Params;
@@ -31,7 +24,7 @@ struct Params;
  * @param[out] txfee Set to the transaction fee if successful.
  * Preconditions: tx.IsCoinBase() is false.
  */
-bool CheckTxInputs(const CTransaction &tx, CValidationState &state,
+bool CheckTxInputs(const CTransaction &tx, TxValidationState &state,
                    const CCoinsViewCache &inputs, int nSpendHeight,
                    Amount &txfee);
 
@@ -44,8 +37,9 @@ bool CheckTxInputs(const CTransaction &tx, CValidationState &state,
  * activation/deactivation and CLTV.
  */
 bool ContextualCheckTransaction(const Consensus::Params &params,
-                                const CTransaction &tx, CValidationState &state,
-                                int nHeight, int64_t nLockTimeCutoff,
+                                const CTransaction &tx,
+                                TxValidationState &state, int nHeight,
+                                int64_t nLockTimeCutoff,
                                 int64_t nMedianTimePast);
 
 /**
@@ -69,36 +63,5 @@ bool EvaluateSequenceLocks(const CBlockIndex &block,
  */
 bool SequenceLocks(const CTransaction &tx, int flags,
                    std::vector<int> *prevHeights, const CBlockIndex &block);
-
-/**
- * Count ECDSA signature operations the old-fashioned (pre-0.6) way
- * @return number of sigops this transaction's outputs will produce when spent
- * @see CTransaction::FetchInputs
- */
-uint64_t GetSigOpCountWithoutP2SH(const CTransaction &tx, uint32_t flags);
-
-/**
- * Count ECDSA signature operations in pay-to-script-hash inputs.
- *
- * @param[in] mapInputs Map of previous transactions that have outputs we're
- * spending
- * @return maximum number of sigops required to validate this transaction's
- * inputs
- * @see CTransaction::FetchInputs
- */
-uint64_t GetP2SHSigOpCount(const CTransaction &tx,
-                           const CCoinsViewCache &mapInputs, uint32_t flags);
-
-/**
- * Compute total signature operation of a transaction.
- * @param[in] tx     Transaction for which we are computing the count
- * @param[in] inputs Map of previous transactions that have outputs we're
- * spending
- * @param[in] flags  Script verification flags
- * @return Total signature operation count of tx
- */
-uint64_t GetTransactionSigOpCount(const CTransaction &tx,
-                                  const CCoinsViewCache &inputs,
-                                  uint32_t flags);
 
 #endif // BITCOIN_CONSENSUS_TX_VERIFY_H

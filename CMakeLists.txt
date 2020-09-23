@@ -1,22 +1,28 @@
 # Copyright (c) 2017 The Bitcoin developers
 
-cmake_minimum_required(VERSION 3.13)
+cmake_minimum_required(VERSION 3.16)
 
 set(CMAKE_USER_MAKE_RULES_OVERRIDE
 	"${CMAKE_SOURCE_DIR}/cmake/modules/OverrideInitFlags.cmake"
 )
 
 project(bitcoin-abc
-	VERSION 0.21.1
+	VERSION 0.22.3
 	DESCRIPTION "Bitcoin ABC is a full node implementation of the Bitcoin Cash protocol."
 	HOMEPAGE_URL "https://www.bitcoinabc.org"
 )
 
+add_custom_target(print-version
+  COMMENT "Print the current ${PROJECT_NAME} version"
+  COMMAND "${CMAKE_COMMAND}" -E echo "${PROJECT_VERSION}"
+)
+
 # Package information
 set(PACKAGE_NAME "Bitcoin ABC")
+set(PACKAGE_BUGREPORT "https://github.com/Bitcoin-ABC/bitcoin-abc/issues")
 
 # Copyright
-set(COPYRIGHT_YEAR 2019)
+set(COPYRIGHT_YEAR 2020)
 set(COPYRIGHT_HOLDERS "The %s developers")
 set(COPYRIGHT_HOLDERS_SUBSTITUTION Bitcoin)
 string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${COPYRIGHT_HOLDERS})
@@ -31,6 +37,7 @@ set(CONTRIB_PATH ${CMAKE_CURRENT_SOURCE_DIR}/contrib)
 if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
 		"Select the configuration for the build" FORCE)
+	set(__NO_USER_CMAKE_BUILD_TYPE ON CACHE BOOL "True if the user didn't set a build type on the command line")
 endif()
 
 # Find the python interpreter. This is required for several targets.
@@ -42,8 +49,11 @@ add_custom_target(check)
 add_custom_target(check-extended)
 add_custom_target(check-upgrade-activated)
 add_custom_target(check-upgrade-activated-extended)
-add_custom_target(check-symbols)
-add_custom_target(check-security)
+
+# Add the global install targets
+add_custom_target(install-all)
+add_custom_target(install-debug)
+add_custom_target(install-all-debug)
 
 include(PackageHelper)
 exclude_git_ignored_files_from_source_package()
@@ -68,12 +78,53 @@ exclude_from_source_package(
 	"Dockerfile-doxygen"
 )
 
+option(ENABLE_COVERAGE "Enable coverage" OFF)
+option(ENABLE_BRANCH_COVERAGE "Enable branch coverage" OFF)
+
+if(ENABLE_COVERAGE)
+	include(Coverage)
+	enable_coverage(${ENABLE_BRANCH_COVERAGE})
+
+	include(AddCompilerFlags)
+
+	# If no build type is manually defined, override the optimization level.
+	# Otherwise, alert the user than the coverage result might be useless.
+	if(__NO_USER_CMAKE_BUILD_TYPE)
+		set_c_optimization_level(0)
+
+		# Setting -Og instead of -O0 is a workaround for the GCC bug 90380:
+		# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=90380
+		#
+		# This bug is fixed upstream, but is not widely distributed yet.
+		# Fixed in GCC versions:
+		#  - GCC 7.x: versions <= 7.2 are unaffected
+		#  - GCC 8.x: versions >= 8.3.1
+		#  - GCC 9.x: versions >= 9.1.1
+		#  - GCC 10.x: all versions
+		set_cxx_optimization_level(g)
+	else()
+		message(WARNING "It is advised to not enforce CMAKE_BUILD_TYPE to get the best coverage results")
+	endif()
+
+	exclude_from_coverage(
+		"depends"
+		"src/bench"
+		"src/crypto/ctaes"
+		"src/leveldb"
+		"src/univalue"
+	)
+
+	add_custom_target_coverage(check)
+	add_custom_target_coverage(check-all)
+	add_custom_target_coverage(check-extended)
+	add_custom_target_coverage(check-upgrade-activated)
+	add_custom_target_coverage(check-upgrade-activated-extended)
+endif()
+
 add_subdirectory(src)
 add_subdirectory(test)
 
 add_subdirectory(contrib)
 add_subdirectory(doc)
 
-include(PackageOptions)
-get_property(CPACK_SOURCE_IGNORE_FILES GLOBAL PROPERTY SOURCE_PACKAGE_IGNORE_FILES)
-include(CPack)
+include(PackageOptions.cmake)

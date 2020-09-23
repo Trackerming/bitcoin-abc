@@ -1,23 +1,25 @@
-// Copyright (c) 2014-2016 The Bitcoin Core developers
+// Copyright (c) 2014-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <coins.h>
 
+#include <attributes.h>
 #include <clientversion.h>
-#include <consensus/validation.h>
 #include <script/standard.h>
 #include <streams.h>
 #include <undo.h>
 #include <util/strencodings.h>
-#include <validation.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
 #include <map>
 #include <vector>
+
+void UpdateCoins(CCoinsViewCache &inputs, const CTransaction &tx,
+                 CTxUndo &txundo, int nHeight);
 
 namespace {
 
@@ -37,7 +39,8 @@ class CCoinsViewTest : public CCoinsView {
     std::map<COutPoint, Coin> map_;
 
 public:
-    bool GetCoin(const COutPoint &outpoint, Coin &coin) const override {
+    NODISCARD bool GetCoin(const COutPoint &outpoint,
+                           Coin &coin) const override {
         std::map<COutPoint, Coin>::const_iterator it = map_.find(outpoint);
         if (it == map_.end()) {
             return false;
@@ -188,7 +191,7 @@ BOOST_AUTO_TEST_CASE(coins_cache_simulation_test) {
             } else {
                 removed_an_entry = true;
                 coin.Clear();
-                stack.back()->SpendCoin(COutPoint(txid, 0));
+                BOOST_CHECK(stack.back()->SpendCoin(COutPoint(txid, 0)));
             }
         }
 
@@ -224,14 +227,14 @@ BOOST_AUTO_TEST_CASE(coins_cache_simulation_test) {
         if (InsecureRandRange(100) == 0) {
             if (stack.size() > 1 && InsecureRandBool() == 0) {
                 unsigned int flushIndex = InsecureRandRange(stack.size() - 1);
-                stack[flushIndex]->Flush();
+                BOOST_CHECK(stack[flushIndex]->Flush());
             }
         }
         if (InsecureRandRange(100) == 0) {
             // Every 100 iterations, change the cache stack.
             if (stack.size() > 0 && InsecureRandBool() == 0) {
                 // Remove the top cache
-                stack.back()->Flush();
+                BOOST_CHECK(stack.back()->Flush());
                 delete stack.back();
                 stack.pop_back();
             }
@@ -290,6 +293,9 @@ UtxoData::iterator FindRandomFrom(const std::set<COutPoint> &utxoSet) {
 // duplicate coinbase tx has the expected effect (the other duplicate is
 // overwritten at all cache levels)
 BOOST_AUTO_TEST_CASE(updatecoins_simulation_test) {
+    SeedInsecureRand(/* deterministic */ true);
+    g_mock_deterministic_tests = true;
+
     bool spent_a_duplicate_coinbase = false;
     // A simple map to track what we expect the cache stack to represent.
     std::map<COutPoint, Coin> result;
@@ -427,7 +433,7 @@ BOOST_AUTO_TEST_CASE(updatecoins_simulation_test) {
             // Disconnect the tx from the current UTXO
             // See code in DisconnectBlock
             // remove outputs
-            stack.back()->SpendCoin(utxod->first);
+            BOOST_CHECK(stack.back()->SpendCoin(utxod->first));
 
             // restore inputs
             if (!tx.IsCoinBase()) {
@@ -474,13 +480,13 @@ BOOST_AUTO_TEST_CASE(updatecoins_simulation_test) {
             // Every 100 iterations, flush an intermediate cache
             if (stack.size() > 1 && InsecureRandBool() == 0) {
                 unsigned int flushIndex = InsecureRandRange(stack.size() - 1);
-                stack[flushIndex]->Flush();
+                BOOST_CHECK(stack[flushIndex]->Flush());
             }
         }
         if (InsecureRandRange(100) == 0) {
             // Every 100 iterations, change the cache stack.
             if (stack.size() > 0 && InsecureRandBool() == 0) {
-                stack.back()->Flush();
+                BOOST_CHECK(stack.back()->Flush());
                 delete stack.back();
                 stack.pop_back();
             }
@@ -502,6 +508,8 @@ BOOST_AUTO_TEST_CASE(updatecoins_simulation_test) {
 
     // Verify coverage.
     BOOST_CHECK(spent_a_duplicate_coinbase);
+
+    g_mock_deterministic_tests = false;
 }
 
 BOOST_AUTO_TEST_CASE(coin_serialization) {
@@ -515,7 +523,7 @@ BOOST_AUTO_TEST_CASE(coin_serialization) {
     BOOST_CHECK_EQUAL(c1.GetHeight(), 203998U);
     BOOST_CHECK_EQUAL(c1.GetTxOut().nValue, int64_t(60000000000) * SATOSHI);
     BOOST_CHECK_EQUAL(HexStr(c1.GetTxOut().scriptPubKey),
-                      HexStr(GetScriptForDestination(CKeyID(uint160(ParseHex(
+                      HexStr(GetScriptForDestination(PKHash(uint160(ParseHex(
                           "816115944e077fe7c803cfa57f29b36bf87c1d35"))))));
 
     // Good example
@@ -528,7 +536,7 @@ BOOST_AUTO_TEST_CASE(coin_serialization) {
     BOOST_CHECK_EQUAL(c2.GetHeight(), 120891U);
     BOOST_CHECK_EQUAL(c2.GetTxOut().nValue, 110397 * SATOSHI);
     BOOST_CHECK_EQUAL(HexStr(c2.GetTxOut().scriptPubKey),
-                      HexStr(GetScriptForDestination(CKeyID(uint160(ParseHex(
+                      HexStr(GetScriptForDestination(PKHash(uint160(ParseHex(
                           "8c988f1a4a4de2161e0f50aac7f17e7f9555caa4"))))));
 
     // Smallest possible example
@@ -624,7 +632,7 @@ void GetCoinMapEntry(const CCoinsMap &map, Amount &value, char &flags) {
 void WriteCoinViewEntry(CCoinsView &view, const Amount value, char flags) {
     CCoinsMap map;
     InsertCoinMapEntry(map, value, flags);
-    view.BatchWrite(map, BlockHash());
+    BOOST_CHECK(view.BatchWrite(map, BlockHash()));
 }
 
 class SingleEntryCacheTest {

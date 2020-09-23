@@ -7,14 +7,13 @@
 from base64 import b64encode
 from binascii import unhexlify
 from decimal import Decimal, ROUND_DOWN
-import hashlib
+from subprocess import CalledProcessError
 import inspect
 import json
 import logging
 import os
 import random
 import re
-from subprocess import CalledProcessError
 import time
 
 from . import coverage
@@ -24,6 +23,16 @@ logger = logging.getLogger("TestFramework.utils")
 
 # Assert functions
 ##################
+
+
+def assert_approx(v, vexp, vspan=0.00001):
+    """Assert that `v` is within `vspan` of `vexp`"""
+    if v < vexp - vspan:
+        raise AssertionError("{} < [{}..{}]".format(
+            str(v), str(vexp - vspan), str(vexp + vspan)))
+    if v > vexp + vspan:
+        raise AssertionError("{} > [{}..{}]".format(
+            str(v), str(vexp - vspan), str(vexp + vspan)))
 
 
 def assert_fee_amount(fee, tx_size, fee_per_kB, wiggleroom=2):
@@ -73,7 +82,8 @@ def assert_raises_message(exc, message, fun, *args, **kwds):
     except exc as e:
         if message is not None and message not in e.error['message']:
             raise AssertionError(
-                "Expected substring not found:" + e.error['message'])
+                "Expected substring not found in error message:\nsubstring: '{}'\nerror message: '{}'.".format(
+                    message, e.error['message']))
     except Exception as e:
         raise AssertionError(
             "Unexpected exception raised: " + type(e).__name__)
@@ -141,7 +151,8 @@ def try_rpc(code, message, fun, *args, **kwds):
                 "Unexpected JSONRPC error code {}".format(e.error["code"]))
         if (message is not None) and (message not in e.error['message']):
             raise AssertionError(
-                "Expected substring not found:" + e.error['message'])
+                "Expected substring not found in error message:\nsubstring: '{}'\nerror message: '{}'.".format(
+                    message, e.error['message']))
         return True
     except Exception as e:
         raise AssertionError(
@@ -217,14 +228,6 @@ def count_bytes(hex_string):
     return len(bytearray.fromhex(hex_string))
 
 
-def hash256(byte_str):
-    sha256 = hashlib.sha256()
-    sha256.update(byte_str)
-    sha256d = hashlib.sha256()
-    sha256d.update(sha256.digest())
-    return sha256d.digest()[::-1]
-
-
 def hex_str_to_bytes(hex_str):
     return unhexlify(hex_str.encode('ascii'))
 
@@ -256,7 +259,7 @@ def wait_until(predicate, *, attempts=float('inf'),
         time.sleep(0.05)
 
     # Print the cause of the timeout
-    predicate_source = inspect.getsourcelines(predicate)
+    predicate_source = "''''\n" + inspect.getsource(predicate) + "'''"
     logger.error("wait_until() failed. Predicate: {}".format(predicate_source))
     if attempt >= attempts:
         raise AssertionError("Predicate {} not true after {} attempts".format(
@@ -271,9 +274,10 @@ def wait_until(predicate, *, attempts=float('inf'),
 
 
 # The maximum number of nodes a single test can spawn
-MAX_NODES = 8
-# Don't assign rpc or p2p ports lower than this
-PORT_MIN = 11000
+MAX_NODES = 12
+# Don't assign rpc or p2p ports lower than this (for example: 18333 is the
+# default testnet port)
+PORT_MIN = int(os.getenv('TEST_RUNNER_PORT_MIN', default=20000))
 # The number of ports to "reserve" for p2p and rpc, each
 PORT_RANGE = 5000
 
@@ -320,8 +324,8 @@ def rpc_port(n):
         (MAX_NODES * PortSeed.n) % (PORT_RANGE - 1 - MAX_NODES)
 
 
-def rpc_url(datadir, host, port):
-    rpc_u, rpc_p = get_auth_cookie(datadir)
+def rpc_url(datadir, chain, host, port):
+    rpc_u, rpc_p = get_auth_cookie(datadir, chain)
     if host is None:
         host = '127.0.0.1'
     return "http://{}:{}@{}:{}".format(rpc_u, rpc_p, host, int(port))
@@ -330,18 +334,27 @@ def rpc_url(datadir, host, port):
 ################
 
 
-def initialize_datadir(dirname, n):
+def initialize_datadir(dirname, n, chain):
     datadir = get_datadir_path(dirname, n)
     if not os.path.isdir(datadir):
         os.makedirs(datadir)
+    # Translate chain name to config name
+    if chain == 'testnet3':
+        chain_name_conf_arg = 'testnet'
+        chain_name_conf_section = 'test'
+    else:
+        chain_name_conf_arg = chain
+        chain_name_conf_section = chain
     with open(os.path.join(datadir, "bitcoin.conf"), 'w', encoding='utf8') as f:
-        f.write("regtest=1\n")
-        f.write("[regtest]\n")
+        f.write("{}=1\n".format(chain_name_conf_arg))
+        f.write("[{}]\n".format(chain_name_conf_section))
         f.write("port=" + str(p2p_port(n)) + "\n")
         f.write("rpcport=" + str(rpc_port(n)) + "\n")
+        f.write("fallbackfee=0.0002\n")
         f.write("server=1\n")
         f.write("keypool=1\n")
         f.write("discover=0\n")
+        f.write("dnsseed=0\n")
         f.write("listenonion=0\n")
         f.write("usecashaddr=1\n")
         os.makedirs(os.path.join(datadir, 'stderr'), exist_ok=True)
@@ -359,7 +372,7 @@ def append_config(datadir, options):
             f.write(option + "\n")
 
 
-def get_auth_cookie(datadir):
+def get_auth_cookie(datadir, chain):
     user = None
     password = None
     if os.path.isfile(os.path.join(datadir, "bitcoin.conf")):
@@ -372,7 +385,7 @@ def get_auth_cookie(datadir):
                     assert password is None  # Ensure that there is only one rpcpassword line
                     password = line.split("=")[1].strip("\n")
     try:
-        with open(os.path.join(datadir, "regtest", ".cookie"), 'r', encoding="ascii") as f:
+        with open(os.path.join(datadir, chain, ".cookie"), 'r', encoding="ascii") as f:
             userpass = f.read()
             split_userpass = userpass.split(':')
             user = split_userpass[0]
@@ -385,10 +398,10 @@ def get_auth_cookie(datadir):
 
 
 # If a cookie file exists in the given datadir, delete it.
-def delete_cookie_file(datadir):
-    if os.path.isfile(os.path.join(datadir, "regtest", ".cookie")):
+def delete_cookie_file(datadir, chain):
+    if os.path.isfile(os.path.join(datadir, chain, ".cookie")):
         logger.debug("Deleting leftover cookie file")
-        os.remove(os.path.join(datadir, "regtest", ".cookie"))
+        os.remove(os.path.join(datadir, chain, ".cookie"))
 
 
 def set_node_times(nodes, t):
@@ -421,13 +434,17 @@ def connect_nodes(from_node, to_node):
     from_node.addnode(ip_port, "onetry")
     # poll until version handshake complete to avoid race conditions
     # with transaction relaying
-    wait_until(lambda: all(peer['version']
-                           != 0 for peer in from_node.getpeerinfo()))
-
-
-def connect_nodes_bi(a, b):
-    connect_nodes(a, b)
-    connect_nodes(b, a)
+    # See comments in net_processing:
+    # * Must have a version message before anything else
+    # * Must have a verack message before anything else
+    wait_until(
+        lambda: all(
+            peer['version'] != 0 for peer in from_node.getpeerinfo()))
+    wait_until(
+        lambda: all(
+            peer['bytesrecv_per_msg'].pop(
+                'verack',
+                0) == 24 for peer in from_node.getpeerinfo()))
 
 
 def sync_blocks(rpc_connections, *, wait=1, timeout=60):
@@ -470,12 +487,12 @@ def sync_mempools(rpc_connections, *, wait=1,
 #############################
 
 
-def find_output(node, txid, amount):
+def find_output(node, txid, amount, *, blockhash=None):
     """
     Return index to output of txid with value amount
     Raises exception if there is none.
     """
-    txdata = node.getrawtransaction(txid, 1)
+    txdata = node.getrawtransaction(txid, 1, blockhash)
     for i in range(len(txdata["vout"])):
         if txdata["vout"][i]["value"] == amount:
             return i
@@ -537,7 +554,7 @@ def random_transaction(nodes, amount, min_fee, fee_increment, fee_variants):
 
     rawtx = from_node.createrawtransaction(inputs, outputs)
     signresult = from_node.signrawtransactionwithwallet(rawtx)
-    txid = from_node.sendrawtransaction(signresult["hex"], True)
+    txid = from_node.sendrawtransaction(signresult["hex"], 0)
 
     return (txid, signresult["hex"], fee)
 
@@ -583,7 +600,7 @@ def create_lots_of_big_transactions(node, txouts, utxos, num, fee):
         newtx = newtx + rawtx[94:]
         signresult = node.signrawtransactionwithwallet(
             newtx, None, "NONE|FORKID")
-        txid = node.sendrawtransaction(signresult["hex"], True)
+        txid = node.sendrawtransaction(signresult["hex"], 0)
         txids.append(txid)
     return txids
 

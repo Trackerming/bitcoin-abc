@@ -10,9 +10,7 @@
 #include <fs.h>
 #include <serialize.h>
 #include <streams.h>
-#include <sync.h>
 #include <util/system.h>
-#include <version.h>
 
 #include <db_cxx.h>
 
@@ -105,6 +103,11 @@ public:
 
 /** Return whether a wallet database is currently loaded. */
 bool IsWalletLoaded(const fs::path &wallet_path);
+
+/**
+ * Given a wallet directory path or legacy file path, return path to main data
+ * file in the wallet database. */
+fs::path WalletDataFilePath(const fs::path &wallet_path);
 
 /** Get BerkeleyEnvironment and database filename given a wallet path. */
 std::shared_ptr<BerkeleyEnvironment>
@@ -219,6 +222,25 @@ private:
 
 /** RAII class that provides access to a Berkeley database */
 class BerkeleyBatch {
+    /** RAII class that automatically cleanses its data on destruction */
+    class SafeDbt final {
+        Dbt m_dbt;
+
+    public:
+        // construct Dbt with internally-managed data
+        SafeDbt();
+        // construct Dbt with provided data
+        SafeDbt(void *data, size_t size);
+        ~SafeDbt();
+
+        // delegate to Dbt
+        const void *get_data() const;
+        u_int32_t get_size() const;
+
+        // conversion operator to access the underlying Dbt
+        operator Dbt *();
+    };
+
 protected:
     Db *pdb;
     std::string strFile;
@@ -252,11 +274,11 @@ public:
                                   std::string &errorStr);
     /* verifies the database file */
     static bool
-    VerifyDatabaseFile(const fs::path &file_path, std::string &warningStr,
+    VerifyDatabaseFile(const fs::path &file_path,
+                       std::vector<std::string> &warnings,
                        std::string &errorStr,
                        BerkeleyEnvironment::recoverFunc_type recoverFunc);
 
-public:
     template <typename K, typename T> bool Read(const K &key, T &value) {
         if (!pdb) {
             return false;
@@ -266,13 +288,11 @@ public:
         CDataStream ssKey(SER_DISK, CLIENT_VERSION);
         ssKey.reserve(1000);
         ssKey << key;
-        Dbt datKey(ssKey.data(), ssKey.size());
+        SafeDbt datKey(ssKey.data(), ssKey.size());
 
         // Read
-        Dbt datValue;
-        datValue.set_flags(DB_DBT_MALLOC);
-        int ret = pdb->get(activeTxn, &datKey, &datValue, 0);
-        memory_cleanse(datKey.get_data(), datKey.get_size());
+        SafeDbt datValue;
+        int ret = pdb->get(activeTxn, datKey, datValue, 0);
         bool success = false;
         if (datValue.get_data() != nullptr) {
             // Unserialize value
@@ -286,10 +306,6 @@ public:
             } catch (const std::exception &) {
                 // In this case success remains 'false'
             }
-
-            // Clear and free memory
-            memory_cleanse(datValue.get_data(), datValue.get_size());
-            free(datValue.get_data());
         }
         return ret == 0 && success;
     }
@@ -307,21 +323,17 @@ public:
         CDataStream ssKey(SER_DISK, CLIENT_VERSION);
         ssKey.reserve(1000);
         ssKey << key;
-        Dbt datKey(ssKey.data(), ssKey.size());
+        SafeDbt datKey(ssKey.data(), ssKey.size());
 
         // Value
         CDataStream ssValue(SER_DISK, CLIENT_VERSION);
         ssValue.reserve(10000);
         ssValue << value;
-        Dbt datValue(ssValue.data(), ssValue.size());
+        SafeDbt datValue(ssValue.data(), ssValue.size());
 
         // Write
-        int ret = pdb->put(activeTxn, &datKey, &datValue,
+        int ret = pdb->put(activeTxn, datKey, datValue,
                            (fOverwrite ? 0 : DB_NOOVERWRITE));
-
-        // Clear memory in case it was a private key
-        memory_cleanse(datKey.get_data(), datKey.get_size());
-        memory_cleanse(datValue.get_data(), datValue.get_size());
         return (ret == 0);
     }
 
@@ -337,13 +349,10 @@ public:
         CDataStream ssKey(SER_DISK, CLIENT_VERSION);
         ssKey.reserve(1000);
         ssKey << key;
-        Dbt datKey(ssKey.data(), ssKey.size());
+        SafeDbt datKey(ssKey.data(), ssKey.size());
 
         // Erase
-        int ret = pdb->del(activeTxn, &datKey, 0);
-
-        // Clear memory
-        memory_cleanse(datKey.get_data(), datKey.get_size());
+        int ret = pdb->del(activeTxn, datKey, 0);
         return (ret == 0 || ret == DB_NOTFOUND);
     }
 
@@ -356,13 +365,10 @@ public:
         CDataStream ssKey(SER_DISK, CLIENT_VERSION);
         ssKey.reserve(1000);
         ssKey << key;
-        Dbt datKey(ssKey.data(), ssKey.size());
+        SafeDbt datKey(ssKey.data(), ssKey.size());
 
         // Exists
-        int ret = pdb->exists(activeTxn, &datKey, 0);
-
-        // Clear memory
-        memory_cleanse(datKey.get_data(), datKey.get_size());
+        int ret = pdb->exists(activeTxn, datKey, 0);
         return (ret == 0);
     }
 
@@ -378,20 +384,11 @@ public:
         return pcursor;
     }
 
-    int ReadAtCursor(Dbc *pcursor, CDataStream &ssKey, CDataStream &ssValue,
-                     bool setRange = false) {
+    int ReadAtCursor(Dbc *pcursor, CDataStream &ssKey, CDataStream &ssValue) {
         // Read at cursor
-        Dbt datKey;
-        unsigned int fFlags = DB_NEXT;
-        if (setRange) {
-            datKey.set_data(ssKey.data());
-            datKey.set_size(ssKey.size());
-            fFlags = DB_SET_RANGE;
-        }
-        Dbt datValue;
-        datKey.set_flags(DB_DBT_MALLOC);
-        datValue.set_flags(DB_DBT_MALLOC);
-        int ret = pcursor->get(&datKey, &datValue, fFlags);
+        SafeDbt datKey;
+        SafeDbt datValue;
+        int ret = pcursor->get(datKey, datValue, DB_NEXT);
         if (ret != 0) {
             return ret;
         } else if (datKey.get_data() == nullptr ||
@@ -406,16 +403,9 @@ public:
         ssValue.SetType(SER_DISK);
         ssValue.clear();
         ssValue.write((char *)datValue.get_data(), datValue.get_size());
-
-        // Clear and free memory
-        memory_cleanse(datKey.get_data(), datKey.get_size());
-        memory_cleanse(datValue.get_data(), datValue.get_size());
-        free(datKey.get_data());
-        free(datValue.get_data());
         return 0;
     }
 
-public:
     bool TxnBegin() {
         if (!pdb || activeTxn) {
             return false;
@@ -444,15 +434,6 @@ public:
         int ret = activeTxn->abort();
         activeTxn = nullptr;
         return (ret == 0);
-    }
-
-    bool ReadVersion(int &nVersion) {
-        nVersion = 0;
-        return Read(std::string("version"), nVersion);
-    }
-
-    bool WriteVersion(int nVersion) {
-        return Write(std::string("version"), nVersion);
     }
 
     static bool Rewrite(BerkeleyDatabase &database,

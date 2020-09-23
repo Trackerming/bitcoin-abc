@@ -9,7 +9,6 @@ from test_framework.util import (
     assert_equal,
     connect_nodes,
     disconnect_nodes,
-    sync_blocks,
 )
 
 
@@ -63,8 +62,9 @@ class TxnMallTest(BitcoinTestFramework):
 
         # Construct a clone of tx1, to be malleated
         rawtx1 = self.nodes[0].getrawtransaction(txid1, 1)
-        clone_inputs = [{"txid": rawtx1["vin"][0]
-                         ["txid"], "vout":rawtx1["vin"][0]["vout"]}]
+        clone_inputs = [{"txid": rawtx1["vin"][0]["txid"],
+                         "vout": rawtx1["vin"][0]["vout"],
+                         "sequence": rawtx1["vin"][0]["sequence"]}]
         clone_outputs = {rawtx1["vout"][0]["scriptPubKey"]["addresses"][0]: rawtx1["vout"][0]["value"],
                          rawtx1["vout"][1]["scriptPubKey"]["addresses"][0]: rawtx1["vout"][1]["value"]}
         clone_locktime = rawtx1["locktime"]
@@ -94,7 +94,7 @@ class TxnMallTest(BitcoinTestFramework):
         # Have node0 mine a block, if requested:
         if (self.options.mine_block):
             self.nodes[0].generate(1)
-            sync_blocks(self.nodes[0:2])
+            self.sync_blocks(self.nodes[0:2])
 
         tx1 = self.nodes[0].gettransaction(txid1)
         tx2 = self.nodes[0].gettransaction(txid2)
@@ -127,7 +127,7 @@ class TxnMallTest(BitcoinTestFramework):
         self.nodes[2].sendrawtransaction(node0_tx2["hex"])
         self.nodes[2].sendrawtransaction(tx2["hex"])
         self.nodes[2].generate(1)  # Mine another block to make sure we sync
-        sync_blocks(self.nodes)
+        self.sync_blocks()
 
         # Re-fetch transaction info:
         tx1 = self.nodes[0].gettransaction(txid1)

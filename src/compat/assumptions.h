@@ -64,4 +64,22 @@ static_assert(std::is_same<uint8_t, unsigned char>::value,
 // * We are NOT assuming a specific value for
 // std::numeric_limits<char>::is_signed.
 
+/**
+ * /!\ C++ right shift signedness handling is implementation defined. It is
+ *     defined as an arithmetic on all the platform we support, but this
+ *     may not be the case on other platforms.
+ *
+ * NB: C++20 defines signed right shift as being arithmetic shifts, so in
+ * practice, we should see all platforms converge toward that behavior if
+ * they haven't already.
+ */
+static_assert((int64_t(-1) >> 1) == int64_t(-1),
+              "Arithmetic right shift assumed");
+
+/**
+ * /!\ C++ Does not guarantee 2-complement, but it implementation defined. All
+ *         the platform we support use 2-complement.
+ */
+static_assert((int64_t(-10) & 0xffff) == 0xfff6, "2-complement assumed");
+
 #endif // BITCOIN_COMPAT_ASSUMPTIONS_H

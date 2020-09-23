@@ -16,7 +16,7 @@
 #include <qt/networkstyle.h>
 #include <ui_interface.h>
 #include <util/system.h>
-#include <version.h>
+#include <util/translation.h>
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -24,11 +24,9 @@
 #include <QRadialGradient>
 #include <QScreen>
 
-#include <memory>
-
-SplashScreen::SplashScreen(interfaces::Node &node, Qt::WindowFlags f,
+SplashScreen::SplashScreen(interfaces::Node &node,
                            const NetworkStyle *networkStyle)
-    : QWidget(nullptr, f), curAlignment(0), m_node(node) {
+    : QWidget(nullptr), curAlignment(0), m_node(node) {
     // set reference point, paddings
     int paddingRight = 50;
     int paddingTop = 50;
@@ -37,14 +35,12 @@ SplashScreen::SplashScreen(interfaces::Node &node, Qt::WindowFlags f,
 
     float fontFactor = 1.0;
     float devicePixelRatio = 1.0;
-#if QT_VERSION > 0x050100
     devicePixelRatio =
         static_cast<QGuiApplication *>(QCoreApplication::instance())
             ->devicePixelRatio();
-#endif
 
     // define text to place
-    QString titleText = tr(PACKAGE_NAME);
+    QString titleText = PACKAGE_NAME;
     QString versionText =
         QString("Version %1").arg(QString::fromStdString(FormatFullVersion()));
     QString copyrightText = QString::fromUtf8(
@@ -58,10 +54,8 @@ SplashScreen::SplashScreen(interfaces::Node &node, Qt::WindowFlags f,
     QSize splashSize(634 * devicePixelRatio, 320 * devicePixelRatio);
     pixmap = QPixmap(splashSize);
 
-#if QT_VERSION > 0x050100
     // change to HiDPI if it makes sense
     pixmap.setDevicePixelRatio(devicePixelRatio);
-#endif
 
     QPainter pixPaint(&pixmap);
     pixPaint.setPen(QColor(100, 100, 100));
@@ -179,19 +173,23 @@ void SplashScreen::slotFinish(QWidget *mainWin) {
 }
 
 static void InitMessage(SplashScreen *splash, const std::string &message) {
-    QMetaObject::invokeMethod(splash, "showMessage", Qt::QueuedConnection,
-                              Q_ARG(QString, QString::fromStdString(message)),
-                              Q_ARG(int, Qt::AlignBottom | Qt::AlignHCenter),
-                              Q_ARG(QColor, QColor(55, 55, 55)));
+    bool invoked = QMetaObject::invokeMethod(
+        splash, "showMessage", Qt::QueuedConnection,
+        Q_ARG(QString, QString::fromStdString(message)),
+        Q_ARG(int, Qt::AlignBottom | Qt::AlignHCenter),
+        Q_ARG(QColor, QColor(55, 55, 55)));
+    assert(invoked);
 }
 
 static void ShowProgress(SplashScreen *splash, const std::string &title,
                          int nProgress, bool resume_possible) {
-    InitMessage(splash, title + std::string("\n") +
-                            (resume_possible
-                                 ? _("(press q to shutdown and continue later)")
-                                 : _("press q to shutdown")) +
-                            strprintf("\n%d", nProgress) + "%");
+    InitMessage(
+        splash,
+        title + std::string("\n") +
+            (resume_possible
+                 ? _("(press q to shutdown and continue later)").translated
+                 : _("press q to shutdown").translated) +
+            strprintf("\n%d", nProgress) + "%");
 }
 #ifdef ENABLE_WALLET
 void SplashScreen::ConnectWallet(std::unique_ptr<interfaces::Wallet> wallet) {

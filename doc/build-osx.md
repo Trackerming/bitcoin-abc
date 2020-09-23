@@ -21,7 +21,7 @@ Dependencies
 
 Install dependencies:
 
-    brew install berkeley-db boost cmake libevent miniupnpc ninja openssl protobuf python qrencode qt zeromq
+    brew install berkeley-db boost cmake jemalloc libevent librsvg miniupnpc ninja openssl protobuf python qrencode qt zeromq
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
@@ -45,7 +45,7 @@ Before you start building, please make sure that your compiler supports C++14.
 
     You can disable the GUI build by passing `-DBUILD_BITCOIN_QT=OFF` to cmake.
 
-    It is recommended to create a build directory to build out-of-tree. 
+    It is recommended to create a build directory to build out-of-tree.
 
         mkdir build
         cd build

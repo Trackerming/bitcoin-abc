@@ -8,7 +8,7 @@ Test that the DERSIG soft-fork activates at (regtest) height 1251.
 """
 
 from test_framework.blocktools import create_block, create_coinbase, create_transaction
-from test_framework.messages import msg_block, ToHex
+from test_framework.messages import msg_block
 from test_framework.mininode import (
     mininode_lock,
     P2PInterface,
@@ -90,7 +90,7 @@ class BIP66Test(BitcoinTestFramework):
             [{'txid': spendtx.hash, 'allowed': False,
                 'reject-reason': '16: mandatory-script-verify-flag-failed (Non-canonical DER signature)'}],
             self.nodes[0].testmempoolaccept(
-                rawtxs=[ToHex(spendtx)], allowhighfees=True)
+                rawtxs=[spendtx.serialize().hex()], maxfeerate=0)
         )
 
         # Now we verify that a block with this transaction is also invalid.
@@ -99,7 +99,7 @@ class BIP66Test(BitcoinTestFramework):
         block.rehash()
         block.solve()
 
-        with self.nodes[0].assert_debug_log(expected_msgs=['ConnectBlock {} failed (blk-bad-inputs'.format(block.hash)]):
+        with self.nodes[0].assert_debug_log(expected_msgs=['ConnectBlock {} failed, blk-bad-inputs'.format(block.hash)]):
             self.nodes[0].p2p.send_and_ping(msg_block(block))
             assert_equal(self.nodes[0].getbestblockhash(), tip)
             self.nodes[0].p2p.sync_with_ping()

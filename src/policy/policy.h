@@ -43,14 +43,6 @@ static const unsigned int MAX_STANDARD_TX_SIZE = 100000;
 static const unsigned int MAX_TX_IN_SCRIPT_SIG_SIZE = 1650;
 
 /**
- * Maximum number of signature check operations in an IsStandard() P2SH script.
- */
-static const unsigned int MAX_P2SH_SIGOPS = 15;
-/**
- * The maximum number of sigops we're willing to relay/mine in a single tx.
- */
-static const unsigned int MAX_STANDARD_TX_SIGOPS = MAX_TX_SIGOPS_COUNT / 5;
-/**
  * Default for -maxmempool, maximum megabytes of mempool memory usage.
  */
 static const unsigned int DEFAULT_MAX_MEMPOOL_SIZE = 300;
@@ -62,8 +54,9 @@ static const CFeeRate MEMPOOL_FULL_FEE_INCREMENT(1000 * SATOSHI);
 /**
  * Default for -bytespersigop .
  */
-static const unsigned int DEFAULT_BYTES_PER_SIGOP =
-    1000000 / MAX_BLOCK_SIGOPS_PER_MB;
+static const unsigned int DEFAULT_BYTES_PER_SIGOP = 50;
+/** Default for -permitbaremultisig */
+static const bool DEFAULT_PERMIT_BAREMULTISIG = true;
 /**
  * Min feerate for defining dust. Historically this has been the same as the
  * minRelayTxFee, however changing the dust limit changes which transactions are
@@ -78,11 +71,11 @@ static const Amount DUST_RELAY_TX_FEE(1000 * SATOSHI);
  * influences the decision of whether to drop them or to also ban the originator
  * (see CheckInputs).
  */
-static const uint32_t MANDATORY_SCRIPT_VERIFY_FLAGS =
+static constexpr uint32_t MANDATORY_SCRIPT_VERIFY_FLAGS =
     SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC |
     SCRIPT_ENABLE_SIGHASH_FORKID | SCRIPT_VERIFY_LOW_S |
     SCRIPT_VERIFY_NULLFAIL | SCRIPT_VERIFY_MINIMALDATA |
-    SCRIPT_ENABLE_SCHNORR_MULTISIG;
+    SCRIPT_ENABLE_SCHNORR_MULTISIG | SCRIPT_ENFORCE_SIGCHECKS;
 
 /**
  * Standard script verification flags that standard transactions will comply
@@ -127,7 +120,8 @@ bool IsStandard(const CScript &scriptPubKey, txnouttype &whichType);
  * @return True if all outputs (scriptPubKeys) use only standard transaction
  * forms
  */
-bool IsStandardTx(const CTransaction &tx, std::string &reason);
+bool IsStandardTx(const CTransaction &tx, bool permit_bare_multisig,
+                  const CFeeRate &dust_relay_fee, std::string &reason);
 
 /**
  * Check for standard transaction types
@@ -137,9 +131,6 @@ bool IsStandardTx(const CTransaction &tx, std::string &reason);
  */
 bool AreInputsStandard(const CTransaction &tx, const CCoinsViewCache &mapInputs,
                        uint32_t flags);
-
-extern CFeeRate dustRelayFee;
-extern uint32_t nBytesPerSigOp;
 
 /**
  * Compute the virtual transaction size (size, or more if sigops are too
@@ -152,9 +143,12 @@ int64_t GetVirtualTransactionSize(const CTransaction &tx, int64_t nSigOpCount,
 int64_t GetVirtualTransactionInputSize(const CTxIn &txin, int64_t nSigOpCount,
                                        unsigned int bytes_per_sigop);
 
-static inline int64_t GetVirtualTransactionSize(int64_t nSize,
-                                                int64_t nSigOpCount) {
-    return GetVirtualTransactionSize(nSize, nSigOpCount, ::nBytesPerSigOp);
+static inline int64_t GetVirtualTransactionSize(const CTransaction &tx) {
+    return GetVirtualTransactionSize(tx, 0, 0);
+}
+
+static inline int64_t GetVirtualTransactionInputSize(const CTxIn &tx) {
+    return GetVirtualTransactionInputSize(tx, 0, 0);
 }
 
 #endif // BITCOIN_POLICY_POLICY_H

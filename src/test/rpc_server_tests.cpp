@@ -2,14 +2,15 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <rpc/jsonrpcrequest.h>
+#include <rpc/protocol.h>
+#include <rpc/request.h>
 #include <rpc/server.h>
 
 #include <chainparams.h>
 #include <config.h>
 #include <util/system.h>
 
-#include <test/test_bitcoin.h>
+#include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -19,7 +20,7 @@ BOOST_FIXTURE_TEST_SUITE(rpc_server_tests, TestingSetup)
 
 class ArgsTestRPCCommand : public RPCCommandWithArgsContext {
 public:
-    ArgsTestRPCCommand(const std::string &nameIn)
+    explicit ArgsTestRPCCommand(const std::string &nameIn)
         : RPCCommandWithArgsContext(nameIn) {}
 
     UniValue Execute(const UniValue &args) const override {
@@ -58,7 +59,8 @@ BOOST_AUTO_TEST_CASE(rpc_server_execute_command) {
 
 class RequestContextRPCCommand : public RPCCommand {
 public:
-    RequestContextRPCCommand(const std::string &nameIn) : RPCCommand(nameIn) {}
+    explicit RequestContextRPCCommand(const std::string &nameIn)
+        : RPCCommand(nameIn) {}
 
     // Sanity check that Execute(JSONRPCRequest) is called correctly from
     // RPCServer

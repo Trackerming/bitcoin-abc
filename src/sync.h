@@ -7,6 +7,7 @@
 #define BITCOIN_SYNC_H
 
 #include <threadsafety.h>
+#include <util/macros.h>
 
 #include <condition_variable>
 #include <mutex>
@@ -49,6 +50,8 @@ LEAVE_CRITICAL_SECTION(mutex); // no RAII
 void EnterCritical(const char *pszName, const char *pszFile, int nLine,
                    void *cs, bool fTry = false);
 void LeaveCritical();
+void CheckLastCritical(void *cs, std::string &lockname, const char *guardname,
+                       const char *file, int line);
 std::string LocksHeld();
 void AssertLockHeldInternal(const char *pszName, const char *pszFile, int nLine,
                             void *cs) ASSERT_EXCLUSIVE_LOCK(cs);
@@ -66,6 +69,9 @@ extern bool g_debug_lockorder_abort;
 static inline void EnterCritical(const char *pszName, const char *pszFile,
                                  int nLine, void *cs, bool fTry = false) {}
 static inline void LeaveCritical() {}
+static inline void CheckLastCritical(void *cs, std::string &lockname,
+                                     const char *guardname, const char *file,
+                                     int line) {}
 static inline void AssertLockHeldInternal(const char *pszName,
                                           const char *pszFile, int nLine,
                                           void *cs) ASSERT_EXCLUSIVE_LOCK(cs) {}
@@ -102,7 +108,6 @@ public:
  * TODO: We should move away from using the recursive lock by default.
  */
 using RecursiveMutex = AnnotatedMixin<std::recursive_mutex>;
-typedef AnnotatedMixin<std::recursive_mutex> CCriticalSection;
 
 /** Wrapped mutex: supports waiting but not recursive locking */
 typedef AnnotatedMixin<std::mutex> Mutex;
@@ -168,14 +173,55 @@ public:
     }
 
     operator bool() { return Base::owns_lock(); }
+
+protected:
+    // needed for reverse_lock
+    UniqueLock() {}
+
+public:
+    /**
+     * An RAII-style reverse lock. Unlocks on construction and locks on
+     * destruction.
+     */
+    class reverse_lock {
+    public:
+        explicit reverse_lock(UniqueLock &_lock, const char *_guardname,
+                              const char *_file, int _line)
+            : lock(_lock), file(_file), line(_line) {
+            CheckLastCritical((void *)lock.mutex(), lockname, _guardname, _file,
+                              _line);
+            lock.unlock();
+            LeaveCritical();
+            lock.swap(templock);
+        }
+
+        ~reverse_lock() {
+            templock.swap(lock);
+            EnterCritical(lockname.c_str(), file.c_str(), line,
+                          (void *)lock.mutex());
+            lock.lock();
+        }
+
+    private:
+        reverse_lock(reverse_lock const &);
+        reverse_lock &operator=(reverse_lock const &);
+
+        UniqueLock &lock;
+        UniqueLock templock;
+        std::string lockname;
+        const std::string file;
+        const int line;
+    };
+    friend class reverse_lock;
 };
+
+#define REVERSE_LOCK(g)                                                        \
+    decltype(g)::reverse_lock PASTE2(revlock, __COUNTER__)(g, #g, __FILE__,    \
+                                                           __LINE__)
 
 template <typename MutexArg>
 using DebugLock = UniqueLock<typename std::remove_reference<
     typename std::remove_pointer<MutexArg>::type>::type>;
-
-#define PASTE(x, y) x##y
-#define PASTE2(x, y) PASTE(x, y)
 
 #define LOCK(cs)                                                               \
     DebugLock<decltype(cs)> PASTE2(criticalblock,                              \
@@ -199,6 +245,20 @@ using DebugLock = UniqueLock<typename std::remove_reference<
         (cs).unlock();                                                         \
         LeaveCritical();                                                       \
     }
+
+//! Run code while locking a mutex.
+//!
+//! Examples:
+//!
+//!   WITH_LOCK(cs, shared_val = shared_val + 1);
+//!
+//!   int val = WITH_LOCK(cs, return shared_val);
+//!
+#define WITH_LOCK(cs, code)                                                    \
+    [&] {                                                                      \
+        LOCK(cs);                                                              \
+        code;                                                                  \
+    }()
 
 class CSemaphore {
 private:
@@ -284,6 +344,18 @@ public:
     ~CSemaphoreGrant() { Release(); }
 
     operator bool() const { return fHaveGrant; }
+};
+
+// Utility class for indicating to compiler thread analysis that a mutex is
+// locked (when it couldn't be determined otherwise).
+struct SCOPED_LOCKABLE LockAssertion {
+    template <typename Mutex>
+    explicit LockAssertion(Mutex &mutex) EXCLUSIVE_LOCK_FUNCTION(mutex) {
+#ifdef DEBUG_LOCKORDER
+        AssertLockHeld(mutex);
+#endif
+    }
+    ~LockAssertion() UNLOCK_FUNCTION() {}
 };
 
 #endif // BITCOIN_SYNC_H

@@ -7,14 +7,14 @@
 #define BITCOIN_COINS_H
 
 #include <compressor.h>
-#include <core_memusage.h>
 #include <crypto/siphash.h>
 #include <memusage.h>
+#include <primitives/blockhash.h>
 #include <serialize.h>
-#include <uint256.h>
 
 #include <cassert>
 #include <cstdint>
+#include <functional>
 #include <unordered_map>
 
 /**
@@ -294,23 +294,52 @@ public:
     const CTxOut &GetOutputFor(const CTxIn &input) const;
 
 private:
+    /**
+     * @note this is marked const, but may actually append to `cacheCoins`,
+     * increasing memory usage.
+     */
     CCoinsMap::iterator FetchCoin(const COutPoint &outpoint) const;
 };
 
 //! Utility function to add all of a transaction's outputs to a cache.
-// When check is false, this assumes that overwrites are only possible for
-// coinbase transactions.
-// When check is true, the underlying view may be queried to determine whether
-// an addition is an overwrite.
+//! When check is false, this assumes that overwrites are only possible for
+//! coinbase transactions. When check is true, the underlying view may be
+//! queried to determine whether an addition is an overwrite.
 // TODO: pass in a boolean to limit these possible overwrites to known
 // (pre-BIP34) cases.
 void AddCoins(CCoinsViewCache &cache, const CTransaction &tx, int nHeight,
               bool check = false);
 
 //! Utility function to find any unspent output with a given txid.
-// This function can be quite expensive because in the event of a transaction
-// which is not found in the cache, it can cause up to MAX_OUTPUTS_PER_BLOCK
-// lookups to database, so it should be used with care.
+//! This function can be quite expensive because in the event of a transaction
+//! which is not found in the cache, it can cause up to MAX_OUTPUTS_PER_BLOCK
+//! lookups to database, so it should be used with care.
 const Coin &AccessByTxid(const CCoinsViewCache &cache, const TxId &txid);
+
+/**
+ * This is a minimally invasive approach to shutdown on LevelDB read errors from
+ * the chainstate, while keeping user interface out of the common library, which
+ * is shared between bitcoind, and bitcoin-qt and non-server tools.
+ *
+ * Writes do not need similar protection, as failure to write is handled by the
+ * caller.
+ */
+class CCoinsViewErrorCatcher final : public CCoinsViewBacked {
+public:
+    explicit CCoinsViewErrorCatcher(CCoinsView *view)
+        : CCoinsViewBacked(view) {}
+
+    void AddReadErrCallback(std::function<void()> f) {
+        m_err_callbacks.emplace_back(std::move(f));
+    }
+
+    bool GetCoin(const COutPoint &outpoint, Coin &coin) const override;
+
+private:
+    /**
+     * A list of callbacks to execute upon leveldb read error.
+     */
+    std::vector<std::function<void()>> m_err_callbacks;
+};
 
 #endif // BITCOIN_COINS_H

@@ -10,6 +10,15 @@
 #include <util/system.h>
 #include <validation.h> // For VersionBitsBlockState
 
+/**
+ * Percentage of the block reward to be sent to the fund.
+ */
+static constexpr int MINER_FUND_RATIO = 8;
+
+Amount GetMinerFundAmount(const Amount &coinbaseValue) {
+    return MINER_FUND_RATIO * coinbaseValue / 100;
+}
+
 static CTxDestination BuildDestination(const std::string &dest) {
     const auto mainNetParams = CreateChainParams(CBaseChainParams::MAIN);
     return DecodeDestination(dest, *mainNetParams);
@@ -17,25 +26,7 @@ static CTxDestination BuildDestination(const std::string &dest) {
 
 static const CTxDestination &GetMinerFundDestination() {
     static CTxDestination dest =
-        BuildDestination("pqv2r67sgz3qumufap3h2uuj0zfmnzuv8vqhqfgddk");
-    return dest;
-}
-
-static const CTxDestination &GetMinerABCDestination() {
-    static CTxDestination dest =
-        BuildDestination("qzvz0es48sf8wrqy7kn5j5cugka95ztskcanc9laay");
-    return dest;
-}
-
-static const CTxDestination &GetMinerBCHDDestination() {
-    static CTxDestination dest =
-        BuildDestination("qrhea03074073ff3zv9whh0nggxc7k03ssh8jv9mkx");
-    return dest;
-}
-
-static const CTxDestination &GetMinerElectronCashDestination() {
-    static CTxDestination dest =
-        BuildDestination("pp8d685l8kecnmtyy52ndvq625arz2qwmu42qeeqek");
+        BuildDestination("pqnqv9lt7e5vjyp0w88zf2af0l92l8rxdgnlxww9j9");
     return dest;
 }
 
@@ -46,31 +37,9 @@ GetMinerFundWhitelist(const Consensus::Params &params,
         return {};
     }
 
-    if (!IsPhononEnabled(params, pindexPrev)) {
+    if (!IsAxionEnabled(params, pindexPrev)) {
         return {};
     }
 
-    std::vector<CTxDestination> whitelist{};
-    if (VersionBitsBlockState(params, Consensus::DEPLOYEMENT_MINER_FUND,
-                              pindexPrev) == ThresholdState::ACTIVE) {
-        whitelist.push_back(GetMinerFundDestination());
-    }
-
-    if (VersionBitsBlockState(params, Consensus::DEPLOYEMENT_MINER_FUND_ABC,
-                              pindexPrev) == ThresholdState::ACTIVE) {
-        whitelist.push_back(GetMinerABCDestination());
-    }
-
-    if (VersionBitsBlockState(params, Consensus::DEPLOYEMENT_MINER_FUND_BCHD,
-                              pindexPrev) == ThresholdState::ACTIVE) {
-        whitelist.push_back(GetMinerBCHDDestination());
-    }
-
-    if (VersionBitsBlockState(params,
-                              Consensus::DEPLOYEMENT_MINER_FUND_ELECTRON_CASH,
-                              pindexPrev) == ThresholdState::ACTIVE) {
-        whitelist.push_back(GetMinerElectronCashDestination());
-    }
-
-    return whitelist;
+    return {GetMinerFundDestination()};
 }

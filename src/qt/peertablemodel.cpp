@@ -9,8 +9,6 @@
 #include <qt/guiutil.h>
 
 #include <interfaces/node.h>
-#include <sync.h>
-#include <validation.h> // for cs_main
 
 #include <algorithm>
 
@@ -35,7 +33,7 @@ bool NodeLessThan::operator()(const CNodeCombinedStats &left,
         case PeerTableModel::Subversion:
             return pLeft->cleanSubVer.compare(pRight->cleanSubVer) < 0;
         case PeerTableModel::Ping:
-            return pLeft->dMinPing < pRight->dMinPing;
+            return pLeft->m_min_ping_usec < pRight->m_min_ping_usec;
         case PeerTableModel::Sent:
             return pLeft->nSendBytes < pRight->nSendBytes;
         case PeerTableModel::Received:
@@ -156,7 +154,7 @@ QVariant PeerTableModel::data(const QModelIndex &index, int role) const {
             case Subversion:
                 return QString::fromStdString(rec->nodeStats.cleanSubVer);
             case Ping:
-                return GUIUtil::formatPingTime(rec->nodeStats.dMinPing);
+                return GUIUtil::formatPingTime(rec->nodeStats.m_min_ping_usec);
             case Sent:
                 return GUIUtil::formatBytes(rec->nodeStats.nSendBytes);
             case Received:

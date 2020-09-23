@@ -112,14 +112,12 @@ if [ -d "${ASSET_DIR}" ]; then
   # Linux binaries
   ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-abc-${VERSION}-aarch64-linux-gnu.tar.gz")
   ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-abc-${VERSION}-arm-linux-gnueabihf.tar.gz")
-  ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-abc-${VERSION}-i686-pc-linux-gnu.tar.gz")
   ASSET_LIST+=("${ASSET_DIR}/linux/bitcoin-abc-${VERSION}-x86_64-linux-gnu.tar.gz")
 
   # OSX binaries
   ASSET_LIST+=("${ASSET_DIR}/osx/bitcoin-abc-${VERSION}-osx-unsigned.dmg")
 
   # Windows binaries
-  ASSET_LIST+=("${ASSET_DIR}/win/bitcoin-abc-${VERSION}-win32-setup-unsigned.exe")
   ASSET_LIST+=("${ASSET_DIR}/win/bitcoin-abc-${VERSION}-win64-setup-unsigned.exe")
 
   for FILENAME in "${ASSET_LIST[@]}"; do

@@ -94,6 +94,9 @@ public:
 #endif // ENABLE_WALLET
     bool enableWallet = false;
 
+    /** Disconnect core signals from GUI client */
+    void unsubscribeFromCoreSignals();
+
 protected:
     void changeEvent(QEvent *e) override;
     void closeEvent(QCloseEvent *event) override;
@@ -143,6 +146,10 @@ private:
     QAction *openRPCConsoleAction = nullptr;
     QAction *openAction = nullptr;
     QAction *showHelpMessageAction = nullptr;
+    QAction *m_create_wallet_action{nullptr};
+    QAction *m_open_wallet_action{nullptr};
+    QMenu *m_open_wallet_menu{nullptr};
+    QAction *m_close_wallet_action{nullptr};
     QAction *m_wallet_selector_label_action = nullptr;
     QAction *m_wallet_selector_action = nullptr;
 
@@ -180,8 +187,6 @@ private:
 
     /** Connect core signals to GUI client */
     void subscribeToCoreSignals();
-    /** Disconnect core signals from GUI client */
-    void unsubscribeFromCoreSignals();
 
     /** Update UI with latest network info from model. */
     void updateNetworkState();
@@ -216,8 +221,8 @@ public Q_SLOTS:
        @param[in] ret       pointer to a bool that will be modified to whether
        Ok was clicked (modal only)
      */
-    void message(const QString &title, const QString &message,
-                 unsigned int style, bool *ret = nullptr);
+    void message(const QString &title, QString message, unsigned int style,
+                 bool *ret = nullptr);
 
 #ifdef ENABLE_WALLET
     void setCurrentWallet(WalletModel *wallet_model);
@@ -234,10 +239,10 @@ private:
     void setEncryptionStatus(int status);
 
     /** Set the hd-enabled status as shown in the UI.
-     @param[in] status            current hd enabled status
+     @param[in] hdEnabled         current hd enabled status
      @see WalletModel::EncryptionStatus
      */
-    void setHDStatus(int hdEnabled);
+    void setHDStatus(bool privkeyDisabled, int hdEnabled);
 
 public Q_SLOTS:
     bool handlePaymentRequest(const SendCoinsRecipient &recipient);

@@ -1,5 +1,3 @@
-alignment:move.h
-alignment:prevector.h
 bool:wallet/wallet.cpp
 float-divide-by-zero:policy/fees.cpp
 float-divide-by-zero:validation.cpp
@@ -33,7 +31,9 @@ unsigned-integer-overflow:txmempool.cpp
 unsigned-integer-overflow:util/strencodings.cpp
 unsigned-integer-overflow:validation.cpp
 vptr:fs.cpp
-# Only occurs with the cmake build and clang-7
-vptr:avalanche_tests.cpp
-# Only with clang < 9
+# False positive vptr due to boost::unit_test::decorator::timeout
+vptr:avalanche/test/processor_tests.cpp
+vptr:avalanche/test/peermanager_tests.cpp
+# The vptr suppressions are only necessary for clang < 9
 vptr:boost/test/tree/observer.hpp
+vptr:boost/system/error_code.hpp
