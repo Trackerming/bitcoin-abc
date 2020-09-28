@@ -587,12 +587,12 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             def cache_path(*paths):
                 return os.path.join(cache_node_dir, "regtest", *paths)
 
-            # Remove empty wallets dir
-            os.rmdir(cache_path('wallets'))
-            for entry in os.listdir(cache_path()):
-                # Only keep chainstate and blocks folder
-                if entry not in ['chainstate', 'blocks']:
-                    os.remove(cache_path(entry))
+            for i in range(MAX_NODES):
+                # Remove empty wallets dir
+                os.rmdir(cache_path(i, 'wallets'))
+                for entry in os.listdir(cache_path(i)):
+                    if entry not in ['chainstate', 'blocks', 'indexes']:
+                        os.remove(cache_path(i, entry))
 
         for i in range(self.num_nodes):
             self.log.debug(

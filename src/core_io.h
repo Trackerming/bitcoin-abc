@@ -52,4 +52,8 @@ void ScriptToUniv(const CScript &script, UniValue &out, bool include_address);
 void TxToUniv(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry,
               bool include_hex = true, int serialize_flags = 0);
 
+void TxToUnivS(const CTransaction &tx, const uint256 &hashBlock,
+               UniValue &entry, bool include_hex = false,
+               int serialize_flags = 0);
+
 #endif // BITCOIN_CORE_IO_H

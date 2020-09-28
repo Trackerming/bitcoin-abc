@@ -1,0 +1,696 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="CMakeRunConfigurationManager" shouldGenerate="true" shouldDeleteObsolete="true" buildAllGenerated="false">
+    <generated />
+  </component>
+  <component name="CMakeSettings">
+    <configurations>
+      <configuration PROFILE_NAME="Debug" CONFIG_NAME="Debug" />
+    </configurations>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="75c4d6f2-e730-4e9d-8999-df4e2da48a89" name="Default" comment="bch-addressinndex-v20200515002101&#10;&#10;Summary:&#10;编译两种方法：&#10;1. mkdir build、autogen.sh、configure、make、make、check&#10;2. mkdir build、cmake -GNinja、ninja、ninja check&#10;&#10;Test Plan:&#10;1. unit test: make check/ninja check&#10;2. functinal test: python3 test_runner.py&#10;&#10;Reviewers: #wallet&#10;&#10;Subscribers: wanjiaming&#10;&#10;Differential Revision: https://phabricator.coincola.com/D3629&#10;&#10;# Conflicts:&#10;#&#9;.arcconfig&#10;#&#9;.gitignore&#10;#&#9;src/Makefile.am&#10;#&#9;src/Makefile.test.include&#10;#&#9;src/dbwrapper.cpp&#10;#&#9;src/rpc/blockchain.cpp&#10;#&#9;src/rpc/misc.cpp&#10;#&#9;src/rpc/rawtransaction.cpp&#10;#&#9;src/rpc/server.cpp&#10;#&#9;src/rpc/server.h&#10;#&#9;src/script/script.cpp&#10;#&#9;src/script/script.h&#10;#&#9;src/txdb.cpp&#10;#&#9;src/txdb.h&#10;#&#9;src/txmempool.h&#10;#&#9;src/validation.cpp&#10;#&#9;src/validation.h&#10;#&#9;test/functional/rpc_blockchain.py&#10;#&#9;test/functional/rpc_getblockstats.py&#10;#&#9;test/functional/test_framework/test_framework.py&#10;#&#9;test/functional/test_framework/test_node.py&#10;#&#9;test/functional/test_framework/util.py&#10;#&#9;test/functional/timing.json">
+      <change afterPath="$PROJECT_DIR$/.vscode/launch.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.vscode/settings.json" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/addressindex.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/spentindex.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/test/script_p2pkh_tests.cpp" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/timestampindex.h" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/test/functional/feature_addressindex.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/test/functional/feature_spentindex.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/test/functional/feature_timestampindex.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/test/functional/feature_txindex.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.arcconfig" beforeDir="false" afterPath="$PROJECT_DIR$/.arcconfig" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/CMakeLists.txt" beforeDir="false" afterPath="$PROJECT_DIR$/src/CMakeLists.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Makefile.am" beforeDir="false" afterPath="$PROJECT_DIR$/src/Makefile.am" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/Makefile.test.include" beforeDir="false" afterPath="$PROJECT_DIR$/src/Makefile.test.include" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/amount.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/amount.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core_io.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/core_io.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/core_write.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/core_write.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/dbwrapper.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/dbwrapper.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/dbwrapper.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/dbwrapper.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/init.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/init.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/key_io.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/key_io.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/key_io.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/key_io.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rpc/blockchain.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/rpc/blockchain.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rpc/client.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/rpc/client.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rpc/misc.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/rpc/misc.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rpc/rawtransaction.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/rpc/rawtransaction.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rpc/server.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/rpc/server.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rpc/server.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/rpc/server.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/script/script.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/script/script.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/script/script.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/script/script.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sync.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/sync.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/test/dbwrapper_tests.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/test/dbwrapper_tests.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/txdb.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/txdb.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/txdb.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/txdb.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/txmempool.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/txmempool.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/txmempool.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/txmempool.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/undo.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/undo.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/validation.cpp" beforeDir="false" afterPath="$PROJECT_DIR$/src/validation.cpp" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/validation.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/validation.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/rpc_blockchain.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/rpc_blockchain.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/rpc_getblockstats.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/rpc_getblockstats.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/rpc_rawtransaction.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/rpc_rawtransaction.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/rpc_txoutproof.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/rpc_txoutproof.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/test_framework/address.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/test_framework/address.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/test_framework/blocktools.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/test_framework/blocktools.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/test_framework/test_framework.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/test_framework/test_framework.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/test_framework/test_node.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/test_framework/test_node.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/test_framework/util.py" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/test_framework/util.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test/functional/timing.json" beforeDir="false" afterPath="$PROJECT_DIR$/test/functional/timing.json" afterDir="false" />
+    </list>
+    <ignored path="$PROJECT_DIR$/cmake-build-debug/" />
+    <ignored path="$PROJECT_DIR$/src/config/cmake-build-debug/" />
+    <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
+    <option name="TRACKING_ENABLED" value="true" />
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileEditorManager">
+    <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
+      <file leaf-file-name="CMakeLists.txt" pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="1209">
+              <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file leaf-file-name="misc.cpp" pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="25885">
+              <caret line="835" column="80" selection-start-line="835" selection-start-column="80" selection-end-line="835" selection-end-column="80" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file leaf-file-name="rawtransaction.cpp" pinned="false" current-in-tab="true">
+        <entry file="file://$PROJECT_DIR$/src/rpc/rawtransaction.cpp">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="188">
+              <caret line="175" column="43" selection-start-line="175" selection-start-column="39" selection-end-line="175" selection-end-column="44" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file leaf-file-name="CMakeLists.txt" pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/config/CMakeLists.txt">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="341">
+              <caret line="11" column="11" selection-start-line="11" selection-start-column="11" selection-end-line="11" selection-end-column="11" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+      <file leaf-file-name="blockchain.h" pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+          <provider selected="true" editor-type-id="text-editor" />
+        </entry>
+      </file>
+      <file leaf-file-name="blockchain.cpp" pinned="false" current-in-tab="false">
+        <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+          <provider selected="true" editor-type-id="text-editor">
+            <state relative-caret-position="27280">
+              <caret line="880" selection-start-line="880" selection-end-line="880" />
+            </state>
+          </provider>
+        </entry>
+      </file>
+    </leaf>
+  </component>
+  <component name="FindInProjectRecents">
+    <findStrings>
+      <find>eho</find>
+      <find>&gt;&gt;&gt;</find>
+    </findStrings>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="IdeDocumentHistory">
+    <option name="CHANGED_PATHS">
+      <list>
+        <option value="$PROJECT_DIR$/src/rpc/misc.cpp" />
+        <option value="$PROJECT_DIR$/src/rpc/rawtransaction.cpp" />
+      </list>
+    </option>
+  </component>
+  <component name="JsBuildToolGruntFileManager" detection-done="true" sorting="DEFINITION_ORDER" />
+  <component name="JsBuildToolPackageJson" detection-done="true" sorting="DEFINITION_ORDER" />
+  <component name="JsGulpfileManager">
+    <detection-done>true</detection-done>
+    <sorting>DEFINITION_ORDER</sorting>
+  </component>
+  <component name="NodePackageJsonFileManager">
+    <packageJsonPaths />
+  </component>
+  <component name="ProjectFrameBounds">
+    <option name="x" value="14" />
+    <option name="y" value="25" />
+    <option name="width" value="1353" />
+    <option name="height" value="809" />
+  </component>
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
+  <component name="ProjectView">
+    <navigator currentView="Scope" currentSubView="Project Files" proportions="" version="1">
+      <showMembers ProjectPane="true" />
+      <foldersAlwaysOnTop value="true" />
+    </navigator>
+    <panes>
+      <pane id="ProjectPane" />
+      <pane id="Scope">
+        <subPane subId="Project Files">
+          <expand>
+            <path>
+              <item name="Root" type="cbb8eebc:String" user="Root" />
+              <item name="bitcoin-abc" type="cbb8eebc:String" user="bitcoin-abc" />
+            </path>
+          </expand>
+          <select />
+        </subPane>
+      </pane>
+    </panes>
+  </component>
+  <component name="PropertiesComponent">
+    <property name="WebServerToolWindowFactoryState" value="false" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="nodejs_interpreter_path.stuck_in_default_project" value="undefined stuck path" />
+    <property name="nodejs_npm_path_reset_for_default_project" value="true" />
+    <property name="settings.editor.selected.configurable" value="preferences.sourceCode" />
+  </component>
+  <component name="RunDashboard">
+    <option name="ruleStates">
+      <list>
+        <RuleState>
+          <option name="name" value="ConfigurationTypeDashboardGroupingRule" />
+        </RuleState>
+        <RuleState>
+          <option name="name" value="StatusDashboardGroupingRule" />
+        </RuleState>
+      </list>
+    </option>
+  </component>
+  <component name="RunManager">
+    <configuration default="true" type="Applet" factoryName="Applet">
+      <option name="WIDTH" value="400" />
+      <option name="HEIGHT" value="300" />
+      <option name="POLICY_FILE" value="$APPLICATION_HOME_DIR$/bin/appletviewer.policy" />
+      <module />
+      <method />
+    </configuration>
+    <configuration default="true" type="Application" factoryName="Application">
+      <extension name="coverage" enabled="false" merge="false" sample_coverage="true" runner="idea" />
+      <option name="MAIN_CLASS_NAME" />
+      <option name="VM_PARAMETERS" />
+      <option name="PROGRAM_PARAMETERS" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="false" />
+      <option name="ALTERNATIVE_JRE_PATH" />
+      <option name="ENABLE_SWING_INSPECTOR" value="false" />
+      <option name="ENV_VARIABLES" />
+      <option name="PASS_PARENT_ENVS" value="true" />
+      <module name="" />
+      <envs />
+      <method />
+    </configuration>
+    <configuration default="true" type="JUnit" factoryName="JUnit">
+      <extension name="coverage" enabled="false" merge="false" sample_coverage="true" runner="idea" />
+      <module name="" />
+      <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="false" />
+      <option name="ALTERNATIVE_JRE_PATH" />
+      <option name="PACKAGE_NAME" />
+      <option name="MAIN_CLASS_NAME" />
+      <option name="METHOD_NAME" />
+      <option name="TEST_OBJECT" value="class" />
+      <option name="VM_PARAMETERS" value="-ea" />
+      <option name="PARAMETERS" />
+      <option name="WORKING_DIRECTORY" value="$MODULE_DIR$" />
+      <option name="ENV_VARIABLES" />
+      <option name="PASS_PARENT_ENVS" value="true" />
+      <option name="TEST_SEARCH_SCOPE">
+        <value defaultName="singleModule" />
+      </option>
+      <envs />
+      <patterns />
+      <method />
+    </configuration>
+    <configuration default="true" type="Remote" factoryName="Remote">
+      <option name="USE_SOCKET_TRANSPORT" value="true" />
+      <option name="SERVER_MODE" value="false" />
+      <option name="SHMEM_ADDRESS" value="javadebug" />
+      <option name="HOST" value="localhost" />
+      <option name="PORT" value="5005" />
+      <method />
+    </configuration>
+    <configuration default="true" type="TestNG" factoryName="TestNG">
+      <extension name="coverage" enabled="false" merge="false" sample_coverage="true" runner="idea" />
+      <module name="" />
+      <option name="ALTERNATIVE_JRE_PATH_ENABLED" value="false" />
+      <option name="ALTERNATIVE_JRE_PATH" />
+      <option name="SUITE_NAME" />
+      <option name="PACKAGE_NAME" />
+      <option name="MAIN_CLASS_NAME" />
+      <option name="METHOD_NAME" />
+      <option name="GROUP_NAME" />
+      <option name="TEST_OBJECT" value="CLASS" />
+      <option name="VM_PARAMETERS" value="-ea" />
+      <option name="PARAMETERS" />
+      <option name="WORKING_DIRECTORY" value="$MODULE_DIR$" />
+      <option name="OUTPUT_DIRECTORY" />
+      <option name="ANNOTATION_TYPE" />
+      <option name="ENV_VARIABLES" />
+      <option name="PASS_PARENT_ENVS" value="true" />
+      <option name="TEST_SEARCH_SCOPE">
+        <value defaultName="singleModule" />
+      </option>
+      <option name="USE_DEFAULT_REPORTERS" value="false" />
+      <option name="PROPERTIES_FILE" />
+      <envs />
+      <properties />
+      <listeners />
+      <method />
+    </configuration>
+    <configuration default="true" type="#org.jetbrains.idea.devkit.run.PluginConfigurationType" factoryName="Plugin">
+      <module name="" />
+      <option name="VM_PARAMETERS" value="-Xmx512m -Xms256m -XX:MaxPermSize=250m -ea" />
+      <option name="PROGRAM_PARAMETERS" />
+      <predefined_log_file id="idea.log" enabled="true" />
+      <method />
+    </configuration>
+  </component>
+  <component name="SvnConfiguration">
+    <configuration />
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="75c4d6f2-e730-4e9d-8999-df4e2da48a89" name="Default" comment="" />
+      <created>1583196986718</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1583196986718</updated>
+      <workItem from="1583196991476" duration="628000" />
+      <workItem from="1583219429443" duration="648000" />
+      <workItem from="1583393276684" duration="2081000" />
+      <workItem from="1583746776520" duration="979000" />
+      <workItem from="1583802690463" duration="5802000" />
+      <workItem from="1583897582927" duration="8504000" />
+      <workItem from="1583906829965" duration="2721000" />
+      <workItem from="1583909973389" duration="1635000" />
+      <workItem from="1583911819778" duration="1341000" />
+      <workItem from="1583917204731" duration="442000" />
+      <workItem from="1583932618011" duration="970000" />
+      <workItem from="1601012813251" duration="197000" />
+      <workItem from="1601013021946" duration="99000" />
+      <workItem from="1601013126946" duration="604000" />
+      <workItem from="1601016767134" duration="362000" />
+      <workItem from="1601017190840" duration="385000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TimeTrackingManager">
+    <option name="totallyTimeSpent" value="27398000" />
+  </component>
+  <component name="ToolWindowManager">
+    <frame x="14" y="25" width="1353" height="809" extended-state="0" />
+    <layout>
+      <window_info content_ui="combo" x="1441" y="-60" width="274" height="770" id="Project" order="2" type="WINDOWED" weight="0.14428647" />
+      <window_info anchor="bottom" id="TODO" order="6" />
+      <window_info anchor="bottom" id="CMake" order="7" weight="0.5871886" />
+      <window_info anchor="bottom" id="Event Log" order="7" side_tool="true" />
+      <window_info anchor="bottom" id="Run" order="2" />
+      <window_info anchor="bottom" id="Version Control" order="7" weight="0.3283582" />
+      <window_info id="Structure" order="0" side_tool="true" weight="0.25" />
+      <window_info active="true" anchor="bottom" id="Terminal" order="7" visible="true" weight="0.4227528" />
+      <window_info anchor="bottom" id="Debug" order="3" weight="0.4" />
+      <window_info id="Favorites" order="1" side_tool="true" />
+      <window_info anchor="right" content_ui="combo" id="Hierarchy" order="2" weight="0.25" />
+      <window_info anchor="bottom" id="Inspection" order="5" weight="0.4" />
+      <window_info anchor="right" id="Commander" internal_type="SLIDING" order="0" type="SLIDING" weight="0.4" />
+      <window_info anchor="right" id="Ant Build" order="1" weight="0.25" />
+      <window_info anchor="bottom" id="Message" order="0" />
+      <window_info anchor="bottom" id="Cvs" order="4" weight="0.25" />
+      <window_info anchor="bottom" id="Find" order="1" />
+    </layout>
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="1" />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="RECENTLY_FILTERED_USER_GROUPS">
+                <collection />
+              </option>
+              <option name="RECENTLY_FILTERED_BRANCH_GROUPS">
+                <collection />
+              </option>
+              <option name="COLUMN_ORDER">
+                <list>
+                  <option value="0" />
+                  <option value="1" />
+                  <option value="2" />
+                  <option value="3" />
+                </list>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsContentAnnotationSettings">
+    <option name="myLimit" value="2678400000" />
+  </component>
+  <component name="editorHistoryManager">
+    <entry file="file://$PROJECT_DIR$/src/config/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="341">
+          <caret line="11" column="11" selection-start-line="11" selection-start-column="11" selection-end-line="11" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="27280">
+          <caret line="880" selection-start-line="880" selection-end-line="880" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/rawtransaction.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="15934">
+          <caret line="514" column="30" selection-start-line="514" selection-start-column="30" selection-end-line="514" selection-end-column="30" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="19809">
+          <caret line="639" column="137" selection-start-line="639" selection-start-column="137" selection-end-line="639" selection-end-column="137" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/rawtransaction.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="15655">
+          <caret line="505" selection-start-line="505" selection-end-line="505" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/config/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="279">
+          <caret line="9" column="5" lean-forward="true" selection-start-line="9" selection-start-column="5" selection-end-line="9" selection-end-column="5" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="23281">
+          <caret line="751" selection-start-line="751" selection-end-line="751" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/config/cmake-build-debug/version.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="19809">
+          <caret line="639" column="137" selection-start-line="639" selection-start-column="137" selection-end-line="639" selection-end-column="137" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="23281">
+          <caret line="751" selection-start-line="751" selection-end-line="751" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/rawtransaction.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="15624">
+          <caret line="504" column="8" selection-start-line="504" selection-start-column="8" selection-end-line="504" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="19809">
+          <caret line="639" column="137" selection-start-line="639" selection-start-column="137" selection-end-line="639" selection-end-column="137" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="23281">
+          <caret line="751" selection-start-line="751" selection-end-line="751" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/rawtransaction.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="15624">
+          <caret line="504" column="8" selection-start-line="504" selection-start-column="8" selection-end-line="504" selection-end-column="8" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="19809">
+          <caret line="639" column="137" selection-start-line="639" selection-start-column="137" selection-end-line="639" selection-end-column="137" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="23281">
+          <caret line="751" lean-forward="true" selection-start-line="751" selection-end-line="751" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/rawtransaction.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="5363">
+          <caret line="173" column="19" selection-start-line="173" selection-start-column="19" selection-end-line="173" selection-end-column="19" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="33511">
+          <caret line="1081" column="13" selection-start-line="1081" selection-start-column="13" selection-end-line="1081" selection-end-column="13" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="23343">
+          <caret line="753" column="10" selection-start-line="753" selection-start-column="10" selection-end-line="753" selection-end-column="10" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="33511">
+          <caret line="1081" column="13" selection-start-line="1081" selection-start-column="13" selection-end-line="1081" selection-end-column="13" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="23219">
+          <caret line="749" column="23" lean-forward="true" selection-start-line="749" selection-start-column="23" selection-end-line="749" selection-end-column="23" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="33325">
+          <caret line="1075" column="13" selection-start-line="1075" selection-start-column="13" selection-end-line="1075" selection-end-column="13" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1519">
+          <caret line="49" selection-start-line="49" selection-end-line="49" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1767">
+          <caret line="57" column="4" selection-start-line="57" selection-start-column="4" selection-end-line="57" selection-end-column="5" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1457">
+          <caret line="47" column="10" selection-start-line="47" selection-start-column="10" selection-end-line="47" selection-end-column="10" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1488">
+          <caret line="48" column="7" selection-start-line="48" selection-start-column="7" selection-end-line="48" selection-end-column="7" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/cashaddr.h">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-741" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/test/functional/feature_timestampindex.py">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/test/functional/feature_addressindex.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-134" />
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/validation.cpp">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/blockchain.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="27280">
+          <caret line="880" selection-start-line="880" selection-end-line="880" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="1209">
+          <caret line="39" column="11" selection-start-line="39" selection-start-column="11" selection-end-line="39" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/misc.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="25885">
+          <caret line="835" column="80" selection-start-line="835" selection-start-column="80" selection-end-line="835" selection-end-column="80" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/config/cmake-build-debug/version.h">
+      <provider selected="true" editor-type-id="text-editor" />
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/config/CMakeLists.txt">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="341">
+          <caret line="11" column="11" selection-start-line="11" selection-start-column="11" selection-end-line="11" selection-end-column="11" />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/src/rpc/rawtransaction.cpp">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="188">
+          <caret line="175" column="43" selection-start-line="175" selection-start-column="39" selection-end-line="175" selection-end-column="44" />
+        </state>
+      </provider>
+    </entry>
+  </component>
+  <component name="masterDetails">
+    <states>
+      <state key="ProjectJDKs.UI">
+        <settings>
+          <last-edited>1.8</last-edited>
+          <splitter-proportions>
+            <option name="proportions">
+              <list>
+                <option value="0.2" />
+              </list>
+            </option>
+          </splitter-proportions>
+        </settings>
+      </state>
+    </states>
+  </component>
+</project>

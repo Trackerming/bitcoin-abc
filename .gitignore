@@ -1,5 +1,8 @@
 abc-ci-builds
 
+cmake-build-debug
+src/config/cmake-build-debug
+build*
 *.tar.gz
 
 *.exe

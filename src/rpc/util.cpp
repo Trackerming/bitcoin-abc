@@ -90,6 +90,15 @@ Amount AmountFromValue(const UniValue &value) {
     return amt;
 }
 
+UniValue ValueFromCAmount(const CAmount &amount) {
+    bool sign = amount < 0;
+    int64_t n_abs = (sign ? -amount : amount);
+    int64_t quotient = n_abs / (COIN / SATOSHI);
+    int64_t remainder = n_abs % (COIN / SATOSHI);
+    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
+                                              quotient, remainder));
+}
+
 uint256 ParseHashV(const UniValue &v, std::string strName) {
     std::string strHex(v.get_str());
     if (64 != strHex.length()) {

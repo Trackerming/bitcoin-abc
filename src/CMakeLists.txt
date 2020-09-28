@@ -539,6 +539,9 @@ add_library(server
 	validation.cpp
 	validationinterface.cpp
 	versionbits.cpp
+    addressindex.h
+    spentindex.h
+    timestampindex.h
 )
 
 target_include_directories(server PRIVATE leveldb/helpers/memenv)

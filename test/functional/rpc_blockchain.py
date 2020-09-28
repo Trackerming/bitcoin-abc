@@ -336,6 +336,43 @@ class BlockchainTest(BitcoinTestFramework):
         self.start_node(0)
         assert_equal(self.nodes[0].getblockcount(), 207)
 
+    def _test_getblock(self):
+        # Checks for getblock verbose outputs
+        node = self.nodes[0]
+        getblockinfo = node.getblock(node.getblockhash(1), 2)
+        gettransactioninfo = node.gettransaction(getblockinfo['tx'][0]['txid'])
+        getblockheaderinfo = node.getblockheader(node.getblockhash(1), True)
+
+        assert_equal(getblockinfo['hash'], gettransactioninfo['blockhash'])
+        assert_equal(
+            getblockinfo['confirmations'], gettransactioninfo['confirmations'])
+        assert_equal(getblockinfo['height'], getblockheaderinfo['height'])
+        assert_equal(
+            getblockinfo['versionHex'], getblockheaderinfo['versionHex'])
+        assert_equal(getblockinfo['version'], getblockheaderinfo['version'])
+        assert_equal(getblockinfo['size'], 181)
+        assert_equal(
+            getblockinfo['merkleroot'], getblockheaderinfo['merkleroot'])
+        '''
+        # Verify transaction data by check the hex values
+        for tx in getblockinfo['tx']:
+            getrawtransaction = node.getrawtransaction(tx['txid'], True)
+            assert_equal(tx['hex'], getrawtransaction['hex'])
+        '''
+        assert_equal(getblockinfo['time'], getblockheaderinfo['time'])
+        assert_equal(
+            getblockinfo['mediantime'], getblockheaderinfo['mediantime'])
+        assert_equal(getblockinfo['nonce'], getblockheaderinfo['nonce'])
+        assert_equal(getblockinfo['bits'], getblockheaderinfo['bits'])
+        assert_equal(
+            getblockinfo['difficulty'], getblockheaderinfo['difficulty'])
+        assert_equal(
+            getblockinfo['chainwork'], getblockheaderinfo['chainwork'])
+        assert_equal(
+            getblockinfo['previousblockhash'], getblockheaderinfo['previousblockhash'])
+        assert_equal(
+            getblockinfo['nextblockhash'], getblockheaderinfo['nextblockhash'])
+
     def _test_waitforblockheight(self):
         self.log.info("Test waitforblockheight")
         node = self.nodes[0]

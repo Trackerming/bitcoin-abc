@@ -8,7 +8,7 @@
 
 #include <threadsafety.h>
 #include <util/macros.h>
-
+#include <sstream>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
