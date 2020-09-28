@@ -595,15 +595,15 @@ void SetupServerArgs(NodeContext &node) {
     hidden_args.emplace_back("-sysperms");
 #endif
     argsman.AddArg("-txindex",
-                   strprintf("Maintain a full transaction index, used by the "
-                             "getrawtransaction rpc call (default: %d)",
-                             DEFAULT_TXINDEX),
-                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+                strprintf("Maintain a full transaction index, used by the "
+                            "getrawtransaction rpc call (default: %d)",
+                            DEFAULT_TXINDEX),
+                ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg(
         "-blockfilterindex=<type>",
         strprintf("Maintain an index of compact filters by block "
-                  "(default: %s, values: %s).",
-                  DEFAULT_BLOCKFILTERINDEX, ListBlockFilterTypes()) +
+                "(default: %s, values: %s).",
+                DEFAULT_BLOCKFILTERINDEX, ListBlockFilterTypes()) +
             " If <type> is not supplied or if <type> = 1, indexes for "
             "all known types are enabled.",
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -620,23 +620,55 @@ void SetupServerArgs(NodeContext &node) {
         ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
         OptionsCategory::CONNECTION);
     argsman.AddArg("-asmap=<file>",
-                   strprintf("Specify asn mapping used for bucketing of the "
-                             "peers (default: %s). Relative paths will be "
-                             "prefixed by the net-specific datadir location.",
-                             DEFAULT_ASMAP_FILENAME),
-                   ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+                    strprintf("Specify asn mapping used for bucketing of the "
+                            "peers (default: %s). Relative paths will be "
+                            "prefixed by the net-specific datadir location.",
+                            DEFAULT_ASMAP_FILENAME),
+                ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bantime=<n>",
-                   strprintf("Default duration (in seconds) of manually "
-                             "configured bans (default: %u)",
-                             DEFAULT_MISBEHAVING_BANTIME),
-                   ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+                strprintf("Default duration (in seconds) of manually "
+                            "configured bans (default: %u)",
+                            DEFAULT_MISBEHAVING_BANTIME),
+                ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     argsman.AddArg("-bind=<addr>",
-                   "Bind to given address and always listen on it. Use "
-                   "[host]:port notation for IPv6",
-                   ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
-                   OptionsCategory::CONNECTION);
+                "Bind to given address and always listen on it. Use "
+                "[host]:port notation for IPv6",
+                ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
+                OptionsCategory::CONNECTION);
+
+    argsman.AddArg("-dbmaxopenfiles=<n>",
+                strprintf("use max open db files (default: %u)",
+                        DEFAULT_DB_MAX_OPEN_FILES),
+                ArgsManager::ALLOW_INT , OptionsCategory::OPTIONS);
     argsman.AddArg(
-        "-connect=<ip>",
+        "-dbcompression",
+        strprintf("use db compression (default:%d)", DEFAULT_DB_COMPRESSION),
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-addressindex",
+                strprintf("Maintain a full address index, used to query for "
+                        "the balance,  txids and"
+                        " unspent outputs for addresses (default: %d)",
+                        DEFAULT_ADDRESS_INDEX),
+                ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-spentindex",
+                strprintf("Maintain a full spent index, used to query the "
+                        "spending txid and input index for "
+                        "an outpoint (default: %d)",
+                        DEFAULT_SPENT_INDEX),
+                ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-timestampindex",
+                strprintf("Maintain a timestamp index for block hashes, "
+                        "used to query blocks hashes"
+                        " by a range of timestamps (default: %d)",
+                        DEFAULT_TIMESTAMP_INDEX),
+                ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+
+    argsman.AddArg("-banscore=<n>",
+                strprintf("Threshold for disconnecting and discouraging "
+                        "misbehaving peers (default: %u)",
+                        DEFAULT_BANSCORE_THRESHOLD),
+                ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+    argsman.AddArg("-connect=<ip>",
         "Connect only to the specified node(s); -connect=0 disables automatic "
         "connections (the rules for this peer are the same as for -addnode)",
         ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
@@ -1756,7 +1788,7 @@ bool AppInitParameterInteraction(Config &config, const ArgsManager &args) {
 
     // Signal NODE_COMPACT_FILTERS if peerblockfilters and basic filters index
     // are both enabled.
-    if (gArgs.GetBoolArg("-peerblockfilters", DEFAULT_PEERBLOCKFILTERS)) {
+    if (args.GetBoolArg("-peerblockfilters", DEFAULT_PEERBLOCKFILTERS)) {
         if (g_enabled_filter_types.count(BlockFilterType::BASIC) != 1) {
             return InitError(
                 _("Cannot set -peerblockfilters without -blockfilterindex."));
@@ -2486,6 +2518,16 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     fReindex = args.GetBoolArg("-reindex", false);
     bool fReindexChainState = args.GetBoolArg("-reindex-chainstate", false);
 
+    // block tree db setting
+    int dbMaxOpenFiles =
+        args.GetArg("-dbmaxopenfiles", DEFAULT_DB_MAX_OPEN_FILES);
+    bool dbCompression =
+        args.GetBoolArg("-dbcompression", DEFAULT_DB_COMPRESSION);
+
+    LogPrintf("block index database configuration:\n");
+    LogPrintf("* Using %d max open files\n", dbMaxOpenFiles);
+    LogPrintf("*Compression is %s\n", dbCompression ? "enabled" : "disabled");
+
     // cache size calculations
     int64_t nTotalCache = (args.GetArg("-dbcache", DEFAULT_DB_CACHE_MB) << 20);
     // total cache cannot be less than MIN_DB_CACHE_MB
@@ -2494,11 +2536,16 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
     nTotalCache = std::min(nTotalCache, MAX_DB_CACHE_MB << 20);
     int64_t nBlockTreeDBCache =
         std::min(nTotalCache / 8, MAX_BLOCK_DB_CACHE_MB << 20);
+    if (args.GetBoolArg("-addressindex", DEFAULT_ADDRESS_INDEX) ||
+        args.GetBoolArg("-spentindex", DEFAULT_SPENT_INDEX) ||
+        args.GetBoolArg("-timestampindex", DEFAULT_TIMESTAMP_INDEX)) {
+        // ebable 3/4 of the cache if addressindex and/or spentidnex is enable
+        nBlockTreeDBCache = nTotalCache * 3 / 4;
+    } else {
+        nBlockTreeDBCache = std::min(nBlockTreeDBCache, (args.GetBoolArg("-txindex", DEFAULT_TXINDEX) ? MAX_TX_INDEX_CACHE_MB : MAX_BLOCK_DB_CACHE_MB)<< 20);
+    }
     nTotalCache -= nBlockTreeDBCache;
-    int64_t nTxIndexCache =
-        std::min(nTotalCache / 8, args.GetBoolArg("-txindex", DEFAULT_TXINDEX)
-                                      ? MAX_TX_INDEX_CACHE_MB << 20
-                                      : 0);
+    int64_t nTxIndexCache = std::min(nTotalCache / 8, args.GetBoolArg("-txindex", DEFAULT_TXINDEX) ? MAX_TX_INDEX_CACHE_MB << 20 : 0);
     nTotalCache -= nTxIndexCache;
     int64_t filter_index_cache = 0;
     if (!g_enabled_filter_types.empty()) {
@@ -2611,12 +2658,36 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                                        "Wrong datadir for network?"));
                 }
 
+                // check for changed -addressindex state
+                if (fAddressIndex !=
+                    args.GetBoolArg("-addressindex", DEFAULT_ADDRESS_INDEX)) {
+                    strLoadError = _("You need to rebuild the database using "
+                          "-reindex-chainstate to change -addressindex");
+                    break;
+                }
+
+                // check for changed -spentindex state
+                if (fSpentIndex !=
+                    args.GetBoolArg("-spentindex", DEFAULT_SPENT_INDEX)) {
+                    strLoadError = _("You need to rebuild the database using "
+                          "-reindex-chainstate to change -spentindex");
+                    break;
+                }
+
+                // check for changed -timestampindex state
+                if (fTimestampIndex !=
+                    args.GetBoolArg("-timestampindex",
+                                     DEFAULT_TIMESTAMP_INDEX)) {
+                    strLoadError = _("You need to rebuild the database using "
+                          "-reindex-chainstate to change -timestampindex");
+                    break;
+                }
+
                 // Check for changed -prune state.  What we are concerned about
                 // is a user who has pruned blocks in the past, but is now
                 // trying to run unpruned.
                 if (fHavePruned && !fPruneMode) {
-                    strLoadError =
-                        _("You need to rebuild the database using -reindex to "
+                    strLoadError = _("You need to rebuild the database using -reindex to "
                           "go back to unpruned mode.  This will redownload the "
                           "entire blockchain");
                     break;

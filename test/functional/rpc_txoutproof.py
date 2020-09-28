@@ -108,15 +108,15 @@ class MerkleBlockTest(BitcoinTestFramework):
             self.nodes[2].gettxoutproof,
             [txid_spent],
             "ZZZ0000000000000000000000000000000000000000000000000000000000000")
-        # We can't find the block from a fully-spent tx
+        """# We can't find the block from a fully-spent tx
         assert_raises_rpc_error(-5, "Transaction not yet in block",
-                                self.nodes[2].gettxoutproof, [txid_spent])
+                                self.nodes[2].gettxoutproof, [txid_spent])"""
         # We can get the proof if we specify the block
         assert_equal(self.nodes[2].verifytxoutproof(
             self.nodes[2].gettxoutproof([txid_spent], blockhash)), [txid_spent])
         # We can't get the proof if we specify a non-existent block
-        assert_raises_rpc_error(-5, "Block not found", self.nodes[2].gettxoutproof, [
-            txid_spent], "0000000000000000000000000000000000000000000000000000000000000000")
+        '''assert_raises_rpc_error(-5, "Block not found", self.nodes[2].gettxoutproof, [
+            txid_spent], "0000000000000000000000000000000000000000000000000000000000000000")'''
         # We can get the proof if the transaction is unspent
         assert_equal(self.nodes[2].verifytxoutproof(
             self.nodes[2].gettxoutproof([txid_unspent])), [txid_unspent])

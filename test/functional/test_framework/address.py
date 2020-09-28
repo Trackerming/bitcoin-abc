@@ -13,6 +13,7 @@ ADDRESS_BCHREG_UNSPENDABLE = 'bchreg:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqha9s37tt'
 ADDRESS_BCHREG_UNSPENDABLE_DESCRIPTOR = 'addr(bchreg:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqha9s37tt)#l2wkrsqu'
 
 chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+b58len = len(chars)
 
 
 def byte_to_base58(b, version):
@@ -55,6 +56,38 @@ def base58_to_byte(s, verify_checksum=True):
         assert_equal(hash256(res[:-4])[:4], res[-4:])
 
     return res[1:-4], int(res[0])
+# TODO: def base58_decode
+# base58地址decode成bytes
+
+
+def decode(v, length=None):
+    """ decode v into a string of len bytes
+    """
+    long_value = 0
+    for i, c in enumerate(v[::-1]):
+        pos = chars.find(c)
+        assert pos != -1
+        long_value += pos * (b58len**i)
+
+    result = bytes()
+    while long_value >= 256:
+        div, mod = divmod(long_value, 256)
+        result = bytes((mod,)) + result
+        long_value = div
+    result = bytes((long_value, )) + result
+
+    nPad = 0
+    for c in v:
+        if c == chars[0]:
+            nPad += 1
+            continue
+        break
+
+    result = bytes(nPad) + result
+    if length is not None and len(result) != length:
+        return None
+
+    return result
 
 
 def keyhash_to_p2pkh(hash, main=False):

@@ -143,6 +143,9 @@ public:
     SERIALIZE_METHODS(Amount, obj) { READWRITE(obj.amount); }
 };
 
+/** Amount in satoshis (Can be negative) */
+typedef int64_t CAmount;
+
 static constexpr Amount SATOSHI = Amount::satoshi();
 static constexpr Amount CASH = 100 * SATOSHI;
 static constexpr Amount COIN = 100000000 * SATOSHI;

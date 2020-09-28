@@ -22,7 +22,8 @@ class CScript;
 struct ScriptHash;
 
 template <typename HashType> class BaseHash {
-protected:
+//protected:
+public:
     HashType m_hash;
 
 public:

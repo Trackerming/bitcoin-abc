@@ -11,6 +11,7 @@
 #include <config/bitcoin-config.h>
 #endif
 
+#include <addressindex.h>
 #include <amount.h>
 #include <blockfileinfo.h>
 #include <blockindexworkcomparator.h>
@@ -33,7 +34,9 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <spentindex.h>
 #include <string>
+#include <timestampindex.h>
 #include <utility>
 #include <vector>
 
@@ -85,9 +88,16 @@ static const bool DEFAULT_CHECKPOINTS_ENABLED = true;
 static const bool DEFAULT_TXINDEX = false;
 static const char *const DEFAULT_BLOCKFILTERINDEX = "0";
 
+static const bool DEFAULT_ADDRESS_INDEX = false;
+static const bool DEFAULT_SPENT_INDEX = false;
+static const bool DEFAULT_TIMESTAMP_INDEX = false;
+static const unsigned int DEFAULT_DB_MAX_OPEN_FILES = 1000;
+static const bool DEFAULT_DB_COMPRESSION = true;
+
+static const unsigned int DEFAULT_BANSCORE_THRESHOLD = 100;
+
 /** Default for -persistmempool */
 static const bool DEFAULT_PERSIST_MEMPOOL = true;
-/** Default for using fee filter */
 static const bool DEFAULT_FEEFILTER = true;
 
 static const bool DEFAULT_PEERBLOOMFILTERS = true;
@@ -136,11 +146,11 @@ extern std::condition_variable g_best_block_cv;
 extern uint256 g_best_block;
 extern std::atomic_bool fImporting;
 extern std::atomic_bool fReindex;
-// extern int nScriptCheckThreads;
+extern int nScriptCheckThreads;
 extern bool fAddressIndex;
 extern bool fSpentIndex;
 extern bool fTimestampIndex;
-// extern bool fIsBareMultisigStd;
+extern bool fIsBareMultisigStd;
 extern bool fRequireStandard;
 extern bool fCheckBlockIndex;
 extern bool fCheckpointsEnabled;
@@ -498,6 +508,26 @@ public:
     ScriptExecutionMetrics GetScriptExecutionMetrics() const { return metrics; }
 };
 
+bool GetTimestampIndex(const unsigned int &high, const unsigned int &low,
+                       const bool fActiveOnly,
+                       std::vector<std::pair<uint256, unsigned int>> &hashes);
+bool GetSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value);
+bool HashOnchainActive(const BlockHash &hash);
+bool GetAddressIndex(
+    uint160 addressHash, int type,
+    std::vector<std::pair<CAddressIndexKey, CAmount>> &addressIndex,
+    int start = 0, int end = 0);
+bool GetAddressUnspent(
+    uint160 addressHash, int type,
+    std::vector<std::pair<CAddressUnspentKey, CAddressUnspentValue>>
+        &unspentOutputs);
+
+/** Functions for disk access for blocks */
+bool ReadBlockFromDisk(CBlock &block, const FlatFilePos &pos,
+                       const Consensus::Params &params);
+bool ReadBlockFromDisk(CBlock &block, const CBlockIndex *pindex,
+                       const Consensus::Params &params);
+
 bool UndoReadFromDisk(CBlockUndo &blockundo, const CBlockIndex *pindex);
 
 /** Functions for validating blocks and updating the block tree */
@@ -771,6 +801,8 @@ public:
      */
     const BlockHash m_from_snapshot_blockhash{};
 
+    void PruneBlockIndexCandidates();
+
     /**
      * The set of all CBlockIndex entries with BLOCK_VALID_TRANSACTIONS (for
      * itself and all ancestors) and as good as our current tip or better.
@@ -859,7 +891,7 @@ public:
     // Block (dis)connection on a given view:
     DisconnectResult DisconnectBlock(const CBlock &block,
                                      const CBlockIndex *pindex,
-                                     CCoinsViewCache &view);
+                                     CCoinsViewCache &view, bool fJustCheck = false);
     bool ConnectBlock(const CBlock &block, BlockValidationState &state,
                       CBlockIndex *pindex, CCoinsViewCache &view,
                       const CChainParams &params,
@@ -916,7 +948,6 @@ public:
     bool ReplayBlocks(const Consensus::Params &params);
     bool LoadGenesisBlock(const CChainParams &chainparams);
 
-    void PruneBlockIndexCandidates();
 
     void UnloadBlockIndex() EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 

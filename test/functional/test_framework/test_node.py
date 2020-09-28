@@ -82,9 +82,12 @@ class TestNode():
         self.name = "testnode-{}".format(i)
         self.rpc_timeout = timewait
         self.binary = bitcoind
+        print("Mining blocks...", self.binary)
+        '''
         if not os.path.isfile(self.binary):
             raise FileNotFoundError(
                 "Binary '{}' could not be found.\nTry setting it manually:\n\tBITCOIND=<path/to/bitcoind> {}".format(self.binary, sys.argv[0]))
+        '''
         self.coverage_dir = coverage_dir
         self.cwd = cwd
         if extra_conf is not None:
@@ -387,8 +390,7 @@ class TestNode():
     def generate(self, nblocks, maxtries=1000000):
         self.log.debug(
             "TestNode.generate() dispatches `generate` call to `generatetoaddress`")
-        return self.generatetoaddress(
-            nblocks=nblocks, address=self.get_deterministic_priv_key().address, maxtries=maxtries)
+        return self.generatetoaddress(nblocks=nblocks, address=self.get_deterministic_priv_key().address, maxtries=maxtries)
 
     def get_wallet_rpc(self, wallet_name):
         if self.use_cli:

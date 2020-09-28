@@ -54,7 +54,7 @@ class AuthServiceProxyWrapper():
 
         if self.coverage_logfile:
             with open(self.coverage_logfile, 'a+', encoding='utf8') as f:
-                f.write("{}\n".format(rpc_method))
+                f.write("{}\n".format(rpc_mqethod))
 
     def __truediv__(self, relative_uri):
         return AuthServiceProxyWrapper(self.auth_service_proxy_instance / relative_uri,

@@ -14,13 +14,18 @@
 #include <rpc/blockchain.h>
 #include <rpc/server.h>
 #include <rpc/util.h>
+
 #include <scheduler.h>
 #include <script/descriptor.h>
 #include <util/check.h>
 #include <util/message.h> // For MessageSign(), MessageVerify()
 #include <util/ref.h>
+
+#include <timedata.h>
+#include <txmempool.h>
 #include <util/strencodings.h>
 #include <util/system.h>
+#include <validation.h>
 
 #include <univalue.h>
 
@@ -958,8 +963,7 @@ UniValue getaddressutxos(const Config &config, const JSONRPCRequest &request) {
         output.pushKV("address", address);
         output.pushKV("txid", it->first.txhash.GetHex());
         output.pushKV("outputIndex", (int)it->first.index);
-        output.pushKV("script", HexStr(it->second.script.begin(),
-                                       it->second.script.end()));
+        output.pushKV("script", HexStr(std::vector<uint8_t>(it->second.script.begin(), it->second.script.end())));
         output.pushKV("satoshis", it->second.satoshis);
         output.pushKV("height", it->second.blockHeight);
         utxos.push_back(output);
@@ -1342,6 +1346,34 @@ static UniValue getinfo_deprecated(const Config &config,
                        "\nbitcoin-cli has the option -getinfo to collect and "
                        "format these in the old format.");
 }
+
+// clang-format off
+static const CRPCCommand commands[] = {
+    //  category            name                      actor (function)        argNames
+    //  ------------------- ------------------------  ----------------------  ----------
+    { "control",            "getmemoryinfo",          getmemoryinfo,          {"mode"} },
+    { "control",            "logging",                logging,                {"include", "exclude"} },
+    { "util",               "validateaddress",        validateaddress,        {"address"} },
+    { "util",               "createmultisig",         createmultisig,         {"nrequired","keys"} },
+    { "util",               "deriveaddresses",        deriveaddresses,        {"descriptor", "begin", "end"} },
+    { "util",               "getdescriptorinfo",      getdescriptorinfo,      {"descriptor"} },
+    { "util",               "verifymessage",          verifymessage,          {"address","signature","message"} },
+    { "util",               "signmessagewithprivkey", signmessagewithprivkey, {"privkey","message"} },
+  /* Address index*/
+    { "addressindex",       "getaddressmempool",      getaddressmempool,      {"addresses"}},
+    { "addressindex",       "getaddressutxos",        getaddressutxos,        {"addresses"}},
+    { "addressindex",       "getaddressdeltas",       getaddressdeltas,       {"addresses"}},
+    { "addressindex",       "getaddresstxids",        getaddresstxids,        {"addresses"}},
+    { "addressindex",       "getaddressbalance",      getaddressbalance,      {"addresses"}},
+  /* Blockchain */
+    { "blockchain",         "getspentinfo",           getspentinfo,           {"txid_index"}},
+    /* Not shown in help */
+    { "hidden",             "setmocktime",            setmocktime,            {"timestamp"}},
+    { "hidden",             "mockscheduler",          mockscheduler,          {"delta_time"}},
+    { "hidden",             "echo",                   echo,                   {"arg0","arg1","arg2","arg3","arg4","arg5","arg6","arg7","arg8","arg9"}},
+    { "hidden",             "echojson",               echo,                   {"arg0","arg1","arg2","arg3","arg4","arg5","arg6","arg7","arg8","arg9"}},
+};
+// clang-format on
 
 void RegisterMiscRPCCommands(CRPCTable &t) {
     // clang-format off

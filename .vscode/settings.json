@@ -92,5 +92,6 @@
         "ranges": "cpp",
         "stop_token": "cpp",
         "cfenv": "cpp"
-    }
+    },
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
 }

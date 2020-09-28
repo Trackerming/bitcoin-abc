@@ -51,14 +51,14 @@ public:
     // 获取P2PKH类型地址
     std::pair<uint160, int> operator()(const PKHash &id) const {
         std::pair<uint160, int> result;
-        result = std::make_pair(id, 1);
+        result = std::make_pair(id.m_hash, 1);
         return result;
     };
 
     // 获取P2SH地址
     std::pair<uint160, int> operator()(const ScriptHash &id) const {
         std::pair<uint160, int> result;
-        result = std::make_pair(id, 2);
+        result = std::make_pair(id.m_hash, 2);
         return result;
     };
 
@@ -212,6 +212,10 @@ bool IsValidDestinationString(const std::string &str,
                               const CChainParams &params) {
     return IsValidDestination(DecodeDestination(str, params));
 }
+
+std::pair<uint160, int> VisitDestination(const CTxDestination &dest) {
+    return boost::apply_visitor(DestinationVisitor(), dest);
+};
 
 std::string EncodeLegacyAddr(const CTxDestination &dest,
                              const CChainParams &params) {
