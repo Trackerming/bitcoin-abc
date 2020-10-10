@@ -49,14 +49,14 @@ public:
     explicit DestinationVisitor() {}
 
     // 获取P2PKH类型地址
-    std::pair<uint160, int> operator()(const CKeyID &id) const {
+    std::pair<uint160, int> operator()(const PKHash &id) const {
         std::pair<uint160, int> result;
         result = std::make_pair(id, 1);
         return result;
     };
 
     // 获取P2SH地址
-    std::pair<uint160, int> operator()(const CScriptID &id) const {
+    std::pair<uint160, int> operator()(const ScriptHash &id) const {
         std::pair<uint160, int> result;
         result = std::make_pair(id, 2);
         return result;

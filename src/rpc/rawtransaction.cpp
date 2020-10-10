@@ -1038,10 +1038,10 @@ static UniValue sendrawtransaction(const Config &config,
     Amount max_raw_tx_fee = DEFAULT_MAX_RAW_TX_FEE;
     // TODO: temporary migration code for old clients. Remove in v0.22
     if (request.params[1].isBool()) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
+        /*throw JSONRPCError(RPC_INVALID_PARAMETER,
                            "Second argument must be numeric (maxfeerate) and "
                            "no longer supports a boolean. To allow a "
-                           "transaction with high fees, set maxfeerate to 0.");
+                           "transaction with high fees, set maxfeerate to 0.");*/
     } else if (request.params[1].isNum()) {
         size_t sz = tx->GetTotalSize();
         CFeeRate fr(AmountFromValue(request.params[1]));

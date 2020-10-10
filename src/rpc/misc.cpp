@@ -741,7 +741,7 @@ bool getAddressFromParams(const UniValue &params,
         if (!isValid) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "invalid address");
         }
-        // 访问者模式如何获取到id, dest变量理论上是有的,需要验证获取是否正确
+        // 访问者模式如何获取到id, dest变量理论上是有的，需要验证获取是否正确
         std::pair<uint160, int> address = VisitDestination(dest);
         addresses.push_back(address);
     } else if (params[0].isObject()) {

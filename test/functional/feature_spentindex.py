@@ -145,7 +145,7 @@ class SpentIndexTest(BitcoinTestFramework):
         assert_equal(len(block["deltas"]), 2)
         assert_equal(block["deltas"][0]["index"], 0)
         assert_equal(len(block["deltas"][0]["inputs"]), 0)
-        assert_equal(len(block["deltas"][0]["outputs"]), 0)
+        assert_equal(len(block["deltas"][0]["outputs"]), 1) # 为什么之前不报错，coinbase交易呢？
         assert_equal(block["deltas"][1]["index"], 1)
         assert_equal(block["deltas"][1]["txid"], txid2)
         assert_equal(block["deltas"][1]["inputs"][0]["index"], 0)

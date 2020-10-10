@@ -188,11 +188,11 @@ extern std::condition_variable g_best_block_cv;
 extern uint256 g_best_block;
 extern std::atomic_bool fImporting;
 extern std::atomic_bool fReindex;
-extern int nScriptCheckThreads;
+// extern int nScriptCheckThreads;
 extern bool fAddressIndex;
 extern bool fSpentIndex;
 extern bool fTimestampIndex;
-extern bool fIsBareMultisigStd;
+// extern bool fIsBareMultisigStd;
 extern bool fRequireStandard;
 extern bool fCheckBlockIndex;
 extern bool fCheckpointsEnabled;
@@ -852,9 +852,9 @@ public:
     CBlockIndex const *pindexFinalized = nullptr;
 
     // BlockMap mapBlockIndex GUARDED_BY(cs_main);
-    std::multimap<CBlockIndex *, CBlockIndex *> mapBlocksUnlinked;
+    /*std::multimap<CBlockIndex *, CBlockIndex *> mapBlocksUnlinked;
     CBlockIndex *pindexBestInvalid = nullptr;
-    CBlockIndex *pindexBestParked = nullptr;
+    CBlockIndex *pindexBestParked = nullptr;*/
     
     void PruneBlockIndexCandidates();
 
