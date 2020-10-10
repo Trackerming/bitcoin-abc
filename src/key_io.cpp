@@ -43,6 +43,31 @@ public:
     std::string operator()(const CNoDestination &no) const { return {}; }
 };
 
+class DestinationVisitor
+    : public boost::static_visitor<std::pair<uint160, int>> {
+public:
+    explicit DestinationVisitor() {}
+
+    // 获取P2PKH类型地址
+    std::pair<uint160, int> operator()(const PKHash &id) const {
+        std::pair<uint160, int> result;
+        result = std::make_pair(id, 1);
+        return result;
+    };
+
+    // 获取P2SH地址
+    std::pair<uint160, int> operator()(const ScriptHash &id) const {
+        std::pair<uint160, int> result;
+        result = std::make_pair(id, 2);
+        return result;
+    };
+
+    // 非法的地址类型
+    std::pair<uint160, int> operator()(const CNoDestination &no) const {
+        return {};
+    };
+};
+
 CTxDestination DecodeLegacyDestination(const std::string &str,
                                        const CChainParams &params) {
     std::vector<uint8_t> data;

@@ -1377,7 +1377,9 @@ DisconnectResult UndoCoinSpend(const Coin &undo, CCoinsViewCache &view,
  */
 DisconnectResult CChainState::DisconnectBlock(const CBlock &block,
                                               const CBlockIndex *pindex,
-                                              CCoinsViewCache &view) {
+                                              CCoinsViewCache &view,
+                                              bool fJustCheck) {
+    // assert(pindex->GetBlockHash() == view.GetBestBlock());
     CBlockUndo blockUndo;
     if (!UndoReadFromDisk(blockUndo, pindex)) {
         error("DisconnectBlock(): failure reading undo data");
