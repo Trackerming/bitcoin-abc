@@ -18,6 +18,7 @@ from test_framework.blocktools import (
 from test_framework.messages import (
     CBlock,
     CBlockHeader,
+    BLOCK_HEADER_SIZE,
 )
 from test_framework.mininode import (
     P2PDataStore,
@@ -28,7 +29,6 @@ from test_framework.util import (
     assert_raises_rpc_error,
     connect_nodes,
 )
-from test_framework.script import CScriptNum
 
 
 def assert_template(node, block, expect, rehash=True):
@@ -45,6 +45,7 @@ class MiningTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
         self.setup_clean_chain = True
+        self.supports_cli = False
 
     def mine_chain(self):
         self.log.info('Create some old blocks')
@@ -76,7 +77,7 @@ class MiningTest(BitcoinTestFramework):
         self.log.info('getmininginfo')
         mining_info = node.getmininginfo()
         assert_equal(mining_info['blocks'], 200)
-        assert_equal(mining_info['chain'], 'regtest')
+        assert_equal(mining_info['chain'], self.chain)
         assert 'currentblocktx' not in mining_info
         assert 'currentblocksize' not in mining_info
         assert_equal(mining_info['difficulty'],
@@ -96,22 +97,6 @@ class MiningTest(BitcoinTestFramework):
         # sequence numbers must not be max for nLockTime to have effect
         coinbase_tx.vin[0].nSequence = 2 ** 32 - 2
         coinbase_tx.rehash()
-
-        # round-trip the encoded bip34 block height commitment
-        assert_equal(
-            CScriptNum.decode(
-                coinbase_tx.vin[0].scriptSig),
-            next_height)
-        # round-trip negative and multi-byte CScriptNums to catch python
-        # regression
-        assert_equal(
-            CScriptNum.decode(
-                CScriptNum.encode(
-                    CScriptNum(1500))),
-            1500)
-        assert_equal(CScriptNum.decode(
-            CScriptNum.encode(CScriptNum(-1500))), -1500)
-        assert_equal(CScriptNum.decode(CScriptNum.encode(CScriptNum(-1))), -1)
 
         block = CBlock()
         block.nVersion = tmpl["version"]
@@ -168,10 +153,9 @@ class MiningTest(BitcoinTestFramework):
 
         self.log.info("getblocktemplate: Test bad tx count")
         # The tx count is immediately after the block header
-        TX_COUNT_OFFSET = 80
         bad_block_sn = bytearray(block.serialize())
-        assert_equal(bad_block_sn[TX_COUNT_OFFSET], 1)
-        bad_block_sn[TX_COUNT_OFFSET] += 1
+        assert_equal(bad_block_sn[BLOCK_HEADER_SIZE], 1)
+        bad_block_sn[BLOCK_HEADER_SIZE] += 1
         assert_raises_rpc_error(-22, "Block decode failed", node.getblocktemplate, {
                                 'data': bad_block_sn.hex(), 'mode': 'proposal'})
 
@@ -204,11 +188,11 @@ class MiningTest(BitcoinTestFramework):
 
         self.log.info('submitheader tests')
         assert_raises_rpc_error(-22, 'Block header decode failed',
-                                lambda: node.submitheader(hexdata='xx' * 80))
+                                lambda: node.submitheader(hexdata='xx' * BLOCK_HEADER_SIZE))
         assert_raises_rpc_error(-22, 'Block header decode failed',
-                                lambda: node.submitheader(hexdata='ff' * 78))
+                                lambda: node.submitheader(hexdata='ff' * (BLOCK_HEADER_SIZE - 2)))
         assert_raises_rpc_error(-25, 'Must submit previous header',
-                                lambda: node.submitheader(hexdata='ff' * 80))
+                                lambda: node.submitheader(hexdata=super(CBlock, bad_block).serialize().hex()))
 
         block.nTime += 1
         block.solve()

@@ -7,6 +7,7 @@
 #include <netaddress.h>
 #include <noui.h>
 #include <test/util/logging.h>
+#include <util/string.h>
 #include <warnings.h>
 
 #include <test/util/setup_common.h>
@@ -45,7 +46,7 @@ static void MultiAddTimeData(int n, int64_t offset) {
     static int cnt = 0;
     for (int i = 0; i < n; ++i) {
         CNetAddr addr;
-        addr.SetInternal(std::to_string(++cnt));
+        addr.SetInternal(ToString(++cnt));
         AddTimeData(addr, offset);
     }
 }
@@ -66,7 +67,7 @@ BOOST_AUTO_TEST_CASE(addtimedata) {
         MultiAddTimeData(1, DEFAULT_MAX_TIME_ADJUSTMENT + 1);
     }
 
-    BOOST_CHECK(GetWarnings("gui").find("clock is wrong") != std::string::npos);
+    BOOST_CHECK(GetWarnings(true).find("clock is wrong") != std::string::npos);
 
     // nTimeOffset is not changed if the median of offsets exceeds
     // DEFAULT_MAX_TIME_ADJUSTMENT

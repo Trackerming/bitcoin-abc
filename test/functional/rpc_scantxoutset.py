@@ -74,7 +74,7 @@ class ScantxoutsetTest(BitcoinTestFramework):
         self.log.info("Stop node, remove wallet, mine again some blocks...")
         self.stop_node(0)
         shutil.rmtree(os.path.join(
-            self.nodes[0].datadir, "regtest", 'wallets'))
+            self.nodes[0].datadir, self.chain, 'wallets'))
         self.start_node(0)
         self.nodes[0].generate(110)
 
@@ -215,6 +215,16 @@ class ScantxoutsetTest(BitcoinTestFramework):
                      ['pkh([0c5f9a1e/1/1/0]03e1c5b6e650966971d7e71ef2674f80222752740fc1dfd63bbbd220d2da9bd0fb)#cxmct4w8',
                       'pkh([0c5f9a1e/1/1/1500]03832901c250025da2aebae2bfb38d5c703a57ab66ad477f9c578bfbcd78abca6f)#vchwd07g',
                       'pkh([0c5f9a1e/1/1/1]030d820fc9e8211c4169be8530efbc632775d8286167afd178caaf1089b77daba7)#z2t3ypsa'])
+
+        # Check that status and abort don't need second arg
+        assert_equal(self.nodes[0].scantxoutset("status"), None)
+        assert_equal(self.nodes[0].scantxoutset("abort"), False)
+
+        # Check that second arg is needed for start
+        assert_raises_rpc_error(-1,
+                                "scanobjects argument is required for the start action",
+                                self.nodes[0].scantxoutset,
+                                "start")
 
 
 if __name__ == '__main__':

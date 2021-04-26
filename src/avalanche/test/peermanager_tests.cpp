@@ -2,9 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <avalanche/delegationbuilder.h>
 #include <avalanche/peermanager.h>
-
+#include <avalanche/proofbuilder.h>
 #include <avalanche/test/util.h>
+#include <script/standard.h>
+#include <validation.h>
 
 #include <test/util/setup_common.h>
 
@@ -12,7 +15,7 @@
 
 using namespace avalanche;
 
-BOOST_FIXTURE_TEST_SUITE(peermanager_tests, BasicTestingSetup)
+BOOST_FIXTURE_TEST_SUITE(peermanager_tests, TestingSetup)
 
 BOOST_AUTO_TEST_CASE(select_peer_linear) {
     // No peers.
@@ -50,7 +53,7 @@ BOOST_AUTO_TEST_CASE(select_peer_linear) {
     BOOST_CHECK_EQUAL(selectPeerImpl(twoslots, 142, 500), 69);
     BOOST_CHECK_EQUAL(selectPeerImpl(twoslots, 199, 500), 69);
 
-    // In betwenn
+    // In between
     BOOST_CHECK_EQUAL(selectPeerImpl(twoslots, 200, 500), NO_PEER);
     BOOST_CHECK_EQUAL(selectPeerImpl(twoslots, 242, 500), NO_PEER);
     BOOST_CHECK_EQUAL(selectPeerImpl(twoslots, 299, 500), NO_PEER);
@@ -142,7 +145,7 @@ BOOST_AUTO_TEST_CASE(select_peer_random) {
         }
 
         for (int k = 0; k < 100; k++) {
-            uint64_t s = InsecureRandRange(max);
+            uint64_t s = max > 0 ? InsecureRandRange(max) : 0;
             auto i = selectPeerImpl(slots, s, max);
             // /!\ Because of the way we construct the vector, the peer id is
             // always the index. This might not be the case in practice.
@@ -153,18 +156,21 @@ BOOST_AUTO_TEST_CASE(select_peer_random) {
 
 BOOST_AUTO_TEST_CASE(peer_probabilities) {
     // No peers.
-    PeerManager pm;
+    avalanche::PeerManager pm;
     BOOST_CHECK_EQUAL(pm.selectNode(), NO_NODE);
 
     const NodeId node0 = 42, node1 = 69, node2 = 37;
 
     // One peer, we always return it.
     Proof proof0 = buildRandomProof(100);
-    pm.addNode(node0, buildRandomProof(100), CPubKey());
+    Delegation dg0 = DelegationBuilder(proof0).build();
+    pm.addNode(node0, proof0, dg0);
     BOOST_CHECK_EQUAL(pm.selectNode(), node0);
 
     // Two peers, verify ratio.
-    pm.addNode(node1, buildRandomProof(200), CPubKey());
+    Proof proof1 = buildRandomProof(200);
+    Delegation dg1 = DelegationBuilder(proof1).build();
+    pm.addNode(node1, proof1, dg1);
 
     std::unordered_map<PeerId, int> results = {};
     for (int i = 0; i < 10000; i++) {
@@ -176,7 +182,9 @@ BOOST_AUTO_TEST_CASE(peer_probabilities) {
     BOOST_CHECK(abs(2 * results[0] - results[1]) < 500);
 
     // Three peers, verify ratio.
-    pm.addNode(node2, buildRandomProof(100), CPubKey());
+    Proof proof2 = buildRandomProof(100);
+    Delegation dg2 = DelegationBuilder(proof2).build();
+    pm.addNode(node2, proof2, dg2);
 
     results.clear();
     for (int i = 0; i < 10000; i++) {
@@ -190,13 +198,16 @@ BOOST_AUTO_TEST_CASE(peer_probabilities) {
 
 BOOST_AUTO_TEST_CASE(remove_peer) {
     // No peers.
-    PeerManager pm;
+    avalanche::PeerManager pm;
     BOOST_CHECK_EQUAL(pm.selectPeer(), NO_PEER);
 
     // Add 4 peers.
     std::array<PeerId, 8> peerids;
     for (int i = 0; i < 4; i++) {
-        peerids[i] = pm.getPeer(buildRandomProof(100));
+        Proof p = buildRandomProof(100);
+        peerids[i] = pm.getPeerId(p);
+        BOOST_CHECK(
+            pm.addNode(InsecureRand32(), p, DelegationBuilder(p).build()));
     }
 
     BOOST_CHECK_EQUAL(pm.getSlotCount(), 400);
@@ -226,7 +237,10 @@ BOOST_AUTO_TEST_CASE(remove_peer) {
 
     // Add 4 more peers.
     for (int i = 0; i < 4; i++) {
-        peerids[i + 4] = pm.getPeer(buildRandomProof(100));
+        Proof p = buildRandomProof(100);
+        peerids[i + 4] = pm.getPeerId(p);
+        BOOST_CHECK(
+            pm.addNode(InsecureRand32(), p, DelegationBuilder(p).build()));
     }
 
     BOOST_CHECK_EQUAL(pm.getSlotCount(), 700);
@@ -261,12 +275,15 @@ BOOST_AUTO_TEST_CASE(remove_peer) {
 }
 
 BOOST_AUTO_TEST_CASE(compact_slots) {
-    PeerManager pm;
+    avalanche::PeerManager pm;
 
     // Add 4 peers.
     std::array<PeerId, 4> peerids;
     for (int i = 0; i < 4; i++) {
-        peerids[i] = pm.getPeer(buildRandomProof(100));
+        Proof p = buildRandomProof(100);
+        peerids[i] = pm.getPeerId(p);
+        BOOST_CHECK(
+            pm.addNode(InsecureRand32(), p, DelegationBuilder(p).build()));
     }
 
     // Remove all peers.
@@ -288,15 +305,16 @@ BOOST_AUTO_TEST_CASE(compact_slots) {
 }
 
 BOOST_AUTO_TEST_CASE(node_crud) {
-    PeerManager pm;
+    avalanche::PeerManager pm;
 
     // Create one peer.
     Proof proof = buildRandomProof(100000000);
+    Delegation dg = DelegationBuilder(proof).build();
     BOOST_CHECK_EQUAL(pm.selectNode(), NO_NODE);
 
     // Add 4 nodes.
     for (int i = 0; i < 4; i++) {
-        BOOST_CHECK(pm.addNode(i, proof, CPubKey()));
+        BOOST_CHECK(pm.addNode(i, proof, dg));
     }
 
     for (int i = 0; i < 100; i++) {
@@ -330,7 +348,8 @@ BOOST_AUTO_TEST_CASE(node_crud) {
     // Move a node from a peer to another. This peer has a very low score such
     // as chances of being picked are 1 in a billion.
     Proof altproof = buildRandomProof(1);
-    BOOST_CHECK(pm.addNode(3, altproof, CPubKey()));
+    Delegation altdg = DelegationBuilder(altproof).build();
+    BOOST_CHECK(pm.addNode(3, altproof, altdg));
 
     int node3selected = 0;
     for (int i = 0; i < 100; i++) {
@@ -344,6 +363,79 @@ BOOST_AUTO_TEST_CASE(node_crud) {
         BOOST_CHECK(
             pm.updateNextRequestTime(n, std::chrono::steady_clock::now()));
     }
+}
+
+BOOST_AUTO_TEST_CASE(proof_conflict) {
+    CKey key;
+    key.MakeNewKey(true);
+    const CScript script = GetScriptForDestination(PKHash(key.GetPubKey()));
+
+    TxId txid1(GetRandHash());
+    TxId txid2(GetRandHash());
+    BOOST_CHECK(txid1 != txid2);
+
+    const Amount v = 5 * COIN;
+    const int height = 1234;
+
+    {
+        LOCK(cs_main);
+        CCoinsViewCache &coins = ::ChainstateActive().CoinsTip();
+
+        for (int i = 0; i < 10; i++) {
+            coins.AddCoin(COutPoint(txid1, i),
+                          Coin(CTxOut(v, script), height, false), false);
+            coins.AddCoin(COutPoint(txid2, i),
+                          Coin(CTxOut(v, script), height, false), false);
+        }
+    }
+
+    avalanche::PeerManager pm;
+    const auto getPeerId = [&](const std::vector<COutPoint> &outpoints) {
+        ProofBuilder pb(0, 0, CPubKey());
+        for (const auto &o : outpoints) {
+            pb.addUTXO(o, v, height, false, key);
+        }
+
+        return pm.getPeerId(pb.build());
+    };
+
+    // Add one peer.
+    const PeerId peer1 = getPeerId({COutPoint(txid1, 0)});
+    BOOST_CHECK(peer1 != NO_PEER);
+
+    // Same proof, same peer.
+    BOOST_CHECK_EQUAL(getPeerId({COutPoint(txid1, 0)}), peer1);
+
+    // Different txid, different proof.
+    const PeerId peer2 = getPeerId({COutPoint(txid2, 0)});
+    BOOST_CHECK(peer2 != NO_PEER && peer2 != peer1);
+
+    // Different index, different proof.
+    const PeerId peer3 = getPeerId({COutPoint(txid1, 1)});
+    BOOST_CHECK(peer3 != NO_PEER && peer3 != peer1);
+
+    // Empty proof, no peer.
+    BOOST_CHECK_EQUAL(getPeerId({}), NO_PEER);
+
+    // Multiple inputs.
+    const PeerId peer4 = getPeerId({COutPoint(txid1, 2), COutPoint(txid2, 2)});
+    BOOST_CHECK(peer4 != NO_PEER && peer4 != peer1);
+
+    // Duplicated input.
+    BOOST_CHECK_EQUAL(getPeerId({COutPoint(txid1, 3), COutPoint(txid1, 3)}),
+                      NO_PEER);
+
+    // Multiple inputs, collision on first input.
+    BOOST_CHECK_EQUAL(getPeerId({COutPoint(txid1, 0), COutPoint(txid2, 4)}),
+                      NO_PEER);
+
+    // Mutliple inputs, collision on second input.
+    BOOST_CHECK_EQUAL(getPeerId({COutPoint(txid1, 4), COutPoint(txid2, 0)}),
+                      NO_PEER);
+
+    // Mutliple inputs, collision on both inputs.
+    BOOST_CHECK_EQUAL(getPeerId({COutPoint(txid1, 0), COutPoint(txid2, 2)}),
+                      NO_PEER);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

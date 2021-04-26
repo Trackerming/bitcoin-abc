@@ -12,9 +12,10 @@
 #include <net.h>
 #include <netbase.h>
 #include <qt/bitcoinunits.h>
+#include <qt/guiconstants.h>
 #include <qt/guiutil.h>
-#include <qt/intro.h>
-#include <txdb.h>       // for -dbcache defaults
+#include <txdb.h> // for -dbcache defaults
+#include <util/string.h>
 #include <validation.h> // For DEFAULT_SCRIPTCHECK_THREADS
 
 #include <QNetworkProxy>
@@ -25,9 +26,8 @@ const char *DEFAULT_GUI_PROXY_HOST = "127.0.0.1";
 
 static const QString GetDefaultProxyAddress();
 
-OptionsModel::OptionsModel(interfaces::Node &node, QObject *parent,
-                           bool resetSettings)
-    : QAbstractListModel(parent), m_node(node) {
+OptionsModel::OptionsModel(QObject *parent, bool resetSettings)
+    : QAbstractListModel(parent) {
     Init(resetSettings);
 }
 
@@ -101,20 +101,14 @@ void OptionsModel::Init(bool resetSettings) {
         settings.setValue("bPrune", false);
     }
     if (!settings.contains("nPruneSize")) {
-        settings.setValue("nPruneSize", 2);
+        settings.setValue("nPruneSize", DEFAULT_PRUNE_TARGET_GB);
     }
-    // Convert prune size to MB:
-    const uint64_t nPruneSizeMB = settings.value("nPruneSize").toInt() * 1000;
-    if (!m_node.softSetArg("-prune", settings.value("bPrune").toBool()
-                                         ? std::to_string(nPruneSizeMB)
-                                         : "0")) {
-        addOverriddenOption("-prune");
-    }
+    SetPruneEnabled(settings.value("bPrune").toBool());
 
     if (!settings.contains("nDatabaseCache")) {
-        settings.setValue("nDatabaseCache", (qint64)nDefaultDbCache);
+        settings.setValue("nDatabaseCache", (qint64)DEFAULT_DB_CACHE_MB);
     }
-    if (!m_node.softSetArg(
+    if (!gArgs.SoftSetArg(
             "-dbcache",
             settings.value("nDatabaseCache").toString().toStdString())) {
         addOverriddenOption("-dbcache");
@@ -123,14 +117,14 @@ void OptionsModel::Init(bool resetSettings) {
     if (!settings.contains("nThreadsScriptVerif")) {
         settings.setValue("nThreadsScriptVerif", DEFAULT_SCRIPTCHECK_THREADS);
     }
-    if (!m_node.softSetArg(
+    if (!gArgs.SoftSetArg(
             "-par",
             settings.value("nThreadsScriptVerif").toString().toStdString())) {
         addOverriddenOption("-par");
     }
 
     if (!settings.contains("strDataDir")) {
-        settings.setValue("strDataDir", Intro::getDefaultDataDirectory());
+        settings.setValue("strDataDir", GUIUtil::getDefaultDataDirectory());
     }
 
 // Wallet
@@ -138,7 +132,7 @@ void OptionsModel::Init(bool resetSettings) {
     if (!settings.contains("bSpendZeroConfChange")) {
         settings.setValue("bSpendZeroConfChange", true);
     }
-    if (!m_node.softSetBoolArg(
+    if (!gArgs.SoftSetBoolArg(
             "-spendzeroconfchange",
             settings.value("bSpendZeroConfChange").toBool())) {
         addOverriddenOption("-spendzeroconfchange");
@@ -149,14 +143,14 @@ void OptionsModel::Init(bool resetSettings) {
     if (!settings.contains("fUseUPnP")) {
         settings.setValue("fUseUPnP", DEFAULT_UPNP);
     }
-    if (!m_node.softSetBoolArg("-upnp", settings.value("fUseUPnP").toBool())) {
+    if (!gArgs.SoftSetBoolArg("-upnp", settings.value("fUseUPnP").toBool())) {
         addOverriddenOption("-upnp");
     }
 
     if (!settings.contains("fListen")) {
         settings.setValue("fListen", DEFAULT_LISTEN);
     }
-    if (!m_node.softSetBoolArg("-listen", settings.value("fListen").toBool())) {
+    if (!gArgs.SoftSetBoolArg("-listen", settings.value("fListen").toBool())) {
         addOverriddenOption("-listen");
     }
 
@@ -168,7 +162,7 @@ void OptionsModel::Init(bool resetSettings) {
     }
     // Only try to set -proxy, if user has enabled fUseProxy
     if (settings.value("fUseProxy").toBool() &&
-        !m_node.softSetArg(
+        !gArgs.SoftSetArg(
             "-proxy", settings.value("addrProxy").toString().toStdString())) {
         addOverriddenOption("-proxy");
     } else if (!settings.value("fUseProxy").toBool() &&
@@ -184,7 +178,7 @@ void OptionsModel::Init(bool resetSettings) {
     }
     // Only try to set -onion, if user has enabled fUseSeparateProxyTor
     if (settings.value("fUseSeparateProxyTor").toBool() &&
-        !m_node.softSetArg(
+        !gArgs.SoftSetArg(
             "-onion",
             settings.value("addrSeparateProxyTor").toString().toStdString())) {
         addOverriddenOption("-onion");
@@ -197,7 +191,7 @@ void OptionsModel::Init(bool resetSettings) {
     if (!settings.contains("language")) {
         settings.setValue("language", "");
     }
-    if (!m_node.softSetArg(
+    if (!gArgs.SoftSetArg(
             "-lang", settings.value("language").toString().toStdString())) {
         addOverriddenOption("-lang");
     }
@@ -217,8 +211,8 @@ static void CopySettings(QSettings &dst, const QSettings &src) {
 
 /** Back up a QSettings to an ini-formatted file. */
 static void BackupSettings(const fs::path &filename, const QSettings &src) {
-    qWarning() << "Backing up GUI settings to"
-               << GUIUtil::boostPathToQString(filename);
+    qInfo() << "Backing up GUI settings to"
+            << GUIUtil::boostPathToQString(filename);
     QSettings dst(GUIUtil::boostPathToQString(filename), QSettings::IniFormat);
     dst.clear();
     CopySettings(dst, src);
@@ -231,7 +225,7 @@ void OptionsModel::Reset() {
     BackupSettings(GetDataDir(true) / "guisettings.ini.bak", settings);
 
     // Save the strDataDir setting
-    QString dataDir = Intro::getDefaultDataDirectory();
+    QString dataDir = GUIUtil::getDefaultDataDirectory();
     dataDir = settings.value("strDataDir", dataDir).toString();
 
     // Remove all entries from our QSettings object
@@ -286,6 +280,30 @@ static const QString GetDefaultProxyAddress() {
     return QString("%1:%2")
         .arg(DEFAULT_GUI_PROXY_HOST)
         .arg(DEFAULT_GUI_PROXY_PORT);
+}
+
+void OptionsModel::SetPruneEnabled(bool prune, bool force) {
+    QSettings settings;
+    settings.setValue("bPrune", prune);
+    const int64_t prune_target_mib =
+        PruneGBtoMiB(settings.value("nPruneSize").toInt());
+    std::string prune_val = prune ? ToString(prune_target_mib) : "0";
+    if (force) {
+        gArgs.ForceSetArg("-prune", prune_val);
+        return;
+    }
+    if (!gArgs.SoftSetArg("-prune", prune_val)) {
+        addOverriddenOption("-prune");
+    }
+}
+
+void OptionsModel::SetPruneTargetGB(int prune_target_gb, bool force) {
+    const bool prune = prune_target_gb > 0;
+    if (prune) {
+        QSettings settings;
+        settings.setValue("nPruneSize", prune_target_gb);
+    }
+    SetPruneEnabled(prune, force);
 }
 
 // read QSettings values and return them
@@ -374,7 +392,7 @@ bool OptionsModel::setData(const QModelIndex &index, const QVariant &value,
                 break;
             case MapPortUPnP: // core option - can be changed on-the-fly
                 settings.setValue("fUseUPnP", value.toBool());
-                m_node.mapPort(value.toBool());
+                node().mapPort(value.toBool());
                 break;
             case MinimizeOnClose:
                 fMinimizeOnClose = value.toBool();
@@ -516,7 +534,7 @@ bool OptionsModel::getProxySettings(QNetworkProxy &proxy) const {
     // Directly query current base proxy, because
     // GUI settings can be overridden with -proxy.
     proxyType curProxy;
-    if (m_node.getProxy(NET_IPV4, curProxy)) {
+    if (node().getProxy(NET_IPV4, curProxy)) {
         proxy.setType(QNetworkProxy::Socks5Proxy);
         proxy.setHostName(QString::fromStdString(curProxy.proxy.ToStringIP()));
         proxy.setPort(curProxy.proxy.GetPort());
@@ -554,7 +572,7 @@ void OptionsModel::checkAndMigrate() {
         // force people to upgrade to the new value if they are using 100MB
         if (settingsVersion < 130000 && settings.contains("nDatabaseCache") &&
             settings.value("nDatabaseCache").toLongLong() == 100) {
-            settings.setValue("nDatabaseCache", (qint64)nDefaultDbCache);
+            settings.setValue("nDatabaseCache", (qint64)DEFAULT_DB_CACHE_MB);
         }
 
         settings.setValue(strSettingsVersionKey, CLIENT_VERSION);

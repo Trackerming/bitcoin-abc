@@ -10,9 +10,9 @@ and that it responds to getdata requests for blocks correctly:
     - disconnect peers who request blocks older than that."""
 from test_framework.messages import (
     CInv,
+    MSG_BLOCK,
     msg_getdata,
     msg_verack,
-    NODE_BITCOIN_CASH,
     NODE_BLOOM,
     NODE_NETWORK_LIMITED,
 )
@@ -45,7 +45,7 @@ class P2PIgnoreInv(P2PInterface):
 
     def send_getdata_for_block(self, blockhash):
         getdata_request = msg_getdata()
-        getdata_request.inv.append(CInv(2, int(blockhash, 16)))
+        getdata_request.inv.append(CInv(MSG_BLOCK, int(blockhash, 16)))
         self.send_message(getdata_request)
 
 
@@ -70,7 +70,7 @@ class NodeNetworkLimitedTest(BitcoinTestFramework):
     def run_test(self):
         node = self.nodes[0].add_p2p_connection(P2PIgnoreInv())
 
-        expected_services = NODE_BLOOM | NODE_BITCOIN_CASH | NODE_NETWORK_LIMITED
+        expected_services = NODE_BLOOM | NODE_NETWORK_LIMITED
 
         self.log.info("Check that node has signalled expected services.")
         assert_equal(node.nServices, expected_services)

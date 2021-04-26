@@ -7,6 +7,7 @@
 
 #include <avalanche/node.h>
 #include <avalanche/proof.h>
+#include <coins.h>
 #include <net.h>
 #include <pubkey.h>
 #include <salteduint256hasher.h>
@@ -22,6 +23,8 @@
 #include <vector>
 
 namespace avalanche {
+
+class Delegation;
 
 struct Slot {
 private:
@@ -57,12 +60,13 @@ public:
 
 struct Peer {
     PeerId peerid;
-    uint32_t index;
+    uint32_t index = -1;
+    uint32_t node_count = 0;
 
     Proof proof;
 
-    Peer(PeerId peerid_, uint32_t index_, Proof proof_)
-        : peerid(peerid_), index(index_), proof(std::move(proof_)) {}
+    Peer(PeerId peerid_, Proof proof_)
+        : peerid(peerid_), proof(std::move(proof_)) {}
 
     const ProofId &getProofId() const { return proof.getId(); }
     uint32_t getScore() const { return proof.getScore(); }
@@ -104,6 +108,8 @@ class PeerManager {
     PeerId nextPeerId = 0;
     PeerSet peers;
 
+    std::unordered_map<COutPoint, PeerId, SaltedOutpointHasher> utxos;
+
     using NodeSet = boost::multi_index_container<
         Node,
         boost::multi_index::indexed_by<
@@ -126,30 +132,41 @@ class PeerManager {
 
 public:
     /**
-     * Provide the peer associated with the given proof. If the peer does not
-     * exists, then it is created.
-     */
-    PeerId getPeer(const Proof &proof);
-
-    /**
-     * Remove an existing peer.
-     * This is not meant for public consumption.
-     */
-    bool removePeer(const PeerId peerid);
-
-    /**
      * Node API.
      */
-    bool addNode(NodeId nodeid, const Proof &proof, const CPubKey &pubkey);
+    bool addNode(NodeId nodeid, const Proof &proof,
+                 const Delegation &delegation);
     bool removeNode(NodeId nodeid);
-
-    NodeId selectNode();
 
     bool forNode(NodeId nodeid, std::function<bool(const Node &n)> func) const;
     bool updateNextRequestTime(NodeId nodeid, TimePoint timeout);
 
     /**
-     * Exposed for tests.
+     * Randomly select a node to poll.
+     */
+    NodeId selectNode();
+
+    /**
+     * Update the peer set when a nw block is connected.
+     */
+    void updatedBlockTip();
+
+    /****************************************************
+     * Functions which are public for testing purposes. *
+     ****************************************************/
+    /**
+     * Provide the PeerId associated with the given proof. If the peer does not
+     * exists, then it is created.
+     */
+    PeerId getPeerId(const Proof &proof);
+
+    /**
+     * Remove an existing peer.
+     */
+    bool removePeer(const PeerId peerid);
+
+    /**
+     * Randomly select a peer to poll.
      */
     PeerId selectPeer() const;
 
@@ -161,13 +178,20 @@ public:
 
     /**
      * Perform consistency check on internal data structures.
-     * Mostly useful for tests.
      */
     bool verify() const;
 
     // Accssors.
     uint64_t getSlotCount() const { return slotCount; }
     uint64_t getFragmentation() const { return fragmentation; }
+
+    std::vector<Peer> getPeers() const;
+    std::vector<NodeId> getNodeIdsForPeer(PeerId peerId) const;
+
+private:
+    PeerSet::iterator fetchOrCreatePeer(const Proof &proof);
+    bool addNodeToPeer(const PeerSet::iterator &it);
+    bool removeNodeFromPeer(const PeerSet::iterator &it, uint32_t count = 1);
 };
 
 /**

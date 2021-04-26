@@ -89,6 +89,7 @@ from test_framework.blocktools import create_block, create_coinbase
 from test_framework.messages import (
     CBlockHeader,
     CInv,
+    MSG_BLOCK,
     msg_block,
     msg_getblocks,
     msg_getdata,
@@ -122,7 +123,7 @@ class BaseNode(P2PInterface):
         """Request data for a list of block hashes."""
         msg = msg_getdata()
         for x in block_hashes:
-            msg.inv.append(CInv(2, x))
+            msg.inv.append(CInv(MSG_BLOCK, x))
         self.send_message(msg)
 
     def send_get_headers(self, locator, hashstop):
@@ -133,7 +134,7 @@ class BaseNode(P2PInterface):
 
     def send_block_inv(self, blockhash):
         msg = msg_inv()
-        msg.inv = [CInv(2, blockhash)]
+        msg.inv = [CInv(MSG_BLOCK, blockhash)]
         self.send_message(msg)
 
     def send_header_for_blocks(self, new_blocks):
@@ -145,14 +146,6 @@ class BaseNode(P2PInterface):
         getblocks_message = msg_getblocks()
         getblocks_message.locator.vHave = locator
         self.send_message(getblocks_message)
-
-    def wait_for_getdata(self, hash_list, timeout=60):
-        if hash_list == []:
-            return
-
-        def test_function(): return "getdata" in self.last_message and [
-            x.hash for x in self.last_message["getdata"].inv] == hash_list
-        wait_until(test_function, timeout=timeout, lock=mininode_lock)
 
     def wait_for_block_announcement(self, block_hash, timeout=60):
         def test_function(): return self.last_blockhash_announced == block_hash
@@ -324,8 +317,8 @@ class SendHeadersTest(BitcoinTestFramework):
                 new_block.solve()
                 test_node.send_header_for_blocks([new_block])
                 test_node.wait_for_getdata([new_block.sha256])
-                test_node.send_message(msg_block(new_block))
-                test_node.sync_with_ping()  # make sure this block is processed
+                # make sure this block is processed
+                test_node.send_and_ping(msg_block(new_block))
                 wait_until(lambda: inv_node.block_announced,
                            timeout=60, lock=mininode_lock)
                 inv_node.clear_block_announcements()

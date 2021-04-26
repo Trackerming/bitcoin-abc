@@ -15,6 +15,7 @@
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
+#include <qt/walletmodel.h>
 
 #include <QApplication>
 #include <QClipboard>
@@ -40,8 +41,6 @@ SendCoinsEntry::SendCoinsEntry(const PlatformStyle *_platformStyle,
     if (platformStyle->getUseExtraSpacing()) {
         ui->payToLayout->setSpacing(4);
     }
-    ui->addAsLabel->setPlaceholderText(
-        tr("Enter a label for this address to add it to your address book"));
 
     // normal bitcoin address field
     GUIUtil::setupAddressWidget(ui->payTo, this);

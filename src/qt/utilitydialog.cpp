@@ -6,19 +6,22 @@
 #include <config/bitcoin-config.h>
 #endif
 
+#include <qt/guiutil.h>
 #include <qt/utilitydialog.h>
 
 #include <clientversion.h>
 #include <init.h>
-#include <qt/bitcoingui.h>
+#include <network.h>
 #include <qt/forms/ui_helpmessagedialog.h>
 #ifdef ENABLE_BIP70
 #include <qt/paymentrequestplus.h>
 #endif
+#include <util/strencodings.h>
 #include <util/system.h>
 
 #include <QCloseEvent>
 #include <QLabel>
+#include <QMainWindow>
 #include <QRegExp>
 #include <QTextCursor>
 #include <QTextTable>
@@ -27,30 +30,19 @@
 #include <cstdio>
 
 /** "Help message" or "About" dialog box */
-HelpMessageDialog::HelpMessageDialog(interfaces::Node &node, QWidget *parent,
-                                     bool about)
+HelpMessageDialog::HelpMessageDialog(QWidget *parent, bool about)
     : QDialog(parent), ui(new Ui::HelpMessageDialog) {
     ui->setupUi(this);
 
     QString version = QString{PACKAGE_NAME} + " " + tr("version") + " " +
                       QString::fromStdString(FormatFullVersion());
-/**
- * On x86 add a bit specifier to the version so that users can distinguish
- * between 32 and 64 bit builds. On other architectures, 32/64 bit may be more
- * ambiguous.
- */
-#if defined(__x86_64__)
-    version += " " + tr("(%1-bit)").arg(64);
-#elif defined(__i386__)
-    version += " " + tr("(%1-bit)").arg(32);
-#endif
 
     if (about) {
         setWindowTitle(tr("About %1").arg(PACKAGE_NAME));
 
+        std::string licenseInfo = LicenseInfo();
         /// HTML-format the license message from the core
-        QString licenseInfo = QString::fromStdString(LicenseInfo());
-        QString licenseInfoHTML = licenseInfo;
+        QString licenseInfoHTML = QString::fromStdString(LicenseInfo());
         // Make URLs clickable
         QRegExp uri("<(.*)>", Qt::CaseSensitive, QRegExp::RegExp2);
         uri.setMinimal(true); // use non-greedy matching
@@ -60,7 +52,8 @@ HelpMessageDialog::HelpMessageDialog(interfaces::Node &node, QWidget *parent,
 
         ui->aboutMessage->setTextFormat(Qt::RichText);
         ui->scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        text = version + "\n" + licenseInfo;
+        text = version + "\n" +
+               QString::fromStdString(FormatParagraph(licenseInfo));
         ui->aboutMessage->setText(version + "<br><br>" + licenseInfoHTML);
         ui->aboutMessage->setWordWrap(true);
         ui->helpMessage->setVisible(false);
@@ -113,6 +106,8 @@ HelpMessageDialog::HelpMessageDialog(interfaces::Node &node, QWidget *parent,
         ui->scrollArea->setVisible(false);
         ui->aboutLogo->setVisible(false);
     }
+
+    GUIUtil::handleCloseWindowShortcut(this);
 }
 
 HelpMessageDialog::~HelpMessageDialog() {
@@ -147,12 +142,12 @@ ShutdownWindow::ShutdownWindow(QWidget *parent) : QWidget(parent) {
         tr("%1 is shutting down...").arg(PACKAGE_NAME) + "<br /><br />" +
         tr("Do not shut down the computer until this window disappears.")));
     setLayout(layout);
+
+    GUIUtil::handleCloseWindowShortcut(this);
 }
 
-QWidget *ShutdownWindow::showShutdownWindow(BitcoinGUI *window) {
-    if (!window) {
-        return nullptr;
-    }
+QWidget *ShutdownWindow::showShutdownWindow(QMainWindow *window) {
+    assert(window != nullptr);
 
     // Show a simple window indicating shutdown status
     QWidget *shutdownWindow = new ShutdownWindow();

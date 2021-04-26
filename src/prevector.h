@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <type_traits>
+#include <utility>
 
 /**
  * Implements a drop-in replacement for std::vector<T> which stores up to N
@@ -236,7 +237,7 @@ private:
         struct {
             char *indirect;
             size_type capacity;
-        };
+        } indirect_contents;
     };
 #pragma pack(pop)
     alignas(char *) direct_or_indirect _union = {};
@@ -257,10 +258,11 @@ private:
         return reinterpret_cast<const T *>(_union.direct) + pos;
     }
     T *indirect_ptr(difference_type pos) {
-        return reinterpret_cast<T *>(_union.indirect) + pos;
+        return reinterpret_cast<T *>(_union.indirect_contents.indirect) + pos;
     }
     const T *indirect_ptr(difference_type pos) const {
-        return reinterpret_cast<const T *>(_union.indirect) + pos;
+        return reinterpret_cast<const T *>(_union.indirect_contents.indirect) +
+               pos;
     }
     bool is_direct() const { return _size <= N; }
 
@@ -281,10 +283,11 @@ private:
                 // allocator or new/delete so that handlers are called as
                 // necessary, but performance would be slightly degraded by
                 // doing so.
-                _union.indirect = static_cast<char *>(realloc(
-                    _union.indirect, ((size_t)sizeof(T)) * new_capacity));
-                assert(_union.indirect);
-                _union.capacity = new_capacity;
+                _union.indirect_contents.indirect = static_cast<char *>(
+                    realloc(_union.indirect_contents.indirect,
+                            ((size_t)sizeof(T)) * new_capacity));
+                assert(_union.indirect_contents.indirect);
+                _union.indirect_contents.capacity = new_capacity;
             } else {
                 char *new_indirect = static_cast<char *>(
                     malloc(((size_t)sizeof(T)) * new_capacity));
@@ -292,8 +295,8 @@ private:
                 T *src = direct_ptr(0);
                 T *dst = reinterpret_cast<T *>(new_indirect);
                 memcpy(dst, src, size() * sizeof(T));
-                _union.indirect = new_indirect;
-                _union.capacity = new_capacity;
+                _union.indirect_contents.indirect = new_indirect;
+                _union.indirect_contents.capacity = new_capacity;
                 _size += N + 1;
             }
         }
@@ -402,7 +405,7 @@ public:
         if (is_direct()) {
             return N;
         } else {
-            return _union.capacity;
+            return _union.indirect_contents.capacity;
         }
     }
 
@@ -476,6 +479,22 @@ public:
         fill(ptr, first, last);
     }
 
+    inline void resize_uninitialized(size_type new_size) {
+        // resize_uninitialized changes the size of the prevector but does not
+        // initialize it. If size < new_size, the added elements must be
+        // initialized explicitly.
+        if (capacity() < new_size) {
+            change_capacity(new_size);
+            _size += new_size - size();
+            return;
+        }
+        if (new_size < size()) {
+            erase(item_ptr(new_size), end());
+        } else {
+            _size += new_size - size();
+        }
+    }
+
     iterator erase(iterator pos) { return erase(pos, pos + 1); }
 
     iterator erase(iterator first, iterator last) {
@@ -500,14 +519,16 @@ public:
         return first;
     }
 
-    void push_back(const T &value) {
+    template <typename... Args> void emplace_back(Args &&... args) {
         size_type new_size = size() + 1;
         if (capacity() < new_size) {
             change_capacity(new_size + (new_size >> 1));
         }
-        new (item_ptr(size())) T(value);
+        new (item_ptr(size())) T(std::forward<Args>(args)...);
         _size++;
     }
+
+    void push_back(const T &value) { emplace_back(value); }
 
     void pop_back() { erase(end() - 1, end()); }
 
@@ -529,8 +550,8 @@ public:
             clear();
         }
         if (!is_direct()) {
-            free(_union.indirect);
-            _union.indirect = nullptr;
+            free(_union.indirect_contents.indirect);
+            _union.indirect_contents.indirect = nullptr;
         }
     }
 
@@ -582,7 +603,7 @@ public:
         if (is_direct()) {
             return 0;
         } else {
-            return ((size_t)(sizeof(T))) * _union.capacity;
+            return ((size_t)(sizeof(T))) * _union.indirect_contents.capacity;
         }
     }
 

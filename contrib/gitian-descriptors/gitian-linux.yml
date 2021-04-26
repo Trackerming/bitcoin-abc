@@ -27,12 +27,6 @@ packages:
 - "ninja-build"
 - "pkg-config"
 - "python3"
-# FIXME: these dependencies are only required to make CMake happy when building
-# native tools. They can be removed when the `NativeExecutable.cmake` gets
-# improved to avoid requiring all the bitcoin-abc dependencies.
-- "libboost-all-dev"
-- "libevent-dev"
-- "libssl-dev"
 repositories:
 - "distribution": "buster-backports"
   "source": "deb http://deb.debian.org/debian/ buster-backports main"
@@ -45,7 +39,11 @@ files: []
 script: |
 
   WRAP_DIR=$HOME/wrapped
-  HOSTS="x86_64-linux-gnu arm-linux-gnueabihf aarch64-linux-gnu"
+  HOSTS=(
+   x86_64-linux-gnu
+   arm-linux-gnueabihf
+   aarch64-linux-gnu
+  )
 
   # CMake toolchain file name differ from host name
   declare -A CMAKE_TOOLCHAIN_FILE
@@ -66,8 +64,6 @@ script: |
 
   export QT_RCC_TEST=1
   export QT_RCC_SOURCE_DATE_OVERRIDE=1
-  export GZIP="-9n"
-  export TAR_OPTIONS="--mtime="$REFERENCE_DATE\\\ $REFERENCE_TIME""
   export TZ="UTC"
   export BUILD_DIR=`pwd`
   mkdir -p ${WRAP_DIR}
@@ -89,7 +85,7 @@ script: |
   }
 
   function create_per-host_faketime_wrappers {
-  for i in $HOSTS; do
+  for i in ${HOSTS[@]}; do
     for prog in ${FAKETIME_HOST_PROGS}; do
         echo '#!/usr/bin/env bash' > ${WRAP_DIR}/${i}-${prog}
         echo "REAL=\`which -a ${i}-${prog} | grep -v ${WRAP_DIR}/${i}-${prog} | head -1\`" >> ${WRAP_DIR}/${i}-${prog}
@@ -111,7 +107,7 @@ script: |
   SOURCEDIR=`pwd`
   BASEPREFIX=`pwd`/depends
   # Build dependencies for each host
-  for i in $HOSTS; do
+  for i in ${HOSTS[@]}; do
     make ${MAKEOPTS} -C ${BASEPREFIX} HOST="${i}"
   done
 
@@ -123,18 +119,10 @@ script: |
 
   mkdir -p source_package
   pushd source_package
+  # Any toolchain file will work for building the source package, just pick the
+  # first one
   cmake -GNinja .. \
-    -DBUILD_BITCOIN_WALLET=OFF \
-    -DBUILD_BITCOIN_ZMQ=OFF \
-    -DBUILD_BITCOIN_SEEDER=OFF \
-    -DBUILD_BITCOIN_CLI=OFF \
-    -DBUILD_BITCOIN_TX=OFF \
-    -DBUILD_BITCOIN_QT=OFF \
-    -DBUILD_LIBBITCOINCONSENSUS=OFF \
-    -DENABLE_CLANG_TIDY=OFF \
-    -DENABLE_QRCODE=OFF \
-    -DENABLE_UPNP=OFF \
-    -DUSE_JEMALLOC=OFF
+    -DCMAKE_TOOLCHAIN_FILE=${SOURCEDIR}/cmake/platforms/${CMAKE_TOOLCHAIN_FILE[${HOSTS[0]}]}
 
   ninja package_source
   SOURCEDIST=`echo bitcoin-abc-*.tar.gz`
@@ -144,13 +132,13 @@ script: |
   # Correct tar file order
   mkdir -p temp
   pushd temp
-  tar xf ../$SOURCEDIST
-  find bitcoin-abc-* | sort | tar --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ../$SOURCEDIST
+  tar -xf ../$SOURCEDIST
+  find bitcoin-abc-* | sort | tar --mtime="${REFERENCE_DATETIME}" --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ../$SOURCEDIST
   popd
 
   ORIGPATH="$PATH"
   # Extract the release tarball into a dir for each host and build
-  for i in ${HOSTS}; do
+  for i in ${HOSTS[@]}; do
     export PATH=${BASEPREFIX}/${i}/native/bin:${ORIGPATH}
     mkdir -p distsrc-${i}
     cd distsrc-${i}
@@ -167,7 +155,7 @@ script: |
       -DENABLE_GLIBC_BACK_COMPAT=ON \
       -DCMAKE_INSTALL_PREFIX=${INSTALLPATH} \
       -DCCACHE=OFF \
-      -DUSE_LD_GOLD=OFF \
+      -DUSE_LINKER= \
       ${CMAKE_EXTRA_OPTIONS[${i}]}
 
     ninja
@@ -177,8 +165,8 @@ script: |
     ninja install-debug
 
     cd installed
-    find ${DISTNAME} -not -name "*.dbg" | sort | tar --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ${OUTDIR}/${DISTNAME}-${i}.tar.gz
-    find ${DISTNAME} -name "*.dbg" | sort | tar --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ${OUTDIR}/${DISTNAME}-${i}-debug.tar.gz
+    find ${DISTNAME} -not -name "*.dbg" | sort | tar --mtime="${REFERENCE_DATETIME}" --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ${OUTDIR}/${DISTNAME}-${i}.tar.gz
+    find ${DISTNAME} -name "*.dbg" | sort | tar --mtime="${REFERENCE_DATETIME}" --no-recursion --mode='u+rw,go+r-w,a+X' --owner=0 --group=0 -c -T - | gzip -9n > ${OUTDIR}/${DISTNAME}-${i}-debug.tar.gz
     cd ../../
     rm -rf distsrc-${i}
   done

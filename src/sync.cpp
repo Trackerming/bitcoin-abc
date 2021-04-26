@@ -47,8 +47,7 @@ struct CLockLocation {
 
     std::string ToString() const {
         return strprintf("%s %s:%s%s (in thread %s)", mutexName, sourceFile,
-                         itostr(sourceLine), (fTry ? " (TRY)" : ""),
-                         m_thread_name);
+                         sourceLine, (fTry ? " (TRY)" : ""), m_thread_name);
     }
 
     std::string Name() const { return mutexName; }
@@ -218,8 +217,9 @@ static bool LockHeld(void *mutex) {
     return false;
 }
 
+template <typename MutexType>
 void AssertLockHeldInternal(const char *pszName, const char *pszFile, int nLine,
-                            void *cs) {
+                            MutexType *cs) {
     if (LockHeld(cs)) {
         return;
     }
@@ -228,6 +228,9 @@ void AssertLockHeldInternal(const char *pszName, const char *pszFile, int nLine,
                 pszName, pszFile, nLine, LocksHeld());
     abort();
 }
+template void AssertLockHeldInternal(const char *, const char *, int, Mutex *);
+template void AssertLockHeldInternal(const char *, const char *, int,
+                                     RecursiveMutex *);
 
 void AssertLockNotHeldInternal(const char *pszName, const char *pszFile,
                                int nLine, void *cs) {

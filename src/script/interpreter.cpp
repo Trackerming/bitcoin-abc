@@ -76,7 +76,7 @@ static void CleanupScriptCode(CScript &scriptCode,
     // Drop the signature in scripts when SIGHASH_FORKID is not used.
     SigHashType sigHashType = GetHashType(vchSig);
     if (!(flags & SCRIPT_ENABLE_SIGHASH_FORKID) || !sigHashType.hasForkId()) {
-        FindAndDelete(scriptCode, CScript(vchSig));
+        FindAndDelete(scriptCode, CScript() << vchSig);
     }
 }
 
@@ -98,6 +98,108 @@ static bool IsOpcodeDisabled(opcodetype opcode, uint32_t flags) {
     return false;
 }
 
+namespace {
+/**
+ * A data type to abstract out the condition stack during script execution.
+ *
+ * Conceptually it acts like a vector of booleans, one for each level of nested
+ * IF/THEN/ELSE, indicating whether we're in the active or inactive branch of
+ * each.
+ *
+ * The elements on the stack cannot be observed individually; we only need to
+ * expose whether the stack is empty and whether or not any false values are
+ * present at all. To implement OP_ELSE, a toggle_top modifier is added, which
+ * flips the last value without returning it.
+ *
+ * This uses an optimized implementation that does not materialize the
+ * actual stack. Instead, it just stores the size of the would-be stack,
+ * and the position of the first false value in it.
+ */
+class ConditionStack {
+private:
+    //! A constant for m_first_false_pos to indicate there are no falses.
+    static constexpr uint32_t NO_FALSE = std::numeric_limits<uint32_t>::max();
+
+    //! The size of the implied stack.
+    uint32_t m_stack_size = 0;
+    //! The position of the first false value on the implied stack, or NO_FALSE
+    //! if all true.
+    uint32_t m_first_false_pos = NO_FALSE;
+
+public:
+    bool empty() { return m_stack_size == 0; }
+    bool all_true() { return m_first_false_pos == NO_FALSE; }
+    void push_back(bool f) {
+        if (m_first_false_pos == NO_FALSE && !f) {
+            // The stack consists of all true values, and a false is added.
+            // The first false value will appear at the current size.
+            m_first_false_pos = m_stack_size;
+        }
+        ++m_stack_size;
+    }
+    void pop_back() {
+        assert(m_stack_size > 0);
+        --m_stack_size;
+        if (m_first_false_pos == m_stack_size) {
+            // When popping off the first false value, everything becomes true.
+            m_first_false_pos = NO_FALSE;
+        }
+    }
+    void toggle_top() {
+        assert(m_stack_size > 0);
+        if (m_first_false_pos == NO_FALSE) {
+            // The current stack is all true values; the first false will be the
+            // top.
+            m_first_false_pos = m_stack_size - 1;
+        } else if (m_first_false_pos == m_stack_size - 1) {
+            // The top is the first false value; toggling it will make
+            // everything true.
+            m_first_false_pos = NO_FALSE;
+        } else {
+            // There is a false value, but not on top. No action is needed as
+            // toggling anything but the first false value is unobservable.
+        }
+    }
+};
+} // namespace
+
+/**
+ * Helper for OP_CHECKSIG and OP_CHECKSIGVERIFY
+ *
+ * A return value of false means the script fails entirely. When true is
+ * returned, the fSuccess variable indicates whether the signature check itself
+ * succeeded.
+ */
+static bool EvalChecksig(const valtype &vchSig, const valtype &vchPubKey,
+                         CScript::const_iterator pbegincodehash,
+                         CScript::const_iterator pend, uint32_t flags,
+                         const BaseSignatureChecker &checker,
+                         ScriptExecutionMetrics &metrics, ScriptError *serror,
+                         bool &fSuccess) {
+    if (!CheckTransactionSignatureEncoding(vchSig, flags, serror) ||
+        !CheckPubKeyEncoding(vchPubKey, flags, serror)) {
+        // serror is set
+        return false;
+    }
+
+    if (vchSig.size()) {
+        // Subset of script starting at the most recent
+        // codeseparator
+        CScript scriptCode(pbegincodehash, pend);
+
+        // Remove signature for pre-fork scripts
+        CleanupScriptCode(scriptCode, vchSig, flags);
+
+        fSuccess = checker.CheckSig(vchSig, vchPubKey, scriptCode, flags);
+        metrics.nSigChecks += 1;
+
+        if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL)) {
+            return set_error(serror, ScriptError::SIG_NULLFAIL);
+        }
+    }
+    return true;
+}
+
 bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                 uint32_t flags, const BaseSignatureChecker &checker,
                 ScriptExecutionMetrics &metrics, ScriptError *serror) {
@@ -111,7 +213,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
     CScript::const_iterator pbegincodehash = script.begin();
     opcodetype opcode;
     valtype vchPushValue;
-    std::vector<bool> vfExec;
+    ConditionStack vfExec;
     std::vector<valtype> altstack;
     set_error(serror, ScriptError::UNKNOWN);
     if (script.size() > MAX_SCRIPT_SIZE) {
@@ -122,7 +224,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
 
     try {
         while (pc < pend) {
-            bool fExec = !count(vfExec.begin(), vfExec.end(), false);
+            bool fExec = vfExec.all_true();
 
             //
             // Read instruction
@@ -139,7 +241,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                 return set_error(serror, ScriptError::OP_COUNT);
             }
 
-            // Some opcodes are disabled.
+            // Some opcodes are disabled (CVE-2010-5137).
             if (IsOpcodeDisabled(opcode, flags)) {
                 return set_error(serror, ScriptError::DISABLED_OPCODE);
             }
@@ -324,7 +426,7 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                             return set_error(
                                 serror, ScriptError::UNBALANCED_CONDITIONAL);
                         }
-                        vfExec.back() = !vfExec.back();
+                        vfExec.toggle_top();
                     } break;
 
                     case OP_ENDIF: {
@@ -838,13 +940,9 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                                 .Write(vch.data(), vch.size())
                                 .Finalize(vchHash.data());
                         } else if (opcode == OP_HASH160) {
-                            CHash160()
-                                .Write(vch.data(), vch.size())
-                                .Finalize(vchHash.data());
+                            CHash160().Write(vch).Finalize(vchHash);
                         } else if (opcode == OP_HASH256) {
-                            CHash256()
-                                .Write(vch.data(), vch.size())
-                                .Finalize(vchHash.data());
+                            CHash256().Write(vch).Finalize(vchHash);
                         }
                         popstack(stack);
                         stack.push_back(vchHash);
@@ -865,32 +963,12 @@ bool EvalScript(std::vector<valtype> &stack, const CScript &script,
                         valtype &vchSig = stacktop(-2);
                         valtype &vchPubKey = stacktop(-1);
 
-                        if (!CheckTransactionSignatureEncoding(vchSig, flags,
-                                                               serror) ||
-                            !CheckPubKeyEncoding(vchPubKey, flags, serror)) {
-                            // serror is set
+                        bool fSuccess = false;
+                        if (!EvalChecksig(vchSig, vchPubKey, pbegincodehash,
+                                          pend, flags, checker, metrics, serror,
+                                          fSuccess)) {
                             return false;
                         }
-
-                        bool fSuccess = false;
-                        if (vchSig.size()) {
-                            // Subset of script starting at the most recent
-                            // codeseparator
-                            CScript scriptCode(pbegincodehash, pend);
-
-                            // Remove signature for pre-fork scripts
-                            CleanupScriptCode(scriptCode, vchSig, flags);
-
-                            fSuccess = checker.CheckSig(vchSig, vchPubKey,
-                                                        scriptCode, flags);
-                            metrics.nSigChecks += 1;
-
-                            if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL)) {
-                                return set_error(serror,
-                                                 ScriptError::SIG_NULLFAIL);
-                            }
-                        }
-
                         popstack(stack);
                         popstack(stack);
                         stack.push_back(fSuccess ? vchTrue : vchFalse);
@@ -1547,14 +1625,11 @@ uint256 SignatureHash(const CScript &scriptCode, const T &txTo,
         return ss.GetHash();
     }
 
-    static const uint256 one(uint256S(
-        "0000000000000000000000000000000000000000000000000000000000000001"));
-
     // Check for invalid use of SIGHASH_SINGLE
     if ((sigHashType.getBaseType() == BaseSigHashType::SINGLE) &&
         (nIn >= txTo.vout.size())) {
         //  nOut out of range
-        return one;
+        return UINT256_ONE();
     }
 
     // Wrapper to serialize only the necessary parts of the transaction being
@@ -1715,6 +1790,8 @@ bool VerifyScript(const CScript &scriptSig, const CScript &scriptPubKey,
 
     ScriptExecutionMetrics metrics = {};
 
+    // scriptSig and scriptPubKey must be evaluated sequentially on the same
+    // stack rather than being simply concatenated (see CVE-2010-5141)
     std::vector<valtype> stack, stackCopy;
     if (!EvalScript(stack, scriptSig, flags, checker, metrics, serror)) {
         // serror is set

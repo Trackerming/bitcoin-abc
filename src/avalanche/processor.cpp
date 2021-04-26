@@ -4,12 +4,17 @@
 
 #include <avalanche/processor.h>
 
+#include <avalanche/delegationbuilder.h>
 #include <avalanche/peermanager.h>
+#include <avalanche/validation.h>
 #include <chain.h>
+#include <key_io.h>         // For DecodeSecret
+#include <net_processing.h> // For ::PeerManager
 #include <netmessagemaker.h>
 #include <reverse_iterator.h>
 #include <scheduler.h>
 #include <util/bitmanip.h>
+#include <util/translation.h>
 #include <validation.h>
 
 #include <chrono>
@@ -124,7 +129,7 @@ static bool IsWorthPolling(const CBlockIndex *pindex) {
         return false;
     }
 
-    if (IsBlockFinalized(pindex)) {
+    if (::ChainstateActive().IsBlockFinalized(pindex)) {
         // There is no point polling finalized block.
         return false;
     }
@@ -132,15 +137,130 @@ static bool IsWorthPolling(const CBlockIndex *pindex) {
     return true;
 }
 
-Processor::Processor(CConnman *connmanIn)
-    : connman(connmanIn), queryTimeoutDuration(AVALANCHE_DEFAULT_QUERY_TIMEOUT),
-      round(0), peerManager(std::make_unique<PeerManager>()) {
-    // Pick a random key for the session.
-    sessionKey.MakeNewKey(true);
+struct Processor::PeerData {
+    Proof proof;
+    Delegation delegation;
+};
+
+class Processor::NotificationsHandler
+    : public interfaces::Chain::Notifications {
+    Processor *m_processor;
+
+public:
+    NotificationsHandler(Processor *p) : m_processor(p) {}
+
+    void updatedBlockTip() override {
+        LOCK(m_processor->cs_peerManager);
+
+        if (m_processor->mustRegisterProof &&
+            !::ChainstateActive().IsInitialBlockDownload()) {
+            m_processor->peerManager->getPeerId(m_processor->peerData->proof);
+            m_processor->mustRegisterProof = false;
+        }
+
+        m_processor->peerManager->updatedBlockTip();
+    }
+};
+
+Processor::Processor(interfaces::Chain &chain, CConnman *connmanIn,
+                     NodePeerManager *nodePeerManagerIn,
+                     std::unique_ptr<PeerData> peerDataIn, CKey sessionKeyIn)
+    : connman(connmanIn), nodePeerManager(nodePeerManagerIn),
+      queryTimeoutDuration(AVALANCHE_DEFAULT_QUERY_TIMEOUT), round(0),
+      peerManager(std::make_unique<PeerManager>()),
+      peerData(std::move(peerDataIn)), sessionKey(std::move(sessionKeyIn)),
+      // Schedule proof registration at the first new block after IBD.
+      // FIXME: get rid of this flag
+      mustRegisterProof(!!peerData) {
+    // Make sure we get notified of chain state changes.
+    chainNotificationsHandler =
+        chain.handleNotifications(std::make_shared<NotificationsHandler>(this));
 }
 
 Processor::~Processor() {
+    chainNotificationsHandler.reset();
     stopEventLoop();
+}
+
+std::unique_ptr<Processor>
+Processor::MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
+                         CConnman *connman, NodePeerManager *nodePeerManager,
+                         bilingual_str &error) {
+    std::unique_ptr<PeerData> peerData;
+    CKey masterKey;
+    CKey sessionKey;
+
+    if (argsman.IsArgSet("-avasessionkey")) {
+        sessionKey = DecodeSecret(argsman.GetArg("-avasessionkey", ""));
+        if (!sessionKey.IsValid()) {
+            error = _("the avalanche session key is invalid");
+            return nullptr;
+        }
+    } else {
+        // Pick a random key for the session.
+        sessionKey.MakeNewKey(true);
+    }
+
+    if (argsman.IsArgSet("-avaproof")) {
+        if (!argsman.IsArgSet("-avamasterkey")) {
+            error = _(
+                "the avalanche master key is missing for the avalanche proof");
+            return nullptr;
+        }
+
+        masterKey = DecodeSecret(argsman.GetArg("-avamasterkey", ""));
+        if (!masterKey.IsValid()) {
+            error = _("the avalanche master key is invalid");
+            return nullptr;
+        }
+
+        peerData = std::make_unique<PeerData>();
+        {
+            // The proof.
+            CDataStream stream(ParseHex(argsman.GetArg("-avaproof", "")),
+                               SER_NETWORK, 0);
+            stream >> peerData->proof;
+        }
+
+        ProofValidationState proof_state;
+        if (!peerData->proof.verify(proof_state)) {
+            switch (proof_state.GetResult()) {
+                case ProofValidationResult::NO_STAKE:
+                    error = _("the avalanche proof has no stake");
+                    return nullptr;
+                case ProofValidationResult::DUST_THRESOLD:
+                    error = _("the avalanche proof stake is too low");
+                    return nullptr;
+                case ProofValidationResult::DUPLICATE_STAKE:
+                    error = _("the avalanche proof has duplicated stake");
+                    return nullptr;
+                case ProofValidationResult::INVALID_SIGNATURE:
+                    error =
+                        _("the avalanche proof has invalid stake signatures");
+                    return nullptr;
+                case ProofValidationResult::TOO_MANY_UTXOS:
+                    error = strprintf(
+                        _("the avalanche proof has too many utxos (max: %u)"),
+                        AVALANCHE_MAX_PROOF_STAKES);
+                    return nullptr;
+                default:
+                    error = _("the avalanche proof is invalid");
+                    return nullptr;
+            }
+        }
+
+        // Generate the delegation to the session key.
+        DelegationBuilder dgb(peerData->proof);
+        if (sessionKey.GetPubKey() != peerData->proof.getMaster()) {
+            dgb.addLevel(masterKey, sessionKey.GetPubKey());
+        }
+        peerData->delegation = dgb.build();
+    }
+
+    // We can't use std::make_unique with a private constructor
+    return std::unique_ptr<Processor>(
+        new Processor(chain, connman, nodePeerManager, std::move(peerData),
+                      std::move(sessionKey)));
 }
 
 bool Processor::addBlockToReconcile(const CBlockIndex *pindex) {
@@ -188,7 +308,7 @@ namespace {
      */
     class TCPResponse {
         Response response;
-        std::array<uint8_t, 64> sig;
+        SchnorrSig sig;
 
     public:
         TCPResponse(Response responseIn, const CKey &key)
@@ -198,30 +318,21 @@ namespace {
             const uint256 hash = hasher.GetHash();
 
             // Now let's sign!
-            std::vector<uint8_t> vchSig;
-            if (key.SignSchnorr(hash, vchSig)) {
-                // Schnorr sigs are 64 bytes in size.
-                assert(vchSig.size() == 64);
-                std::copy(vchSig.begin(), vchSig.end(), sig.begin());
-            } else {
+            if (!key.SignSchnorr(hash, sig)) {
                 sig.fill(0);
             }
         }
 
         // serialization support
-        ADD_SERIALIZE_METHODS;
-
-        template <typename Stream, typename Operation>
-        inline void SerializationOp(Stream &s, Operation ser_action) {
-            READWRITE(response);
-            READWRITE(sig);
+        SERIALIZE_METHODS(TCPResponse, obj) {
+            READWRITE(obj.response, obj.sig);
         }
     };
 } // namespace
 
 void Processor::sendResponse(CNode *pfrom, Response response) const {
     connman->PushMessage(
-        pfrom, CNetMsgMaker(pfrom->GetSendVersion())
+        pfrom, CNetMsgMaker(pfrom->GetCommonVersion())
                    .Make(NetMsgType::AVARESPONSE,
                          TCPResponse(std::move(response), sessionKey)));
 }
@@ -247,7 +358,7 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
         auto w = queries.getWriteView();
         auto it = w->find(std::make_tuple(nodeid, response.getRound()));
         if (it == w.end()) {
-            // NB: The request may be old, so we don't increase banscore.
+            nodePeerManager->Misbehaving(nodeid, 2, "unexpcted-ava-response");
             return false;
         }
 
@@ -259,15 +370,14 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
     const std::vector<Vote> &votes = response.GetVotes();
     size_t size = invs.size();
     if (votes.size() != size) {
-        // TODO: increase banscore for inconsistent response.
-        // NB: This isn't timeout but actually node misbehaving.
+        nodePeerManager->Misbehaving(nodeid, 100, "invalid-ava-response-size");
         return false;
     }
 
     for (size_t i = 0; i < size; i++) {
         if (invs[i].hash != votes[i].GetHash()) {
-            // TODO: increase banscore for inconsistent response.
-            // NB: This isn't timeout but actually node misbehaving.
+            nodePeerManager->Misbehaving(nodeid, 100,
+                                         "invalid-ava-response-content");
             return false;
         }
     }
@@ -333,15 +443,70 @@ bool Processor::registerVotes(NodeId nodeid, const Response &response,
 }
 
 bool Processor::addNode(NodeId nodeid, const Proof &proof,
-                        const CPubKey &pubkey) {
+                        const Delegation &delegation) {
     LOCK(cs_peerManager);
-    return peerManager->addNode(nodeid, proof, pubkey);
+    return peerManager->addNode(nodeid, proof, delegation);
 }
 
 bool Processor::forNode(NodeId nodeid,
                         std::function<bool(const Node &n)> func) const {
     LOCK(cs_peerManager);
     return peerManager->forNode(nodeid, std::move(func));
+}
+
+CPubKey Processor::getSessionPubKey() const {
+    return sessionKey.GetPubKey();
+}
+
+uint256 Processor::buildLocalSighash(CNode *pfrom) const {
+    CHashWriter hasher(SER_GETHASH, 0);
+    hasher << peerData->delegation.getId();
+    hasher << pfrom->GetLocalNonce();
+    hasher << pfrom->nRemoteHostNonce;
+    hasher << pfrom->GetLocalExtraEntropy();
+    hasher << pfrom->nRemoteExtraEntropy;
+    return hasher.GetHash();
+}
+
+uint256 Processor::buildRemoteSighash(CNode *pfrom) const {
+    CHashWriter hasher(SER_GETHASH, 0);
+    hasher << pfrom->m_avalanche_state->delegation.getId();
+    hasher << pfrom->nRemoteHostNonce;
+    hasher << pfrom->GetLocalNonce();
+    hasher << pfrom->nRemoteExtraEntropy;
+    hasher << pfrom->GetLocalExtraEntropy();
+    return hasher.GetHash();
+}
+
+bool Processor::sendHello(CNode *pfrom) const {
+    if (!peerData) {
+        // We do not have a delegation to advertise.
+        return false;
+    }
+
+    // Now let's sign!
+    SchnorrSig sig;
+
+    {
+        const uint256 hash = buildLocalSighash(pfrom);
+
+        if (!sessionKey.SignSchnorr(hash, sig)) {
+            return false;
+        }
+    }
+
+    connman->PushMessage(pfrom, CNetMsgMaker(pfrom->GetCommonVersion())
+                                    .Make(NetMsgType::AVAHELLO,
+                                          Hello(peerData->delegation, sig)));
+
+    return true;
+}
+
+const Proof Processor::getProof() const {
+    if (!peerData) {
+        throw std::runtime_error("proof not set");
+    }
+    return peerData->proof;
 }
 
 bool Processor::startEventLoop(CScheduler &scheduler) {
@@ -444,6 +609,11 @@ void Processor::clearTimedoutRequests() {
 }
 
 void Processor::runEventLoop() {
+    // Don't do Avalanche while node is IBD'ing
+    if (::ChainstateActive().IsInitialBlockDownload()) {
+        return;
+    }
+
     // First things first, check if we have requests that timed out and clear
     // them.
     clearTimedoutRequests();
@@ -482,7 +652,7 @@ void Processor::runEventLoop() {
 
             // Send the query to the node.
             connman->PushMessage(
-                pnode, CNetMsgMaker(pnode->GetSendVersion())
+                pnode, CNetMsgMaker(pnode->GetCommonVersion())
                            .Make(NetMsgType::AVAPOLL,
                                  Poll(current_round, std::move(invs))));
             return true;
@@ -502,6 +672,16 @@ void Processor::runEventLoop() {
         // Get next suitable node to try again
         nodeid = getSuitableNodeToQuery();
     } while (nodeid != NO_NODE);
+}
+
+std::vector<avalanche::Peer> Processor::getPeers() const {
+    LOCK(cs_peerManager);
+    return peerManager->getPeers();
+}
+
+std::vector<NodeId> Processor::getNodeIdsForPeer(PeerId peerId) const {
+    LOCK(cs_peerManager);
+    return peerManager->getNodeIdsForPeer(peerId);
 }
 
 } // namespace avalanche

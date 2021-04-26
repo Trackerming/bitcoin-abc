@@ -101,35 +101,57 @@ EOTEXT
       array_push($landArgs, '--hold');
     }
 
-    $revision = $this->getArgument('revision');
-    if ($revision) {
-      array_push($landArgs, '--revision');
-      array_push($landArgs, $revision);
-    }
-
+    // Checkout the specified branch/commit which will determine the revision
+    // to land. Your old branch will be restored at the end.
     $branch = $this->getArgument('branch');
     if (!empty($branch)) {
-      array_push($landArgs, $branch[0]);
+      $branch = $branch[0];
+      $repositoryApi->execxLocal('checkout %s', $branch);
+    }
+
+    $revision = $this->getArgument('revision');
+    if (empty($revision)) {
+      // By default, queue the latest revision on the current branch
+      $revisions = $repositoryApi->loadWorkingCopyDifferentialRevisions(
+        $this->getConduit(), array());
+
+      if (empty($revisions)) {
+        $location = 'current branch';
+        if (!empty($branch)) {
+          // Restore the branch you were on previously
+          $repositoryApi->execxLocal('checkout %s', $oldBranch);
+
+          $location = "'$branch'";
+        }
+        throw new ArcanistUsageException(pht(
+          "Error: Could not find a valid revision at %s", $location));
+      }
+
+      $revision = 'D' . end($revisions)['id'];
+    }
+    array_push($landArgs, '--revision');
+    array_push($landArgs, $revision);
+
+    if ($this->getArgument('preview')) {
+      // Restore the branch you were on previously
+      $repositoryApi->execxLocal('checkout %s', $oldBranch);
+
+      echo phutil_console_format(pht(
+        'Found revision %s', $revision) . "\n");
+      return 0;
     }
 
     $landWorkflow = $this->buildChildWorkflow('land', $landArgs);
     $landWorkflow->run();
 
-    if ($this->getArgument('preview')) {
-      return 0;
-    }
-
-    // Whether --revision was set or not, we need a formatted revision ID
-    $revision = 'D' . $landWorkflow->getRevisionDict()['id'];
+    // Restore the branch you were on previously
+    $repositoryApi->execxLocal('checkout %s', $oldBranch);
 
     if ($this->getArgument('hold')) {
       echo phutil_console_format(pht(
-        'Revision %s will not be queued with the land bot.', $revision) . "\n");
+        'Revision %s has not been queued with the land bot', $revision) . "\n");
       return 0;
     }
-
-    // Checkout the branch you were on previously
-    $repositoryApi->execxLocal('checkout %s', $oldBranch);
 
     // Encrypt your Conduit token to securely pass it to the land bot
     $workingCopy = $repositoryApi->getWorkingCopyIdentity();

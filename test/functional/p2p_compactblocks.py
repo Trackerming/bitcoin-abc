@@ -24,6 +24,8 @@ from test_framework.messages import (
     CTxOut,
     FromHex,
     HeaderAndShortIDs,
+    MSG_BLOCK,
+    MSG_CMPCT_BLOCK,
     msg_block,
     msg_blocktxn,
     msg_cmpctblock,
@@ -82,7 +84,7 @@ class TestP2PConn(P2PInterface):
 
     def on_inv(self, message):
         for x in self.last_message["inv"].inv:
-            if x.type == 2:
+            if x.type == MSG_BLOCK:
                 self.block_announced = True
                 self.announced_blockhashes.add(x.hash)
 
@@ -352,10 +354,9 @@ class CompactBlocksTest(BitcoinTestFramework):
             header_and_shortids, block_hash, block)
 
         # Now fetch the compact block using a normal non-announce getdata
-        with mininode_lock:
-            test_node.clear_block_announcement()
-            inv = CInv(4, block_hash)  # 4 == "CompactBlock"
-            test_node.send_message(msg_getdata([inv]))
+        test_node.clear_block_announcement()
+        inv = CInv(MSG_CMPCT_BLOCK, block_hash)
+        test_node.send_message(msg_getdata([inv]))
 
         wait_until(test_node.received_block_announcement,
                    timeout=30, lock=mininode_lock)
@@ -415,22 +416,17 @@ class CompactBlocksTest(BitcoinTestFramework):
         # request
         for announce in ["inv", "header"]:
             block = self.build_block_on_tip(node)
-            with mininode_lock:
-                test_node.last_message.pop("getdata", None)
 
             if announce == "inv":
-                test_node.send_message(msg_inv([CInv(2, block.sha256)]))
+                test_node.send_message(
+                    msg_inv([CInv(MSG_BLOCK, block.sha256)]))
                 wait_until(lambda: "getheaders" in test_node.last_message,
                            timeout=30, lock=mininode_lock)
                 test_node.send_header_for_blocks([block])
             else:
                 test_node.send_header_for_blocks([block])
-            wait_until(lambda: "getdata" in test_node.last_message,
-                       timeout=30, lock=mininode_lock)
-            assert_equal(len(test_node.last_message["getdata"].inv), 1)
+            test_node.wait_for_getdata([block.sha256], timeout=30)
             assert_equal(test_node.last_message["getdata"].inv[0].type, 4)
-            assert_equal(
-                test_node.last_message["getdata"].inv[0].hash, block.sha256)
 
             # Send back a compactblock message that omits the coinbase
             comp_block = HeaderAndShortIDs()
@@ -623,12 +619,8 @@ class CompactBlocksTest(BitcoinTestFramework):
         assert_equal(int(node.getbestblockhash(), 16), block.hashPrevBlock)
 
         # We should receive a getdata request
-        wait_until(lambda: "getdata" in test_node.last_message,
-                   timeout=10, lock=mininode_lock)
-        assert_equal(len(test_node.last_message["getdata"].inv), 1)
-        assert test_node.last_message["getdata"].inv[0].type == 2
-        assert_equal(
-            test_node.last_message["getdata"].inv[0].hash, block.sha256)
+        test_node.wait_for_getdata([block.sha256], timeout=10)
+        assert test_node.last_message["getdata"].inv[0].type == MSG_BLOCK
 
         # Deliver the block
         test_node.send_and_ping(msg_block(block))
@@ -693,7 +685,8 @@ class CompactBlocksTest(BitcoinTestFramework):
                        timeout=30, lock=mininode_lock)
 
         test_node.clear_block_announcement()
-        test_node.send_message(msg_getdata([CInv(4, int(new_blocks[0], 16))]))
+        test_node.send_message(msg_getdata(
+            [CInv(MSG_CMPCT_BLOCK, int(new_blocks[0], 16))]))
         wait_until(lambda: "cmpctblock" in test_node.last_message,
                    timeout=30, lock=mininode_lock)
 
@@ -704,7 +697,8 @@ class CompactBlocksTest(BitcoinTestFramework):
         test_node.clear_block_announcement()
         with mininode_lock:
             test_node.last_message.pop("block", None)
-        test_node.send_message(msg_getdata([CInv(4, int(new_blocks[0], 16))]))
+        test_node.send_message(msg_getdata(
+            [CInv(MSG_CMPCT_BLOCK, int(new_blocks[0], 16))]))
         wait_until(lambda: "block" in test_node.last_message,
                    timeout=30, lock=mininode_lock)
         with mininode_lock:

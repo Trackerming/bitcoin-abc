@@ -6,6 +6,7 @@
 #ifndef BITCOIN_SCRIPT_SIGN_H
 #define BITCOIN_SCRIPT_SIGN_H
 
+#include <coins.h>
 #include <hash.h>
 #include <pubkey.h>
 #include <script/interpreter.h>
@@ -114,8 +115,8 @@ template <typename Stream>
 void DeserializeHDKeypaths(Stream &s, const std::vector<uint8_t> &key,
                            std::map<CPubKey, KeyOriginInfo> &hd_keypaths) {
     // Make sure that the key is the size of pubkey + 1
-    if (key.size() != CPubKey::PUBLIC_KEY_SIZE + 1 &&
-        key.size() != CPubKey::COMPRESSED_PUBLIC_KEY_SIZE + 1) {
+    if (key.size() != CPubKey::SIZE + 1 &&
+        key.size() != CPubKey::COMPRESSED_SIZE + 1) {
         throw std::ios_base::failure(
             "Size of key was not the expected size for the type BIP32 keypath");
     }
@@ -191,5 +192,11 @@ void UpdateInput(CTxIn &input, const SignatureData &data);
  * Solvability is unrelated to whether we consider this output to be ours.
  */
 bool IsSolvable(const SigningProvider &provider, const CScript &script);
+
+/** Sign the CMutableTransaction */
+bool SignTransaction(CMutableTransaction &mtx, const SigningProvider *provider,
+                     const std::map<COutPoint, Coin> &coins,
+                     SigHashType sigHashType,
+                     std::map<int, std::string> &input_errors);
 
 #endif // BITCOIN_SCRIPT_SIGN_H

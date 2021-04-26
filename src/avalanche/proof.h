@@ -6,29 +6,26 @@
 #define BITCOIN_AVALANCHE_PROOF_H
 
 #include <amount.h>
+#include <avalanche/proofid.h>
+#include <key.h>
 #include <primitives/transaction.h>
 #include <pubkey.h>
 #include <serialize.h>
-#include <uint256.h>
 
 #include <array>
 #include <cstdint>
 #include <vector>
 
+class CCoinsView;
+
+/**
+ * How many UTXOs can be used for a single proof.
+ */
+static constexpr int AVALANCHE_MAX_PROOF_STAKES = 1000;
+
 namespace avalanche {
 
 class ProofValidationState;
-
-struct ProofId : public uint256 {
-    explicit ProofId() : uint256() {}
-    explicit ProofId(const uint256 &b) : uint256(b) {}
-
-    static ProofId fromHex(const std::string &str) {
-        ProofId r;
-        r.SetHex(str);
-        return r;
-    }
-};
 
 class Stake {
     COutPoint utxo;
@@ -39,18 +36,13 @@ class Stake {
 
 public:
     explicit Stake() = default;
-    Stake(COutPoint utxo_, Amount amount_, uint32_t height_, CPubKey pubkey_)
-        : utxo(utxo_), amount(amount_), height(height_),
+    Stake(COutPoint utxo_, Amount amount_, uint32_t height_, bool is_coinbase,
+          CPubKey pubkey_)
+        : utxo(utxo_), amount(amount_), height(height_ << 1 | is_coinbase),
           pubkey(std::move(pubkey_)) {}
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(utxo);
-        READWRITE(amount);
-        READWRITE(height);
-        READWRITE(pubkey);
+    SERIALIZE_METHODS(Stake, obj) {
+        READWRITE(obj.utxo, obj.amount, obj.height, obj.pubkey);
     }
 
     const COutPoint &getUTXO() const { return utxo; }
@@ -64,23 +56,17 @@ public:
 
 class SignedStake {
     Stake stake;
-    std::array<uint8_t, 64> sig;
+    SchnorrSig sig;
 
 public:
     explicit SignedStake() = default;
-    SignedStake(Stake stake_, std::array<uint8_t, 64> sig_)
+    SignedStake(Stake stake_, SchnorrSig sig_)
         : stake(std::move(stake_)), sig(std::move(sig_)) {}
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(stake);
-        READWRITE(sig);
-    }
+    SERIALIZE_METHODS(SignedStake, obj) { READWRITE(obj.stake, obj.sig); }
 
     const Stake &getStake() const { return stake; }
-    const std::array<uint8_t, 64> &getSignature() const { return sig; }
+    const SchnorrSig &getSignature() const { return sig; }
 
     bool verify(const ProofId &proofid) const;
 };
@@ -102,18 +88,9 @@ public:
           master(std::move(master_)), stakes(std::move(stakes_)),
           proofid(computeProofId()) {}
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(sequence);
-        READWRITE(expirationTime);
-        READWRITE(master);
-        READWRITE(stakes);
-
-        if (ser_action.ForRead()) {
-            proofid = computeProofId();
-        }
+    SERIALIZE_METHODS(Proof, obj) {
+        READWRITE(obj.sequence, obj.expirationTime, obj.master, obj.stakes);
+        SER_READ(obj, obj.proofid = obj.computeProofId());
     }
 
     uint64_t getSequence() const { return sequence; }
@@ -125,6 +102,7 @@ public:
     uint32_t getScore() const;
 
     bool verify(ProofValidationState &state) const;
+    bool verify(ProofValidationState &state, const CCoinsView &view) const;
 };
 
 } // namespace avalanche

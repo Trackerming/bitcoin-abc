@@ -8,31 +8,28 @@
 
 export LC_ALL=C
 
+set -euo pipefail
+
+: "${TOPLEVEL:=$(git rev-parse --show-toplevel)}"
+
 EXPECTED_CIRCULAR_DEPENDENCIES=(
     "index/txindex -> validation -> index/txindex"
     "qt/addresstablemodel -> qt/walletmodel -> qt/addresstablemodel"
-    "qt/bantablemodel -> qt/clientmodel -> qt/bantablemodel"
-    "qt/bitcoingui -> qt/utilitydialog -> qt/bitcoingui"
     "qt/bitcoingui -> qt/walletframe -> qt/bitcoingui"
-    "qt/bitcoingui -> qt/walletview -> qt/bitcoingui"
-    "qt/clientmodel -> qt/peertablemodel -> qt/clientmodel"
-    "qt/paymentserver -> qt/walletmodel -> qt/paymentserver"
     "qt/recentrequeststablemodel -> qt/walletmodel -> qt/recentrequeststablemodel"
     "qt/transactiontablemodel -> qt/walletmodel -> qt/transactiontablemodel"
-    "qt/walletmodel -> qt/walletmodeltransaction -> qt/walletmodel"
     "txmempool -> validation -> txmempool"
-    "wallet/coincontrol -> wallet/wallet -> wallet/coincontrol"
     "wallet/fees -> wallet/wallet -> wallet/fees"
     "wallet/rpcwallet -> wallet/wallet -> wallet/rpcwallet"
     "wallet/wallet -> wallet/walletdb -> wallet/wallet"
     "avalanche/processor -> validation -> avalanche/processor"
+    "avalanche/processor -> net_processing -> avalanche/processor"
     "chainparams -> protocol -> chainparams"
     "chainparamsbase -> util/system -> chainparamsbase"
     "minerfund -> validation -> minerfund"
     "script/scriptcache -> validation -> script/scriptcache"
     "seeder/bitcoin -> seeder/db -> seeder/bitcoin"
     "chainparams -> protocol -> config -> chainparams"
-    "wallet/scriptpubkeyman -> wallet/wallet -> wallet/scriptpubkeyman"
     "checkpoints -> validation -> checkpoints"
     "pow/aserti32d -> validation -> pow/aserti32d"
     "pow/aserti32d -> validation -> pow/pow -> pow/aserti32d"
@@ -41,6 +38,8 @@ EXPECTED_CIRCULAR_DEPENDENCIES=(
 EXIT_CODE=0
 
 CIRCULAR_DEPENDENCIES=()
+
+pushd "${TOPLEVEL}"
 
 IFS=$'\n'
 for CIRC in $(cd src && ../contrib/devtools/circular-dependencies.py {*,*/*,*/*/*}.{h,cpp} | sed -e 's/^Circular dependency: //'); do
@@ -75,5 +74,7 @@ for EXPECTED_CIRC in "${EXPECTED_CIRCULAR_DEPENDENCIES[@]}"; do
         EXIT_CODE=1
     fi
 done
+
+popd
 
 exit ${EXIT_CODE}

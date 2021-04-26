@@ -53,6 +53,7 @@ class BlockchainTest(BitcoinTestFramework):
         self.num_nodes = 1
         # TODO: remove -txindex. Currently required for getrawtransaction call.
         self.extra_args = [["-txindex"]]
+        self.supports_cli = False
 
     def run_test(self):
         self.mine_chain()
@@ -213,6 +214,7 @@ class BlockchainTest(BitcoinTestFramework):
         assert_equal(chaintxstats['time'], b200['time'])
         assert_equal(chaintxstats['txcount'], 201)
         assert_equal(chaintxstats['window_final_block_hash'], b200_hash)
+        assert_equal(chaintxstats['window_final_block_height'], 200)
         assert_equal(chaintxstats['window_block_count'], 199)
         assert_equal(chaintxstats['window_tx_count'], 199)
         assert_equal(chaintxstats['window_interval'], time_diff)
@@ -223,6 +225,7 @@ class BlockchainTest(BitcoinTestFramework):
         assert_equal(chaintxstats['time'], b1['time'])
         assert_equal(chaintxstats['txcount'], 2)
         assert_equal(chaintxstats['window_final_block_hash'], b1_hash)
+        assert_equal(chaintxstats['window_final_block_height'], 1)
         assert_equal(chaintxstats['window_block_count'], 0)
         assert 'window_tx_count' not in chaintxstats
         assert 'window_interval' not in chaintxstats
@@ -263,13 +266,10 @@ class BlockchainTest(BitcoinTestFramework):
         node.reconsiderblock(b1hash)
 
         res3 = node.gettxoutsetinfo()
-        assert_equal(res['total_amount'], res3['total_amount'])
-        assert_equal(res['transactions'], res3['transactions'])
-        assert_equal(res['height'], res3['height'])
-        assert_equal(res['txouts'], res3['txouts'])
-        assert_equal(res['bogosize'], res3['bogosize'])
-        assert_equal(res['bestblock'], res3['bestblock'])
-        assert_equal(res['hash_serialized'], res3['hash_serialized'])
+        # The field 'disk_size' is non-deterministic and can thus not be
+        # compared between res and res3.  Everything else should be the same.
+        del res['disk_size'], res3['disk_size']
+        assert_equal(res, res3)
 
     def _test_getblockheader(self):
         node = self.nodes[0]
@@ -356,8 +356,7 @@ class BlockchainTest(BitcoinTestFramework):
         def solve_and_send_block(prevhash, height, time):
             b = create_block(prevhash, create_coinbase(height), time)
             b.solve()
-            node.p2p.send_message(msg_block(b))
-            node.p2p.sync_with_ping()
+            node.p2p.send_and_ping(msg_block(b))
             return b
 
         b21f = solve_and_send_block(int(b20hash, 16), 21, b20['time'] + 1)

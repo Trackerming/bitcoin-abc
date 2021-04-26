@@ -5,14 +5,18 @@
 #ifndef BITCOIN_NODE_CONTEXT_H
 #define BITCOIN_NODE_CONTEXT_H
 
+#include <cassert>
+#include <functional>
 #include <memory>
 #include <vector>
 
+class ArgsManager;
 class BanMan;
 class CConnman;
 class CScheduler;
 class CTxMemPool;
-class PeerLogicValidation;
+class ChainstateManager;
+class PeerManager;
 namespace interfaces {
 class Chain;
 class ChainClient;
@@ -32,11 +36,16 @@ struct NodeContext {
     std::unique_ptr<CConnman> connman;
     // Currently a raw pointer because the memory is not managed by this struct
     CTxMemPool *mempool{nullptr};
-    std::unique_ptr<PeerLogicValidation> peer_logic;
+    std::unique_ptr<PeerManager> peerman;
+    // Currently a raw pointer because the memory is not managed by this struct
+    ChainstateManager *chainman{nullptr};
     std::unique_ptr<BanMan> banman;
+    // Currently a raw pointer because the memory is not managed by this struct
+    ArgsManager *args{nullptr};
     std::unique_ptr<interfaces::Chain> chain;
     std::vector<std::unique_ptr<interfaces::ChainClient>> chain_clients;
     std::unique_ptr<CScheduler> scheduler;
+    std::function<void()> rpc_interruption_point = [] {};
 
     //! Declare default constructor and destructor that are not inline, so code
     //! instantiating the NodeContext struct doesn't need to #include class

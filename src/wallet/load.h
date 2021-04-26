@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+class ArgsManager;
 class CChainParams;
 class CScheduler;
 
@@ -18,9 +19,6 @@ class Chain;
 
 //! Responsible for reading and validating the -wallet arguments and verifying
 //! the wallet database.
-//  This function will perform salvage on the wallet if requested, as long as
-//  only one wallet is being loaded (WalletInit::ParameterInteraction() forbids
-//  -salvagewallet, -zapwallettxes or -upgradewallet with multiwallet).
 bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
                    const std::vector<std::string> &wallet_files);
 
@@ -29,7 +27,7 @@ bool LoadWallets(const CChainParams &chainParams, interfaces::Chain &chain,
                  const std::vector<std::string> &wallet_files);
 
 //! Complete startup of wallets.
-void StartWallets(CScheduler &scheduler);
+void StartWallets(CScheduler &scheduler, const ArgsManager &args);
 
 //! Flush all wallets in preparation for shutdown.
 void FlushWallets();

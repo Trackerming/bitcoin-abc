@@ -34,6 +34,7 @@ foreach(_raw_file ${BENCH_DATA_RAW_FILES})
 endforeach()
 
 add_executable(bitcoin-bench
+	addrman.cpp
 	base58.cpp
 	bench.cpp
 	bench_bitcoin.cpp
@@ -50,16 +51,19 @@ add_executable(bitcoin-bench
 	duplicate_inputs.cpp
 	examples.cpp
 	gcs_filter.cpp
+	hashpadding.cpp
 	lockedpool.cpp
 	mempool_eviction.cpp
 	mempool_stress.cpp
 	merkle_root.cpp
+	nanobench.cpp
 	poly1305.cpp
 	prevector.cpp
 	rollingbloom.cpp
 	rpc_blockchain.cpp
 	rpc_mempool.cpp
 	util_time.cpp
+	verify_script.cpp
 
 	# Add the generated headers to trigger the conversion command
 	${BENCH_DATA_GENERATED_HEADERS}
@@ -80,15 +84,18 @@ include(InstallationHelper)
 install_target(bitcoin-bench EXCLUDE_FROM_ALL)
 
 include(TestSuite)
-if(ENABLE_JUNIT_REPORT)
-	set(JUNIT_ARGS -printer=junit > "${JUNIT_REPORT_DIRECTORY}/bench-bitcoin.xml")
-endif()
 
 add_test_custom_target(bench-bitcoin
 	TEST_COMMAND
 		"$<TARGET_FILE:bitcoin-bench>"
-		${JUNIT_ARGS}
+		-output_csv=BitcoinABC_Bench.csv
+		-output_json=BitcoinABC_Bench.json
 	CUSTOM_TARGET_ARGS
 		DEPENDS bitcoin-bench
 		USES_TERMINAL
+)
+
+set_property(DIRECTORY "${CMAKE_SOURCE_DIR}" APPEND PROPERTY ADDITIONAL_CLEAN_FILES
+	BitcoinABC_Bench.csv
+	BitcoinABC_Bench.json
 )

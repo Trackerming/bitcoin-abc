@@ -46,7 +46,6 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
             isminetype mine = wtx.txout_is_mine[i];
             if (mine) {
                 TransactionRecord sub(txid, nTime);
-                CTxDestination address;
                 sub.idx = i; // vout index
                 sub.credit = txout.nValue;
                 sub.involvesWatchAddress = mine & ISMINE_WATCH_ONLY;
@@ -93,11 +92,19 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
 
         if (fAllFromMe && fAllToMe) {
             // Payment to self
+            std::string address;
+            for (auto it = wtx.txout_address.begin();
+                 it != wtx.txout_address.end(); ++it) {
+                if (it != wtx.txout_address.begin()) {
+                    address += ", ";
+                }
+                address += EncodeCashAddr(*it, Params());
+            }
             Amount nChange = wtx.change;
-
             parts.append(TransactionRecord(
-                txid, nTime, TransactionRecord::SendToSelf, "",
-                -1 * (nDebit - nChange), (nCredit - nChange)));
+                txid, nTime, TransactionRecord::SendToSelf, address,
+                -(nDebit - nChange), nCredit - nChange));
+
             // maybe pass to TransactionRecord as constructor argument
             parts.last().involvesWatchAddress = involvesWatchAddress;
         } else if (fAllFromMe) {
@@ -154,7 +161,8 @@ TransactionRecord::decomposeTransaction(const interfaces::WalletTx &wtx) {
 }
 
 void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
-                                     int numBlocks, int64_t block_time) {
+                                     const BlockHash &block_hash, int numBlocks,
+                                     int64_t block_time) {
     // Determine transaction status
 
     // Sort order, unrecorded transactions sort to the top
@@ -162,7 +170,7 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
                                wtx.is_coinbase ? 1 : 0, wtx.time_received, idx);
     status.countsForBalance = wtx.is_trusted && !(wtx.blocks_to_maturity > 0);
     status.depth = wtx.depth_in_main_chain;
-    status.cur_num_blocks = numBlocks;
+    status.m_cur_block_hash = block_hash;
 
     const bool up_to_date =
         (int64_t(QDateTime::currentMSecsSinceEpoch()) / 1000 - block_time <
@@ -204,8 +212,9 @@ void TransactionRecord::updateStatus(const interfaces::WalletTxStatus &wtx,
     }
 }
 
-bool TransactionRecord::statusUpdateNeeded(int numBlocks) const {
-    return status.cur_num_blocks != numBlocks;
+bool TransactionRecord::statusUpdateNeeded(const BlockHash &block_hash) const {
+    assert(!block_hash.IsNull());
+    return status.m_cur_block_hash != block_hash;
 }
 
 QString TransactionRecord::getTxID() const {

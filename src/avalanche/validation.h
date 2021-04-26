@@ -10,27 +10,32 @@
 namespace avalanche {
 
 enum class ProofValidationResult {
-    NONE,
+    NONE = 0,
     NO_STAKE,
     DUST_THRESOLD,
     DUPLICATE_STAKE,
     INVALID_SIGNATURE,
+    TOO_MANY_UTXOS,
+
+    // UTXO based errors.
+    MISSING_UTXO,
+    COINBASE_MISMATCH,
+    HEIGHT_MISMATCH,
+    AMOUNT_MISMATCH,
+    NON_STANDARD_DESTINATION,
+    DESTINATION_NOT_SUPPORTED,
+    DESTINATION_MISMATCH,
 };
 
-class ProofValidationState : public ValidationState {
-private:
-    ProofValidationResult m_result = ProofValidationResult::NONE;
+class ProofValidationState : public ValidationState<ProofValidationResult> {};
 
-public:
-    bool Invalid(ProofValidationResult result, unsigned int chRejectCodeIn = 0,
-                 const std::string &reject_reason = "",
-                 const std::string &debug_message = "") {
-        m_result = result;
-        ValidationState::Invalid(chRejectCodeIn, reject_reason, debug_message);
-        return false;
-    }
-    ProofValidationResult GetResult() const { return m_result; }
+enum class DelegationResult {
+    NONE = 0,
+    INCORRECT_PROOF,
+    INVALID_SIGNATURE,
 };
+
+class DelegationState : public ValidationState<DelegationResult> {};
 
 } // namespace avalanche
 

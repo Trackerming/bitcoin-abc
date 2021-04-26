@@ -22,7 +22,7 @@
  *
  * Serialized format:
  * - VARINT((coinbase ? 1 : 0) | (height << 1))
- * - the non-spent CTxOut (via CTxOutCompressor)
+ * - the non-spent CTxOut (via TxOutCompression)
  */
 class Coin {
     //! Unspent transaction output.
@@ -56,12 +56,12 @@ public:
     template <typename Stream> void Serialize(Stream &s) const {
         assert(!IsSpent());
         ::Serialize(s, VARINT(nHeightAndIsCoinBase));
-        ::Serialize(s, CTxOutCompressor(REF(out)));
+        ::Serialize(s, Using<TxOutCompression>(out));
     }
 
     template <typename Stream> void Unserialize(Stream &s) {
         ::Unserialize(s, VARINT(nHeightAndIsCoinBase));
-        ::Unserialize(s, CTxOutCompressor(out));
+        ::Unserialize(s, Using<TxOutCompression>(out));
     }
 
     size_t DynamicMemoryUsage() const {
@@ -84,27 +84,63 @@ public:
      * Note: This information above might be outdated as the unordered map
      * container type has meanwhile been switched to the C++ standard library
      * implementation.
+     *
+     * Having the hash noexcept allows libstdc++'s unordered_map to recalculate
+     * the hash during rehash, so it does not have to cache the value. This
+     * reduces node's memory by sizeof(size_t). The required recalculation has
+     * a slight performance penalty (around 1.6%), but this is compensated by
+     * memory savings of about 9% which allow for a larger dbcache setting.
+     *
+     * @see
+     * https://gcc.gnu.org/onlinedocs/gcc-9.2.0/libstdc++/manual/manual/unordered_associative.html
      */
-    size_t operator()(const COutPoint &outpoint) const {
+    size_t operator()(const COutPoint &outpoint) const noexcept {
         return SipHashUint256Extra(k0, k1, outpoint.GetTxId(), outpoint.GetN());
     }
 };
 
+/**
+ * A Coin in one level of the coins database caching hierarchy.
+ *
+ * A coin can either be:
+ * - unspent or spent (in which case the Coin object will be nulled out - see
+ * Coin.Clear())
+ * - DIRTY or not DIRTY
+ * - FRESH or not FRESH
+ *
+ * Out of these 2^3 = 8 states, only some combinations are valid:
+ * - unspent, FRESH, DIRTY (e.g. a new coin created in the cache)
+ * - unspent, not FRESH, DIRTY (e.g. a coin changed in the cache during a reorg)
+ * - unspent, not FRESH, not DIRTY (e.g. an unspent coin fetched from the parent
+ *   cache)
+ * - spent, FRESH, not DIRTY (e.g. a spent coin fetched from the parent cache)
+ * - spent, not FRESH, DIRTY (e.g. a coin is spent and spentness needs to be
+ *   flushed to the parent)
+ */
 struct CCoinsCacheEntry {
     // The actual cached data.
     Coin coin;
     uint8_t flags;
 
     enum Flags {
-        // This cache entry is potentially different from the version in the
-        // parent view.
+        /**
+         * DIRTY means the CCoinsCacheEntry is potentially different from the
+         * version in the parent cache. Failure to mark a coin as DIRTY when
+         * it is potentially different from the parent cache will cause a
+         * consensus failure, since the coin's state won't get written to the
+         * parent when the cache is flushed.
+         */
         DIRTY = (1 << 0),
-        // The parent view does not have this entry (or it is pruned).
+        /**
+         * FRESH means the parent cache does not have this coin or that it is a
+         * spent coin in the parent cache. If a FRESH coin in the cache is
+         * later spent, it can be deleted entirely and doesn't ever need to be
+         * flushed to the parent. This is a performance optimization. Marking a
+         * coin as FRESH when it exists unspent in the parent cache will cause a
+         * consensus failure, since it might not be deleted from the parent
+         * when this cache is flushed.
+         */
         FRESH = (1 << 1),
-        /* Note that FRESH is a performance optimization with which we can erase
-           coins that are fully spent if we know we do not need to flush the
-           changes to the parent cache. It is always safe to not mark FRESH if
-           that condition is not guaranteed. */
     };
 
     CCoinsCacheEntry() : flags(0) {}
@@ -232,7 +268,7 @@ public:
     bool HaveCoinInCache(const COutPoint &outpoint) const;
 
     /**
-     * Return a reference to Coin in the cache, or a pruned one if not found.
+     * Return a reference to Coin in the cache, or coinEmpty if not found.
      * This is more efficient than GetCoin.
      *
      * Generally, do not hold the reference returned for more than a short
@@ -244,11 +280,10 @@ public:
     const Coin &AccessCoin(const COutPoint &output) const;
 
     /**
-     * Add a coin. Set potential_overwrite to true if a non-pruned version may
-     * already exist.
+     * Add a coin. Set possible_overwrite to true if an unspent version may
+     * already exist in the cache.
      */
-    void AddCoin(const COutPoint &outpoint, Coin coin,
-                 bool potential_overwrite);
+    void AddCoin(const COutPoint &outpoint, Coin coin, bool possible_overwrite);
 
     /**
      * Spend a coin. Pass moveto in order to get the deleted data.
@@ -277,21 +312,17 @@ public:
     //! Calculate the size of the cache (in bytes)
     size_t DynamicMemoryUsage() const;
 
-    /**
-     * Amount of bitcoins coming in to a transaction
-     * Note that lightweight clients may not know anything besides the hash of
-     * previous transactions, so may not be able to calculate this.
-     *
-     * @param[in] tx	transaction for which we are checking input total
-     * @return	Sum of value of all inputs (scriptSigs)
-     */
-    Amount GetValueIn(const CTransaction &tx) const;
-
     //! Check whether all prevouts of the transaction are present in the UTXO
     //! set represented by this view
     bool HaveInputs(const CTransaction &tx) const;
 
-    const CTxOut &GetOutputFor(const CTxIn &input) const;
+    //! Force a reallocation of the cache map. This is required when downsizing
+    //! the cache because the map's allocator may be hanging onto a lot of
+    //! memory despite having called .clear().
+    //!
+    //! See:
+    //! https://stackoverflow.com/questions/42114044/how-to-release-unordered-map-memory
+    void ReallocateCache();
 
 private:
     /**

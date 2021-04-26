@@ -12,7 +12,6 @@
 
 #include <memory>
 
-class ClientModel;
 class BanTablePriv;
 
 namespace interfaces {
@@ -43,8 +42,7 @@ class BanTableModel : public QAbstractTableModel {
     Q_OBJECT
 
 public:
-    explicit BanTableModel(interfaces::Node &node,
-                           ClientModel *parent = nullptr);
+    explicit BanTableModel(interfaces::Node &node, QObject *parent);
     ~BanTableModel();
     void startAutoRefresh();
     void stopAutoRefresh();
@@ -62,15 +60,15 @@ public:
                       const QModelIndex &parent) const override;
     Qt::ItemFlags flags(const QModelIndex &index) const override;
     void sort(int column, Qt::SortOrder order) override;
-    bool shouldShow();
     /*@}*/
+
+    bool shouldShow();
 
 public Q_SLOTS:
     void refresh();
 
 private:
     interfaces::Node &m_node;
-    ClientModel *clientModel;
     QStringList columns;
     std::unique_ptr<BanTablePriv> priv;
 };

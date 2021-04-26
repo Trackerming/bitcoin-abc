@@ -20,15 +20,18 @@ static inline unsigned short GetDefaultPort() {
 // message.
 static const unsigned int ADDR_SOFT_CAP = 1000;
 
-// The network magic to use.
-extern CMessageHeader::MessageMagic netMagic;
-
 enum class PeerMessagingState {
     AwaitingMessages,
     Finished,
 };
 
+namespace {
+class CSeederNodeTest;
+}
+
 class CSeederNode {
+    friend class ::CSeederNodeTest;
+
 private:
     SOCKET sock;
     CDataStream vSend;

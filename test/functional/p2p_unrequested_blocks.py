@@ -61,6 +61,7 @@ from test_framework.blocktools import (
 from test_framework.messages import (
     CBlockHeader,
     CInv,
+    MSG_BLOCK,
     msg_block,
     msg_headers,
     msg_inv,
@@ -114,11 +115,8 @@ class AcceptBlockTest(BitcoinTestFramework):
                 tips[i], create_coinbase(2), block_time))
             blocks_h2[i].solve()
             block_time += 1
-        test_node.send_message(msg_block(blocks_h2[0]))
-        min_work_node.send_message(msg_block(blocks_h2[1]))
-
-        for x in [test_node, min_work_node]:
-            x.sync_with_ping()
+        test_node.send_and_ping(msg_block(blocks_h2[0]))
+        min_work_node.send_and_ping(msg_block(blocks_h2[1]))
 
         assert_equal(self.nodes[0].getblockcount(), 2)
         assert_equal(self.nodes[1].getblockcount(), 1)
@@ -130,9 +128,8 @@ class AcceptBlockTest(BitcoinTestFramework):
             int("0x" + self.nodes[0].getblockhash(0), 0), create_coinbase(1), block_time)
         block_time += 1
         block_h1f.solve()
-        test_node.send_message(msg_block(block_h1f))
+        test_node.send_and_ping(msg_block(block_h1f))
 
-        test_node.sync_with_ping()
         tip_entry_found = False
         for x in self.nodes[0].getchaintips():
             if x['hash'] == block_h1f.hash:
@@ -147,9 +144,8 @@ class AcceptBlockTest(BitcoinTestFramework):
             block_h1f.sha256, create_coinbase(2), block_time)
         block_time += 1
         block_h2f.solve()
-        test_node.send_message(msg_block(block_h2f))
+        test_node.send_and_ping(msg_block(block_h2f))
 
-        test_node.sync_with_ping()
         # Since the earlier block was not processed by node, the new block
         # can't be fully validated.
         tip_entry_found = False
@@ -167,9 +163,8 @@ class AcceptBlockTest(BitcoinTestFramework):
         block_h3 = create_block(
             block_h2f.sha256, create_coinbase(3), block_h2f.nTime + 1)
         block_h3.solve()
-        test_node.send_message(msg_block(block_h3))
+        test_node.send_and_ping(msg_block(block_h3))
 
-        test_node.sync_with_ping()
         # Since the earlier block was not processed by node, the new block
         # can't be fully validated.
         tip_entry_found = False
@@ -198,8 +193,7 @@ class AcceptBlockTest(BitcoinTestFramework):
 
         # Now send the block at height 5 and check that it wasn't accepted
         # (missing header)
-        test_node.send_message(msg_block(all_blocks[1]))
-        test_node.sync_with_ping()
+        test_node.send_and_ping(msg_block(all_blocks[1]))
         assert_raises_rpc_error(-5, "Block not found",
                                 self.nodes[0].getblock, all_blocks[1].hash)
         assert_raises_rpc_error(-5, "Block not found",
@@ -210,8 +204,7 @@ class AcceptBlockTest(BitcoinTestFramework):
         headers_message = msg_headers()
         headers_message.headers.append(CBlockHeader(all_blocks[0]))
         test_node.send_message(headers_message)
-        test_node.send_message(msg_block(all_blocks[1]))
-        test_node.sync_with_ping()
+        test_node.send_and_ping(msg_block(all_blocks[1]))
         self.nodes[0].getblock(all_blocks[1].hash)
 
         # Now send the blocks in all_blocks
@@ -237,9 +230,7 @@ class AcceptBlockTest(BitcoinTestFramework):
 
         test_node = self.nodes[0].add_p2p_connection(P2PInterface())
 
-        test_node.send_message(msg_block(block_h1f))
-
-        test_node.sync_with_ping()
+        test_node.send_and_ping(msg_block(block_h1f))
         assert_equal(self.nodes[0].getblockcount(), 2)
         self.log.info(
             "Unrequested block that would complete more-work chain was ignored")
@@ -250,7 +241,7 @@ class AcceptBlockTest(BitcoinTestFramework):
         with mininode_lock:
             # Clear state so we can check the getdata request
             test_node.last_message.pop("getdata", None)
-            test_node.send_message(msg_inv([CInv(2, block_h3.sha256)]))
+            test_node.send_message(msg_inv([CInv(MSG_BLOCK, block_h3.sha256)]))
 
         test_node.sync_with_ping()
         with mininode_lock:
@@ -261,9 +252,7 @@ class AcceptBlockTest(BitcoinTestFramework):
         self.log.info("Inv at tip triggered getdata for unprocessed block")
 
         # 7. Send the missing block for the third time (now it is requested)
-        test_node.send_message(msg_block(block_h1f))
-
-        test_node.sync_with_ping()
+        test_node.send_and_ping(msg_block(block_h1f))
         assert_equal(self.nodes[0].getblockcount(), 290)
         self.nodes[0].getblock(all_blocks[286].hash)
         assert_equal(self.nodes[0].getbestblockhash(), all_blocks[286].hash)
@@ -298,9 +287,8 @@ class AcceptBlockTest(BitcoinTestFramework):
         headers_message.headers.append(CBlockHeader(block_290f))
         headers_message.headers.append(CBlockHeader(block_291))
         headers_message.headers.append(CBlockHeader(block_292))
-        test_node.send_message(headers_message)
+        test_node.send_and_ping(headers_message)
 
-        test_node.sync_with_ping()
         tip_entry_found = False
         for x in self.nodes[0].getchaintips():
             if x['hash'] == block_292.hash:
@@ -311,9 +299,8 @@ class AcceptBlockTest(BitcoinTestFramework):
                                 self.nodes[0].getblock, block_292.hash)
 
         test_node.send_message(msg_block(block_289f))
-        test_node.send_message(msg_block(block_290f))
+        test_node.send_and_ping(msg_block(block_290f))
 
-        test_node.sync_with_ping()
         self.nodes[0].getblock(block_289f.hash)
         self.nodes[0].getblock(block_290f.hash)
 

@@ -47,7 +47,7 @@ CTxDestination DecodeLegacyDestination(const std::string &str,
                                        const CChainParams &params) {
     std::vector<uint8_t> data;
     uint160 hash;
-    if (!DecodeBase58Check(str, data)) {
+    if (!DecodeBase58Check(str, data, 21)) {
         return CNoDestination();
     }
     // base58-encoded Bitcoin addresses.
@@ -78,11 +78,15 @@ CTxDestination DecodeLegacyDestination(const std::string &str,
 } // namespace
 
 CKey DecodeSecret(const std::string &str) {
+    return DecodeSecret(str, Params());
+}
+
+CKey DecodeSecret(const std::string &str, const CChainParams &params) {
     CKey key;
     std::vector<uint8_t> data;
-    if (DecodeBase58Check(str, data)) {
+    if (DecodeBase58Check(str, data, 34)) {
         const std::vector<uint8_t> &privkey_prefix =
-            Params().Base58Prefix(CChainParams::SECRET_KEY);
+            params.Base58Prefix(CChainParams::SECRET_KEY);
         if ((data.size() == 32 + privkey_prefix.size() ||
              (data.size() == 33 + privkey_prefix.size() && data.back() == 1)) &&
             std::equal(privkey_prefix.begin(), privkey_prefix.end(),
@@ -99,8 +103,12 @@ CKey DecodeSecret(const std::string &str) {
 }
 
 std::string EncodeSecret(const CKey &key) {
+    return EncodeSecret(key, Params());
+}
+
+std::string EncodeSecret(const CKey &key, const CChainParams &params) {
     assert(key.IsValid());
-    std::vector<uint8_t> data = Params().Base58Prefix(CChainParams::SECRET_KEY);
+    std::vector<uint8_t> data = params.Base58Prefix(CChainParams::SECRET_KEY);
     data.insert(data.end(), key.begin(), key.end());
     if (key.IsCompressed()) {
         data.push_back(1);
@@ -113,7 +121,7 @@ std::string EncodeSecret(const CKey &key) {
 CExtPubKey DecodeExtPubKey(const std::string &str) {
     CExtPubKey key;
     std::vector<uint8_t> data;
-    if (DecodeBase58Check(str, data)) {
+    if (DecodeBase58Check(str, data, 78)) {
         const std::vector<uint8_t> &prefix =
             Params().Base58Prefix(CChainParams::EXT_PUBLIC_KEY);
         if (data.size() == BIP32_EXTKEY_SIZE + prefix.size() &&
@@ -137,7 +145,7 @@ std::string EncodeExtPubKey(const CExtPubKey &key) {
 CExtKey DecodeExtKey(const std::string &str) {
     CExtKey key;
     std::vector<uint8_t> data;
-    if (DecodeBase58Check(str, data)) {
+    if (DecodeBase58Check(str, data, 78)) {
         const std::vector<uint8_t> &prefix =
             Params().Base58Prefix(CChainParams::EXT_SECRET_KEY);
         if (data.size() == BIP32_EXTKEY_SIZE + prefix.size() &&

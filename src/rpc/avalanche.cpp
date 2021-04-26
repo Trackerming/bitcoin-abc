@@ -2,10 +2,15 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <avalanche/delegation.h>
+#include <avalanche/delegationbuilder.h>
+#include <avalanche/peermanager.h>
 #include <avalanche/processor.h>
 #include <avalanche/proof.h>
 #include <avalanche/proofbuilder.h>
+#include <avalanche/validation.h>
 #include <config.h>
+#include <core_io.h>
 #include <key_io.h>
 #include <rpc/server.h>
 #include <rpc/util.h>
@@ -19,7 +24,7 @@ static UniValue getavalanchekey(const Config &config,
         "getavalanchekey",
         "Returns the key used to sign avalanche messages.\n",
         {},
-        RPCResults{},
+        RPCResult{RPCResult::Type::STR_HEX, "", ""},
         RPCExamples{HelpExampleRpc("getavalanchekey", "")},
     }
         .Check(request);
@@ -33,8 +38,8 @@ static UniValue getavalanchekey(const Config &config,
 
 static CPubKey ParsePubKey(const UniValue &param) {
     const std::string keyHex = param.get_str();
-    if ((keyHex.length() != 2 * CPubKey::COMPRESSED_PUBLIC_KEY_SIZE &&
-         keyHex.length() != 2 * CPubKey::PUBLIC_KEY_SIZE) ||
+    if ((keyHex.length() != 2 * CPubKey::COMPRESSED_SIZE &&
+         keyHex.length() != 2 * CPubKey::SIZE) ||
         !IsHex(keyHex)) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
                            strprintf("Invalid public key: %s\n", keyHex));
@@ -56,8 +61,8 @@ static UniValue addavalanchenode(const Config &config,
             {"proof", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
              "Proof that the node is not a sybil."},
         },
-        RPCResult{"\"success\"    (boolean) Whether the addition succeeded or "
-                  "not.\n"},
+        RPCResult{RPCResult::Type::BOOL, "success",
+                  "Whether the addition succeeded or not."},
         RPCExamples{
             HelpExampleRpc("addavalanchenode", "5, \"<pubkey>\", \"<proof>\"")},
     }
@@ -78,7 +83,13 @@ static UniValue addavalanchenode(const Config &config,
     avalanche::Proof proof;
     ss >> proof;
 
-    return g_avalanche->addNode(nodeid, proof, key);
+    if (key != proof.getMaster()) {
+        // TODO: we want to provide a proper delegation.
+        return false;
+    }
+
+    return g_avalanche->addNode(nodeid, proof,
+                                avalanche::DelegationBuilder(proof).build());
 }
 
 static UniValue buildavalancheproof(const Config &config,
@@ -124,8 +135,8 @@ static UniValue buildavalancheproof(const Config &config,
                 },
             },
         },
-        RPCResult{"\"proof\"    (string) A string that is a serialized, "
-                  "hex-encoded proof data.\n"},
+        RPCResult{RPCResult::Type::STR_HEX, "proof",
+                  "A string that is a serialized, hex-encoded proof data."},
         RPCExamples{HelpExampleRpc("buildavalancheproof",
                                    "0 1234567800 \"<master>\" []")},
     }
@@ -183,7 +194,7 @@ static UniValue buildavalancheproof(const Config &config,
             iscbparam.isNull() ? false : iscbparam.get_bool();
         CKey key = DecodeSecret(find_value(stake, "privatekey").get_str());
 
-        if (!pb.addUTXO(utxo, amount, uint32_t(height) << 1 | iscoinbase,
+        if (!pb.addUTXO(utxo, amount, uint32_t(height), iscoinbase,
                         std::move(key))) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid private key");
         }
@@ -193,20 +204,215 @@ static UniValue buildavalancheproof(const Config &config,
 
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << proof;
-    return HexStr(ss.begin(), ss.end());
+    return HexStr(ss);
 }
 
-// clang-format off
-static const CRPCCommand commands[] = {
-    //  category            name                      actor (function)        argNames
-    //  ------------------- ------------------------  ----------------------  ----------
-    { "avalanche",          "getavalanchekey",        getavalanchekey,        {}},
-    { "avalanche",          "addavalanchenode",       addavalanchenode,       {"nodeid"}},
-    { "avalanche",          "buildavalancheproof",    buildavalancheproof,    {"sequence", "expiration", "master", "stakes"}},
-};
-// clang-format on
+static UniValue delegateavalancheproof(const Config &config,
+                                       const JSONRPCRequest &request) {
+    RPCHelpMan{
+        "delegateavalancheproof",
+        "Delegate the avalanche proof to another public key.\n",
+        {
+            {"proof", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The proof to be delegated."},
+            {"privatekey", RPCArg::Type::STR, RPCArg::Optional::NO,
+             "The private key in base58-encoding. Must match the proof master "
+             "public key or the upper level parent delegation public key if "
+             " supplied."},
+            {"publickey", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
+             "The public key to delegate the proof to."},
+            {"delegation", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED,
+             "A string that is the serialized, hex-encoded delegation for the "
+             "proof and which is a parent for the delegation to build."},
+        },
+        RPCResult{RPCResult::Type::STR_HEX, "delegation",
+                  "A string that is a serialized, hex-encoded delegation."},
+        RPCExamples{HelpExampleRpc("delegateavalancheproof",
+                                   "\"<proof>\" \"<privkey>\" \"<pubkey>\"")},
+    }
+        .Check(request);
+
+    RPCTypeCheck(request.params,
+                 {UniValue::VSTR, UniValue::VSTR, UniValue::VSTR});
+
+    if (!g_avalanche) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Avalanche is not initialized");
+    }
+
+    avalanche::Proof proof;
+    {
+        CDataStream ss(ParseHexV(request.params[0], "proof"), SER_NETWORK,
+                       PROTOCOL_VERSION);
+        ss >> proof;
+    }
+    avalanche::ProofValidationState proofState;
+    if (!proof.verify(proofState)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "The proof is invalid");
+    }
+
+    const CKey privkey = DecodeSecret(request.params[1].get_str());
+    if (!privkey.IsValid()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                           "The private key is invalid");
+    }
+
+    const CPubKey pubkey = ParsePubKey(request.params[2]);
+
+    avalanche::DelegationBuilder dgb(proof);
+    CPubKey auth;
+    if (request.params.size() >= 4 && !request.params[3].isNull()) {
+        avalanche::Delegation dg;
+        CDataStream ss(ParseHexV(request.params[3], "delegation"), SER_NETWORK,
+                       PROTOCOL_VERSION);
+        ss >> dg;
+
+        avalanche::DelegationState dgState;
+        if (!dg.verify(dgState, proof, auth)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               "The supplied delegation is not valid");
+        }
+
+        if (!dgb.importDelegation(dg)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                               "Failed to import the delegation");
+        }
+
+    } else {
+        auth = proof.getMaster();
+    }
+
+    if (privkey.GetPubKey() != auth) {
+        throw JSONRPCError(
+            RPC_INVALID_PARAMETER,
+            "The private key does not match the proof or the delegation");
+    }
+
+    if (!dgb.addLevel(privkey, pubkey)) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Unable to build the delegation");
+    }
+
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << dgb.build();
+    return HexStr(ss);
+}
+
+static UniValue getavalanchepeerinfo(const Config &config,
+                                     const JSONRPCRequest &request) {
+    RPCHelpMan{
+        "getavalanchepeerinfo",
+        "Returns data about each connected avalanche peer as a json array of "
+        "objects.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::ARR,
+            "",
+            "",
+            {{
+                RPCResult::Type::OBJ,
+                "",
+                "",
+                {{
+                    {RPCResult::Type::NUM, "peerid", "The peer id"},
+                    {RPCResult::Type::STR_HEX, "proof",
+                     "The avalanche proof used by this peer"},
+                    {RPCResult::Type::NUM, "sequence", "The proof's sequence"},
+                    {RPCResult::Type::NUM_TIME, "expiration",
+                     "The proof's expiration timestamp"},
+                    {RPCResult::Type::STR_HEX, "master",
+                     "The proof's master public key"},
+                    {
+                        RPCResult::Type::ARR,
+                        "stakes",
+                        "",
+                        {{
+                            RPCResult::Type::OBJ,
+                            "",
+                            "",
+                            {{
+                                {RPCResult::Type::STR_HEX, "txid", ""},
+                                {RPCResult::Type::NUM, "vout", ""},
+                                {RPCResult::Type::STR_AMOUNT, "amount",
+                                 "The amount in this UTXO"},
+                                {RPCResult::Type::NUM, "height",
+                                 "The height at which this UTXO was mined"},
+                                {RPCResult::Type::BOOL, "iscoinbase",
+                                 "Indicate wether the UTXO is a coinbase"},
+                                {RPCResult::Type::STR_HEX, "pubkey", ""},
+                            }},
+                        }},
+                    },
+                    {RPCResult::Type::ARR,
+                     "nodes",
+                     "",
+                     {
+                         {RPCResult::Type::NUM, "nodeid",
+                          "Node id, as returned by getpeerinfo"},
+                     }},
+                }},
+            }},
+        },
+        RPCExamples{HelpExampleCli("getavalanchepeerinfo", "") +
+                    HelpExampleRpc("getavalanchepeerinfo", "")},
+    }
+        .Check(request);
+
+    if (!g_avalanche) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Avalanche is not initialized");
+    }
+
+    UniValue ret(UniValue::VARR);
+
+    for (const auto &peer : g_avalanche->getPeers()) {
+        UniValue obj(UniValue::VOBJ);
+
+        CDataStream serproof(SER_NETWORK, PROTOCOL_VERSION);
+        serproof << peer.proof;
+
+        obj.pushKV("peerid", uint64_t(peer.peerid));
+        obj.pushKV("proof", HexStr(serproof));
+        obj.pushKV("sequence", peer.proof.getSequence());
+        obj.pushKV("expiration", peer.proof.getExpirationTime());
+        obj.pushKV("master", HexStr(peer.proof.getMaster()));
+
+        UniValue stakes(UniValue::VARR);
+        for (const auto &s : peer.proof.getStakes()) {
+            UniValue stake(UniValue::VOBJ);
+            stake.pushKV("txid", s.getStake().getUTXO().GetTxId().GetHex());
+            stake.pushKV("vout", uint64_t(s.getStake().getUTXO().GetN()));
+            stake.pushKV("amount", ValueFromAmount(s.getStake().getAmount()));
+            stake.pushKV("height", uint64_t(s.getStake().getHeight()));
+            stake.pushKV("iscoinbase", s.getStake().isCoinbase());
+            stake.pushKV("pubkey", HexStr(s.getStake().getPubkey()));
+            stakes.push_back(stake);
+        }
+        obj.pushKV("stakes", stakes);
+
+        UniValue nodes(UniValue::VARR);
+        for (const auto &id : g_avalanche->getNodeIdsForPeer(peer.peerid)) {
+            nodes.push_back(id);
+        }
+        obj.pushKV("nodes", nodes);
+        obj.pushKV("nodecount", uint64_t(peer.node_count));
+
+        ret.push_back(obj);
+    }
+
+    return ret;
+}
 
 void RegisterAvalancheRPCCommands(CRPCTable &t) {
+    // clang-format off
+    static const CRPCCommand commands[] = {
+        //  category            name                      actor (function)        argNames
+        //  ------------------- ------------------------  ----------------------  ----------
+        { "avalanche",          "getavalanchekey",        getavalanchekey,        {}},
+        { "avalanche",          "addavalanchenode",       addavalanchenode,       {"nodeid"}},
+        { "avalanche",          "buildavalancheproof",    buildavalancheproof,    {"sequence", "expiration", "master", "stakes"}},
+        { "avalanche",          "delegateavalancheproof", delegateavalancheproof, {"proof", "privatekey", "publickey", "delegation"}},
+        { "avalanche",          "getavalanchepeerinfo",   getavalanchepeerinfo,   {}},
+    };
+    // clang-format on
+
     for (unsigned int vcidx = 0; vcidx < ARRAYLEN(commands); vcidx++) {
         t.appendCommand(commands[vcidx].name, &commands[vcidx]);
     }

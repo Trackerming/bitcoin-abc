@@ -4,6 +4,7 @@
 
 #include <chainparams.h>
 #include <clientversion.h>
+#include <dnsseeds.h>
 #include <fs.h>
 #include <logging.h>
 #include <protocol.h>
@@ -13,6 +14,7 @@
 #include <streams.h>
 #include <util/strencodings.h>
 #include <util/system.h>
+#include <util/time.h>
 #include <util/translation.h>
 
 #include <algorithm>
@@ -62,7 +64,7 @@ public:
           ipv4_proxy(DEFAULT_IPV4_PROXY), ipv6_proxy(DEFAULT_IPV6_PROXY) {}
 
     int ParseCommandLine(int argc, char **argv) {
-        SetupSeederArgs();
+        SetupSeederArgs(gArgs);
         std::string error;
         if (!gArgs.ParseParameters(argc, argv, error)) {
             tfm::format(std::cerr, "Error parsing command line arguments: %s\n",
@@ -114,53 +116,52 @@ public:
         if (filter_whitelist.empty()) {
             filter_whitelist.insert(NODE_NETWORK);
             filter_whitelist.insert(NODE_NETWORK | NODE_BLOOM);
-            filter_whitelist.insert(NODE_NETWORK | NODE_XTHIN);
-            filter_whitelist.insert(NODE_NETWORK | NODE_BLOOM | NODE_XTHIN);
         }
         return CONTINUE_EXECUTION;
     }
 
 private:
-    void SetupSeederArgs() {
-        gArgs.AddArg("-?", "Print this help message and exit",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-version", "Print version and exit",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-host=<host>", "Hostname of the DNS seed",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-ns=<ns>", "Hostname of the nameserver",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-mbox=<mbox>", "E-Mail address reported in SOA records",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-threads=<threads>",
-                     "Number of crawlers to run in parallel (default 96)",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-dnsthreads=<threads>",
-                     "Number of DNS server threads (default 4)",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-port=<port>", "UDP port to listen on (default 53)",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-        gArgs.AddArg("-onion=<ip:port>", "Tor proxy IP/Port",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-        gArgs.AddArg("-proxyipv4=<ip:port>", "IPV4 SOCKS5 proxy IP/Port",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-        gArgs.AddArg("-proxyipv6=<ip:port>", "IPV6 SOCKS5 proxy IP/Port",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-        gArgs.AddArg("-filter=<f1,f2,...>",
-                     "Allow these flag combinations as filters",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-        gArgs.AddArg("-wipeban", "Wipe list of banned nodes",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-        gArgs.AddArg("-wipeignore", "Wipe list of ignored nodes",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
-        gArgs.AddArg("-help-debug",
-                     "Show all debugging options (usage: --help -help-debug)",
-                     ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
-        SetupChainParamsBaseOptions();
+    void SetupSeederArgs(ArgsManager &argsman) {
+        SetupHelpOptions(argsman);
+        argsman.AddArg("-help-debug",
+                       "Show all debugging options (usage: --help -help-debug)",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
 
-        gArgs.AddArg("-help", "", ArgsManager::ALLOW_ANY,
-                     OptionsCategory::HIDDEN);
-        gArgs.AddArg("-h", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
+        SetupChainParamsBaseOptions(argsman);
+
+        argsman.AddArg("-version", "Print version and exit",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        argsman.AddArg("-host=<host>", "Hostname of the DNS seed",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        argsman.AddArg("-ns=<ns>", "Hostname of the nameserver",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        argsman.AddArg("-mbox=<mbox>", "E-Mail address reported in SOA records",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        argsman.AddArg("-threads=<threads>",
+                       "Number of crawlers to run in parallel (default 96)",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        argsman.AddArg("-dnsthreads=<threads>",
+                       "Number of DNS server threads (default 4)",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        argsman.AddArg("-port=<port>", "UDP port to listen on (default 53)",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+        argsman.AddArg("-onion=<ip:port>", "Tor proxy IP/Port",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+        argsman.AddArg("-overridednsseed",
+                       "If set, only use the specified DNS seed when "
+                       "querying for peer addresses via DNS lookup.",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+        argsman.AddArg("-proxyipv4=<ip:port>", "IPV4 SOCKS5 proxy IP/Port",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+        argsman.AddArg("-proxyipv6=<ip:port>", "IPV6 SOCKS5 proxy IP/Port",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+        argsman.AddArg("-filter=<f1,f2,...>",
+                       "Allow these flag combinations as filters",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+        argsman.AddArg("-wipeban", "Wipe list of banned nodes",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
+        argsman.AddArg("-wipeignore", "Wipe list of ignored nodes",
+                       ArgsManager::ALLOW_ANY, OptionsCategory::CONNECTION);
     }
 };
 
@@ -176,7 +177,7 @@ extern "C" void *ThreadCrawler(void *data) {
         std::vector<CServiceResult> ips;
         int wait = 5;
         db.GetMany(ips, 16, wait);
-        int64_t now = time(nullptr);
+        int64_t now = GetTime();
         if (ips.empty()) {
             wait *= 1000;
             wait += rand() % (500 * *nThreads);
@@ -244,7 +245,7 @@ public:
             nets[NET_IPV4] = true;
             nets[NET_IPV6] = true;
         }
-        time_t now = time(nullptr);
+        int64_t now = GetTime();
         FlagSpecificData &thisflag = perflag[requestedFlags];
         thisflag.cacheHits++;
         if (force ||
@@ -416,9 +417,8 @@ extern "C" void *ThreadDumper(void *) {
                 stat[4] += rep.uptime[4];
             }
             fsbridge::ofstream ff{"dnsstats.log", std::ios_base::app};
-            tfm::format(ff, "%llu %g %g %g %g %g\n",
-                        (unsigned long long)(time(nullptr)), stat[0], stat[1],
-                        stat[2], stat[3], stat[4]);
+            tfm::format(ff, "%llu %g %g %g %g %g\n", GetTime(), stat[0],
+                        stat[1], stat[2], stat[3], stat[4]);
         }
     } while (1);
     return nullptr;
@@ -463,7 +463,7 @@ const static unsigned int MAX_HOSTS_PER_SEED = 128;
 
 extern "C" void *ThreadSeeder(void *) {
     do {
-        for (const std::string &seed : Params().DNSSeeds()) {
+        for (const std::string &seed : GetRandomizedDNSSeeds(Params())) {
             std::vector<CNetAddr> ips;
             LookupHost(seed.c_str(), ips, MAX_HOSTS_PER_SEED, true);
             for (auto &ip : ips) {
@@ -523,7 +523,6 @@ int main(int argc, char **argv) {
     }
     bool fDNS = true;
     tfm::format(std::cout, "Using %s.\n", gArgs.GetChainName());
-    netMagic = Params().NetMagic();
     if (opts.ns.empty()) {
         tfm::format(std::cout, "No nameserver set. Not starting DNS server.\n");
         fDNS = false;

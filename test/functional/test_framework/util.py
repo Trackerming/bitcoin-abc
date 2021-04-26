@@ -7,6 +7,7 @@
 from base64 import b64encode
 from binascii import unhexlify
 from decimal import Decimal, ROUND_DOWN
+from io import BytesIO
 from subprocess import CalledProcessError
 import inspect
 import json
@@ -224,6 +225,12 @@ def check_json_precision():
         raise RuntimeError("JSON encode/decode loses precision")
 
 
+def EncodeDecimal(o):
+    if isinstance(o, Decimal):
+        return str(o)
+    raise TypeError(repr(o) + " is not JSON serializable")
+
+
 def count_bytes(hex_string):
     return len(bytearray.fromhex(hex_string))
 
@@ -241,9 +248,10 @@ def satoshi_round(amount):
 
 
 def wait_until(predicate, *, attempts=float('inf'),
-               timeout=float('inf'), lock=None):
+               timeout=float('inf'), lock=None, timeout_factor=1.0):
     if attempts == float('inf') and timeout == float('inf'):
         timeout = 60
+    timeout = timeout * timeout_factor
     attempt = 0
     time_end = time.time() + timeout
 
@@ -287,7 +295,7 @@ class PortSeed:
     n = None
 
 
-def get_rpc_proxy(url, node_number, timeout=None, coveragedir=None):
+def get_rpc_proxy(url, node_number, *, timeout=None, coveragedir=None):
     """
     Args:
         url (str): URL of the RPC server to call
@@ -295,6 +303,7 @@ def get_rpc_proxy(url, node_number, timeout=None, coveragedir=None):
 
     Kwargs:
         timeout (int): HTTP timeout in seconds
+        coveragedir (str): Directory
 
     Returns:
         AuthServiceProxy. convenience object for making RPC calls.
@@ -302,7 +311,7 @@ def get_rpc_proxy(url, node_number, timeout=None, coveragedir=None):
     """
     proxy_kwargs = {}
     if timeout is not None:
-        proxy_kwargs['timeout'] = timeout
+        proxy_kwargs['timeout'] = int(timeout)
 
     proxy = AuthServiceProxy(url, **proxy_kwargs)
     proxy.url = url  # store URL on proxy for info
@@ -357,6 +366,7 @@ def initialize_datadir(dirname, n, chain):
         f.write("dnsseed=0\n")
         f.write("listenonion=0\n")
         f.write("usecashaddr=1\n")
+        f.write("shrinkdebugfile=0\n")
         os.makedirs(os.path.join(datadir, 'stderr'), exist_ok=True)
         os.makedirs(os.path.join(datadir, 'stdout'), exist_ok=True)
     return datadir
@@ -447,42 +457,6 @@ def connect_nodes(from_node, to_node):
                 0) == 24 for peer in from_node.getpeerinfo()))
 
 
-def sync_blocks(rpc_connections, *, wait=1, timeout=60):
-    """
-    Wait until everybody has the same tip.
-
-    sync_blocks needs to be called with an rpc_connections set that has least
-    one node already synced to the latest, stable tip, otherwise there's a
-    chance it might return before all nodes are stably synced.
-    """
-    stop_time = time.time() + timeout
-    while time.time() <= stop_time:
-        best_hash = [x.getbestblockhash() for x in rpc_connections]
-        if best_hash.count(best_hash[0]) == len(rpc_connections):
-            return
-        time.sleep(wait)
-    raise AssertionError("Block sync timed out:{}".format(
-        "".join("\n  {!r}".format(b) for b in best_hash)))
-
-
-def sync_mempools(rpc_connections, *, wait=1,
-                  timeout=60, flush_scheduler=True):
-    """
-    Wait until everybody has the same transactions in their memory
-    pools
-    """
-    stop_time = time.time() + timeout
-    while time.time() <= stop_time:
-        pool = [set(r.getrawmempool()) for r in rpc_connections]
-        if pool.count(pool[0]) == len(rpc_connections):
-            if flush_scheduler:
-                for r in rpc_connections:
-                    r.syncwithvalidationinterfacequeue()
-            return
-        time.sleep(wait)
-    raise AssertionError("Mempool sync timed out:{}".format(
-        "".join("\n  {!r}".format(m) for m in pool)))
-
 # Transaction/Block functions
 #############################
 
@@ -571,14 +545,13 @@ def gen_return_txouts():
         script_pubkey = script_pubkey + "01"
     # concatenate 128 txouts of above script_pubkey which we'll insert before
     # the txout for change
-    txouts = "81"
+    txouts = []
+    from .messages import CTxOut
+    txout = CTxOut()
+    txout.nValue = 0
+    txout.scriptPubKey = hex_str_to_bytes(script_pubkey)
     for k in range(128):
-        # add txout value
-        txouts = txouts + "0000000000000000"
-        # add length of script_pubkey
-        txouts = txouts + "fd0402"
-        # add script_pubkey
-        txouts = txouts + script_pubkey
+        txouts.append(txout)
     return txouts
 
 # Create a spend of each passed-in utxo, splicing in "txouts" to each raw
@@ -588,6 +561,7 @@ def gen_return_txouts():
 def create_lots_of_big_transactions(node, txouts, utxos, num, fee):
     addr = node.getnewaddress()
     txids = []
+    from .messages import CTransaction
     for _ in range(num):
         t = utxos.pop()
         inputs = [{"txid": t["txid"], "vout": t["vout"]}]
@@ -595,9 +569,11 @@ def create_lots_of_big_transactions(node, txouts, utxos, num, fee):
         change = t['amount'] - fee
         outputs[addr] = satoshi_round(change)
         rawtx = node.createrawtransaction(inputs, outputs)
-        newtx = rawtx[0:92]
-        newtx = newtx + txouts
-        newtx = newtx + rawtx[94:]
+        tx = CTransaction()
+        tx.deserialize(BytesIO(hex_str_to_bytes(rawtx)))
+        for txout in txouts:
+            tx.vout.append(txout)
+        newtx = tx.serialize().hex()
         signresult = node.signrawtransactionwithwallet(
             newtx, None, "NONE|FORKID")
         txid = node.sendrawtransaction(signresult["hex"], 0)

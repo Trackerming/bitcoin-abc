@@ -15,7 +15,7 @@ Other options which may work, but which have not been extensively tested are (pl
 * On Windows, using a POSIX compatibility layer application such as [cygwin](http://www.cygwin.com/) or [msys2](http://www.msys2.org/).
 * On Windows, using a native compiler tool chain such as [Visual Studio](https://www.visualstudio.com).
 
-In any case please make sure that the compiler supports C++14.
+In any case please make sure that the compiler supports C++17.
 
 Installing Windows Subsystem for Linux
 ---------------------------------------
@@ -62,7 +62,7 @@ First, install the general dependencies:
 
     sudo apt update
     sudo apt upgrade
-    sudo apt install autoconf automake build-essential bsdmainutils curl git libboost-all-dev libevent-dec libssl-dev libtool ninja-build pkg-config python3
+    sudo apt install autoconf automake build-essential bsdmainutils curl git libboost-all-dev libevent-dev libssl-dev libtool ninja-build pkg-config python3
 
 The cmake version packaged with Ubuntu Bionic is too old for building Building Bitcoin ABC.
 To install the latest version:
@@ -131,7 +131,7 @@ Installation
 -------------
 
 After building using the Windows subsystem it can be useful to copy the compiled
-executables to a directory on the windows drive in the same directory structure
+executables to a directory on the Windows drive in the same directory structure
 as they appear in the release `.zip` archive. This can be done in the following
 way. This will install to `c:\workspace\bitcoin-abc`, for example:
 

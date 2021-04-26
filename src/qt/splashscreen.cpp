@@ -14,7 +14,6 @@
 #include <interfaces/wallet.h>
 #include <qt/guiutil.h>
 #include <qt/networkstyle.h>
-#include <ui_interface.h>
 #include <util/system.h>
 #include <util/translation.h>
 
@@ -24,9 +23,8 @@
 #include <QRadialGradient>
 #include <QScreen>
 
-SplashScreen::SplashScreen(interfaces::Node &node,
-                           const NetworkStyle *networkStyle)
-    : QWidget(nullptr), curAlignment(0), m_node(node) {
+SplashScreen::SplashScreen(const NetworkStyle *networkStyle)
+    : QWidget(nullptr), curAlignment(0) {
     // set reference point, paddings
     int paddingRight = 50;
     int paddingTop = 50;
@@ -141,27 +139,44 @@ SplashScreen::SplashScreen(interfaces::Node &node,
     setFixedSize(r.size());
     move(QGuiApplication::primaryScreen()->geometry().center() - r.center());
 
-    subscribeToCoreSignals();
     installEventFilter(this);
+
+    GUIUtil::handleCloseWindowShortcut(this);
 }
 
 SplashScreen::~SplashScreen() {
-    unsubscribeFromCoreSignals();
+    if (m_node) {
+        unsubscribeFromCoreSignals();
+    }
+}
+
+void SplashScreen::setNode(interfaces::Node &node) {
+    assert(!m_node);
+    m_node = &node;
+    subscribeToCoreSignals();
+    if (m_shutdown) {
+        m_node->startShutdown();
+    }
+}
+
+void SplashScreen::shutdown() {
+    m_shutdown = true;
+    if (m_node) {
+        m_node->startShutdown();
+    }
 }
 
 bool SplashScreen::eventFilter(QObject *obj, QEvent *ev) {
     if (ev->type() == QEvent::KeyPress) {
         QKeyEvent *keyEvent = static_cast<QKeyEvent *>(ev);
-        if (keyEvent->text()[0] == 'q') {
-            m_node.startShutdown();
+        if (keyEvent->key() == Qt::Key_Q) {
+            shutdown();
         }
     }
     return QObject::eventFilter(obj, ev);
 }
 
-void SplashScreen::slotFinish(QWidget *mainWin) {
-    Q_UNUSED(mainWin);
-
+void SplashScreen::finish() {
     /* If the window is minimized, hide() will be ignored. */
     /* Make sure we de-minimize the splashscreen window before hiding */
     if (isMinimized()) {
@@ -202,13 +217,13 @@ void SplashScreen::ConnectWallet(std::unique_ptr<interfaces::Wallet> wallet) {
 
 void SplashScreen::subscribeToCoreSignals() {
     // Connect signals to client
-    m_handler_init_message = m_node.handleInitMessage(
+    m_handler_init_message = m_node->handleInitMessage(
         std::bind(InitMessage, this, std::placeholders::_1));
-    m_handler_show_progress = m_node.handleShowProgress(
+    m_handler_show_progress = m_node->handleShowProgress(
         std::bind(ShowProgress, this, std::placeholders::_1,
                   std::placeholders::_2, std::placeholders::_3));
 #ifdef ENABLE_WALLET
-    m_handler_load_wallet = m_node.handleLoadWallet(
+    m_handler_load_wallet = m_node->handleLoadWallet(
         [this](std::unique_ptr<interfaces::Wallet> wallet) {
             ConnectWallet(std::move(wallet));
         });
@@ -244,6 +259,6 @@ void SplashScreen::paintEvent(QPaintEvent *event) {
 
 void SplashScreen::closeEvent(QCloseEvent *event) {
     // allows an "emergency" shutdown during startup
-    m_node.startShutdown();
+    shutdown();
     event->ignore();
 }

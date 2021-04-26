@@ -2,14 +2,16 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blockdb.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <config.h>
 #include <index/base.h>
+#include <node/ui_interface.h>
 #include <shutdown.h>
 #include <tinyformat.h>
-#include <ui_interface.h>
 #include <util/system.h>
+#include <util/translation.h>
 #include <validation.h>
 #include <warnings.h>
 
@@ -23,9 +25,7 @@ static void FatalError(const char *fmt, const Args &... args) {
     std::string strMessage = tfm::format(fmt, args...);
     SetMiscWarning(strMessage);
     LogPrintf("*** %s\n", strMessage);
-    uiInterface.ThreadSafeMessageBox(
-        "Error: A fatal internal error occurred, see debug.log for details", "",
-        CClientUIInterface::MSG_ERROR);
+    AbortError(_("A fatal internal error occurred, see debug.log for details"));
     StartShutdown();
 }
 
@@ -189,9 +189,8 @@ bool BaseIndex::Rewind(const CBlockIndex *current_tip,
     return true;
 }
 
-void BaseIndex::BlockConnected(
-    const std::shared_ptr<const CBlock> &block, const CBlockIndex *pindex,
-    const std::vector<CTransactionRef> &txn_conflicted) {
+void BaseIndex::BlockConnected(const std::shared_ptr<const CBlock> &block,
+                               const CBlockIndex *pindex) {
     if (!m_synced) {
         return;
     }
@@ -278,7 +277,7 @@ void BaseIndex::ChainStateFlushed(const CBlockLocator &locator) {
     Commit();
 }
 
-bool BaseIndex::BlockUntilSyncedToCurrentChain() {
+bool BaseIndex::BlockUntilSyncedToCurrentChain() const {
     AssertLockNotHeld(cs_main);
 
     if (!m_synced) {

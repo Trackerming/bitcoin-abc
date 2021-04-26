@@ -5,9 +5,12 @@
 #ifndef BITCOIN_QT_WALLETCONTROLLER_H
 #define BITCOIN_QT_WALLETCONTROLLER_H
 
+#include <interfaces/wallet.h>
+#include <qt/sendcoinsrecipient.h>
 #include <qt/walletmodel.h>
 #include <support/allocators/secure.h>
 #include <sync.h>
+#include <util/translation.h>
 
 #include <QMutex>
 
@@ -22,12 +25,15 @@
 #include <QThread>
 #include <QTimer>
 
+class ClientModel;
 class OptionsModel;
 class PlatformStyle;
+class WalletModel;
 
 namespace interfaces {
 class Handler;
 class Node;
+class Wallet;
 } // namespace interfaces
 
 class AskPassphraseDialog;
@@ -45,9 +51,8 @@ class WalletController : public QObject {
     void removeAndDeleteWallet(WalletModel *wallet_model);
 
 public:
-    WalletController(interfaces::Node &node,
-                     const PlatformStyle *platform_style,
-                     OptionsModel *options_model, QObject *parent);
+    WalletController(ClientModel &client_model,
+                     const PlatformStyle *platform_style, QObject *parent);
     ~WalletController();
 
     //! Returns wallet models currently open.
@@ -65,12 +70,13 @@ Q_SIGNALS:
     void walletAdded(WalletModel *wallet_model);
     void walletRemoved(WalletModel *wallet_model);
 
-    void coinsSent(WalletModel *wallet_model, SendCoinsRecipient recipient,
+    void coinsSent(interfaces::Wallet &wallet, SendCoinsRecipient recipient,
                    QByteArray transaction);
 
 private:
     QThread *const m_activity_thread;
     QObject *const m_activity_worker;
+    ClientModel &m_client_model;
     interfaces::Node &m_node;
     const PlatformStyle *const m_platform_style;
     OptionsModel *const m_options_model;
@@ -98,13 +104,14 @@ protected:
     QObject *worker() const { return m_wallet_controller->m_activity_worker; }
 
     void showProgressDialog(const QString &label_text);
+    void destroyProgressDialog();
 
     WalletController *const m_wallet_controller;
     QWidget *const m_parent_widget;
     QProgressDialog *m_progress_dialog{nullptr};
     WalletModel *m_wallet_model{nullptr};
-    std::string m_error_message;
-    std::vector<std::string> m_warning_message;
+    bilingual_str m_error_message;
+    std::vector<bilingual_str> m_warning_message;
 
     const CChainParams &m_chainparams;
 };

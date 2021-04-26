@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <psbt.h>
+
 #include <util/strencodings.h>
 
 PartiallySignedTransaction::PartiallySignedTransaction(
@@ -30,15 +31,6 @@ bool PartiallySignedTransaction::Merge(const PartiallySignedTransaction &psbt) {
     }
     unknown.insert(psbt.unknown.begin(), psbt.unknown.end());
 
-    return true;
-}
-
-bool PartiallySignedTransaction::IsSane() const {
-    for (PSBTInput input : inputs) {
-        if (!input.IsSane()) {
-            return false;
-        }
-    }
     return true;
 }
 
@@ -133,10 +125,6 @@ void PSBTInput::Merge(const PSBTInput &input) {
     }
 }
 
-bool PSBTInput::IsSane() const {
-    return true;
-}
-
 void PSBTOutput::FillSignatureData(SignatureData &sigdata) const {
     if (!redeem_script.empty()) {
         sigdata.redeem_script = redeem_script;
@@ -185,9 +173,9 @@ void UpdatePSBTOutput(const SigningProvider &provider,
     // Note that ProduceSignature is used to fill in metadata (not actual
     // signatures), so provider does not need to provide any private keys (it
     // can be a HidingSigningProvider).
-    MutableTransactionSignatureCreator creator(psbt.tx.get_ptr(), /* index */ 0,
-                                               out.nValue,
-                                               SigHashType().withForkId());
+    MutableTransactionSignatureCreator creator(
+        psbt.tx ? &psbt.tx.value() : nullptr, /* index */ 0, out.nValue,
+        SigHashType().withForkId());
     ProduceSignature(provider, creator, out.scriptPubKey, sigdata);
 
     // Put redeem_script and key paths, into PSBTOutput.
@@ -211,11 +199,6 @@ bool SignPSBTInput(const SigningProvider &provider,
 
     // Get UTXO
     CTxOut utxo;
-
-    // Verify input sanity
-    if (!input.IsSane()) {
-        return false;
-    }
 
     if (input.utxo.IsNull()) {
         return false;
@@ -288,15 +271,14 @@ CombinePSBTs(PartiallySignedTransaction &out,
             return TransactionError::PSBT_MISMATCH;
         }
     }
-    if (!out.IsSane()) {
-        return TransactionError::INVALID_PSBT;
-    }
 
     return TransactionError::OK;
 }
 
 std::string PSBTRoleName(const PSBTRole role) {
     switch (role) {
+        case PSBTRole::CREATOR:
+            return "creator";
         case PSBTRole::UPDATER:
             return "updater";
         case PSBTRole::SIGNER:
@@ -305,6 +287,7 @@ std::string PSBTRoleName(const PSBTRole role) {
             return "finalizer";
         case PSBTRole::EXTRACTOR:
             return "extractor";
+            // no default case, so the compiler can warn about missing cases
     }
     assert(false);
 }

@@ -1,65 +1,22 @@
-// Copyright (c) 2017-2019 The Bitcoin developers
+// Copyright (c) 2017-2020 The Bitcoin developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <seeder/bitcoin.h>
 
+#include <chainparams.h>
 #include <hash.h>
 #include <netbase.h>
+#include <primitives/blockhash.h>
 #include <seeder/db.h>
+#include <seeder/messagewriter.h>
 #include <serialize.h>
 #include <uint256.h>
+#include <util/time.h>
 
 #include <algorithm>
 
-// The network magic to use.
-CMessageHeader::MessageMagic netMagic = {{0xe3, 0xe1, 0xf3, 0xe8}};
-
 #define BITCOIN_SEED_NONCE 0x0539a019ca550825ULL
-
-static const uint32_t allones(-1);
-
-void CSeederNode::BeginMessage(const char *pszCommand) {
-    if (nHeaderStart != allones) {
-        AbortMessage();
-    }
-    nHeaderStart = vSend.size();
-    vSend << CMessageHeader(netMagic, pszCommand, 0);
-    nMessageStart = vSend.size();
-    // tfm::format(std::cout, "%s: SEND %s\n", ToString(you),
-    // pszCommand);
-}
-
-void CSeederNode::AbortMessage() {
-    if (nHeaderStart == allones) {
-        return;
-    }
-    vSend.resize(nHeaderStart);
-    nHeaderStart = allones;
-    nMessageStart = allones;
-}
-
-void CSeederNode::EndMessage() {
-    if (nHeaderStart == allones) {
-        return;
-    }
-    uint32_t nSize = vSend.size() - nMessageStart;
-    memcpy((char *)&vSend[nHeaderStart] +
-               offsetof(CMessageHeader, nMessageSize),
-           &nSize, sizeof(nSize));
-    if (vSend.GetVersion() >= 209) {
-        uint256 hash = Hash(vSend.begin() + nMessageStart, vSend.end());
-        unsigned int nChecksum = 0;
-        memcpy(&nChecksum, &hash, sizeof(nChecksum));
-        assert(nMessageStart - nHeaderStart >=
-               offsetof(CMessageHeader, pchChecksum) + sizeof(nChecksum));
-        memcpy((char *)&vSend[nHeaderStart] +
-                   offsetof(CMessageHeader, pchChecksum),
-               &nChecksum, sizeof(nChecksum));
-    }
-    nHeaderStart = allones;
-    nMessageStart = allones;
-}
 
 void CSeederNode::Send() {
     if (sock == INVALID_SOCKET) {
@@ -75,20 +32,6 @@ void CSeederNode::Send() {
         close(sock);
         sock = INVALID_SOCKET;
     }
-}
-
-void CSeederNode::PushVersion() {
-    int64_t nTime = time(nullptr);
-    uint64_t nLocalNonce = BITCOIN_SEED_NONCE;
-    int64_t nLocalServices = 0;
-    CService myService;
-    CAddress me(myService, ServiceFlags(NODE_NETWORK | NODE_BITCOIN_CASH));
-    BeginMessage(NetMsgType::VERSION);
-    int nBestHeight = GetRequireHeight();
-    std::string ver = "/bitcoin-cash-seeder:0.15/";
-    vSend << PROTOCOL_VERSION << nLocalServices << nTime << you << me
-          << nLocalNonce << ver << nBestHeight;
-    EndMessage();
 }
 
 PeerMessagingState CSeederNode::ProcessMessage(std::string strCommand,
@@ -107,9 +50,8 @@ PeerMessagingState CSeederNode::ProcessMessage(std::string strCommand,
         recv >> strSubVer;
         recv >> nStartingHeight;
 
-        BeginMessage(NetMsgType::VERACK);
-        EndMessage();
         vSend.SetVersion(std::min(nVersion, PROTOCOL_VERSION));
+        MessageWriter::WriteMessage(vSend, NetMsgType::VERACK);
         return PeerMessagingState::AwaitingMessages;
     }
 
@@ -118,11 +60,14 @@ PeerMessagingState CSeederNode::ProcessMessage(std::string strCommand,
         // tfm::format(std::cout, "\n%s: version %i\n", ToString(you),
         // nVersion);
         if (vAddr) {
-            BeginMessage(NetMsgType::GETADDR);
-            EndMessage();
-            doneAfter = time(nullptr) + GetTimeout();
+            MessageWriter::WriteMessage(vSend, NetMsgType::GETADDR);
+            std::vector<BlockHash> locatorHash(
+                1, Params().Checkpoints().mapCheckpoints.rbegin()->second);
+            MessageWriter::WriteMessage(vSend, NetMsgType::GETHEADERS,
+                                        CBlockLocator(locatorHash), uint256());
+            doneAfter = GetTime() + GetTimeout();
         } else {
-            doneAfter = time(nullptr) + 1;
+            doneAfter = GetTime() + 1;
         }
         return PeerMessagingState::AwaitingMessages;
     }
@@ -133,7 +78,7 @@ PeerMessagingState CSeederNode::ProcessMessage(std::string strCommand,
         // tfm::format(std::cout, "%s: got %i addresses\n",
         // ToString(you),
         //        (int)vAddrNew.size());
-        int64_t now = time(nullptr);
+        int64_t now = GetTime();
         std::vector<CAddress>::iterator it = vAddrNew.begin();
         if (vAddrNew.size() > 1) {
             if (doneAfter == 0 || doneAfter > now + 1) {
@@ -171,6 +116,8 @@ bool CSeederNode::ProcessMessages() {
         return false;
     }
 
+    const CMessageHeader::MessageMagic netMagic = Params().NetMagic();
+
     do {
         CDataStream::iterator pstart = std::search(
             vRecv.begin(), vRecv.end(), BEGIN(netMagic), END(netMagic));
@@ -206,7 +153,7 @@ bool CSeederNode::ProcessMessages() {
             break;
         }
         if (vRecv.GetVersion() >= 209) {
-            uint256 hash = Hash(vRecv.begin(), vRecv.begin() + nMessageSize);
+            uint256 hash = Hash(MakeSpan(vRecv).first(nMessageSize));
             if (memcmp(hash.begin(), hdr.pchChecksum,
                        CMessageHeader::CHECKSUM_SIZE) != 0) {
                 continue;
@@ -228,8 +175,8 @@ bool CSeederNode::ProcessMessages() {
 CSeederNode::CSeederNode(const CService &ip, std::vector<CAddress> *vAddrIn)
     : sock(INVALID_SOCKET), vSend(SER_NETWORK, 0), vRecv(SER_NETWORK, 0),
       nHeaderStart(-1), nMessageStart(-1), nVersion(0), vAddr(vAddrIn), ban(0),
-      doneAfter(0), you(ip, ServiceFlags(NODE_NETWORK | NODE_BITCOIN_CASH)) {
-    if (time(nullptr) > 1329696000) {
+      doneAfter(0), you(ip, ServiceFlags(NODE_NETWORK)) {
+    if (GetTime() > 1329696000) {
         vSend.SetVersion(209);
         vRecv.SetVersion(209);
     }
@@ -251,7 +198,7 @@ bool CSeederNode::Run() {
             }
             connected = ConnectThroughProxy(
                 proxy, you.ToStringIP(), you.GetPort(), sock, nConnectTimeout,
-                &proxyConnectionFailed);
+                proxyConnectionFailed);
         } else {
             // no proxy needed (none set for target network)
             sock = CreateSocket(you);
@@ -271,14 +218,21 @@ bool CSeederNode::Run() {
         return false;
     }
 
-    PushVersion();
+    // Write version message
+    uint64_t nLocalServices = 0;
+    uint64_t nLocalNonce = BITCOIN_SEED_NONCE;
+    CService myService;
+    CAddress me(myService, ServiceFlags(NODE_NETWORK));
+    std::string ver = "/bitcoin-cash-seeder:0.15/";
+    MessageWriter::WriteMessage(vSend, NetMsgType::VERSION, PROTOCOL_VERSION,
+                                nLocalServices, GetTime(), you, me, nLocalNonce,
+                                ver, GetRequireHeight());
     Send();
 
     bool res = true;
     int64_t now;
-    while (now = time(nullptr), ban == 0 &&
-                                    (doneAfter == 0 || doneAfter > now) &&
-                                    sock != INVALID_SOCKET) {
+    while (now = GetTime(), ban == 0 && (doneAfter == 0 || doneAfter > now) &&
+                                sock != INVALID_SOCKET) {
         char pchBuf[0x10000];
         fd_set fdsetRecv;
         fd_set fdsetError;

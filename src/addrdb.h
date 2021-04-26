@@ -7,6 +7,7 @@
 #define BITCOIN_ADDRDB_H
 
 #include <fs.h>
+#include <net_types.h> // For banmap_t
 #include <serialize.h>
 
 #include <map>
@@ -31,16 +32,10 @@ public:
         nCreateTime = nCreateTimeIn;
     }
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
+    SERIALIZE_METHODS(CBanEntry, obj) {
         //! For backward compatibility
         uint8_t ban_reason = 2;
-        READWRITE(this->nVersion);
-        READWRITE(nCreateTime);
-        READWRITE(nBanUntil);
-        READWRITE(ban_reason);
+        READWRITE(obj.nVersion, obj.nCreateTime, obj.nBanUntil, ban_reason);
     }
 
     void SetNull() {
@@ -49,8 +44,6 @@ public:
         nBanUntil = 0;
     }
 };
-
-typedef std::map<CSubNet, CBanEntry> banmap_t;
 
 /** Access to the (IP) address database (peers.dat) */
 class CAddrDB {

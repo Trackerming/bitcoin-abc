@@ -7,8 +7,8 @@ set(CMAKE_USER_MAKE_RULES_OVERRIDE
 )
 
 project(bitcoin-abc
-	VERSION 0.22.3
-	DESCRIPTION "Bitcoin ABC is a full node implementation of the Bitcoin Cash protocol."
+	VERSION 0.23.2
+	DESCRIPTION "Bitcoin ABC is a full node implementation of the BCHA protocol."
 	HOMEPAGE_URL "https://www.bitcoinabc.org"
 )
 
@@ -22,7 +22,7 @@ set(PACKAGE_NAME "Bitcoin ABC")
 set(PACKAGE_BUGREPORT "https://github.com/Bitcoin-ABC/bitcoin-abc/issues")
 
 # Copyright
-set(COPYRIGHT_YEAR 2020)
+set(COPYRIGHT_YEAR 2021)
 set(COPYRIGHT_HOLDERS "The %s developers")
 set(COPYRIGHT_HOLDERS_SUBSTITUTION Bitcoin)
 string(REPLACE "%s" ${COPYRIGHT_HOLDERS_SUBSTITUTION} COPYRIGHT_HOLDERS_FINAL ${COPYRIGHT_HOLDERS})
@@ -41,7 +41,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Find the python interpreter. This is required for several targets.
-find_package(Python 3.5 COMPONENTS Interpreter REQUIRED)
+find_package(Python 3.6 COMPONENTS Interpreter REQUIRED)
 
 # Add the magic targets `check-*`
 add_custom_target(check-all)
@@ -75,7 +75,6 @@ exclude_from_source_package(
 
 	# Files
 	"[^.]+[.]md$"
-	"Dockerfile-doxygen"
 )
 
 option(ENABLE_COVERAGE "Enable coverage" OFF)

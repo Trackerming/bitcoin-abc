@@ -6,7 +6,6 @@
 #include <util/bip32.h>
 #include <util/error.h>
 #include <util/strencodings.h>
-#include <wallet/psbtwallet.h>
 #include <wallet/test/wallet_test_fixture.h>
 #include <wallet/wallet.h>
 
@@ -17,8 +16,8 @@
 BOOST_FIXTURE_TEST_SUITE(psbt_wallet_tests, WalletTestingSetup)
 
 BOOST_AUTO_TEST_CASE(psbt_updater_test) {
-    auto spk_man = m_wallet.GetLegacyScriptPubKeyMan();
-    LOCK(m_wallet.cs_wallet);
+    auto spk_man = m_wallet.GetOrCreateLegacyScriptPubKeyMan();
+    LOCK2(m_wallet.cs_wallet, spk_man->cs_KeyStore);
 
     // Create prevtxs and add to wallet
     CDataStream s_prev_tx1(
@@ -31,8 +30,9 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
 
     CTransactionRef prev_tx1;
     s_prev_tx1 >> prev_tx1;
-    CWalletTx prev_wtx1(&m_wallet, prev_tx1);
-    m_wallet.mapWallet.emplace(prev_wtx1.GetId(), std::move(prev_wtx1));
+    m_wallet.mapWallet.emplace(std::piecewise_construct,
+                               std::forward_as_tuple(prev_tx1->GetId()),
+                               std::forward_as_tuple(&m_wallet, prev_tx1));
 
     CDataStream s_prev_tx2(
         ParseHex(
@@ -45,8 +45,9 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
         SER_NETWORK, PROTOCOL_VERSION);
     CTransactionRef prev_tx2;
     s_prev_tx2 >> prev_tx2;
-    CWalletTx prev_wtx2(&m_wallet, prev_tx2);
-    m_wallet.mapWallet.emplace(prev_wtx2.GetId(), std::move(prev_wtx2));
+    m_wallet.mapWallet.emplace(std::piecewise_construct,
+                               std::forward_as_tuple(prev_tx2->GetId()),
+                               std::forward_as_tuple(&m_wallet, prev_tx2));
 
     // Add scripts
     CScript rs1;
@@ -94,13 +95,13 @@ BOOST_AUTO_TEST_CASE(psbt_updater_test) {
     // Fill transaction with our data
     bool complete = true;
     BOOST_REQUIRE_EQUAL(
-        FillPSBT(&m_wallet, psbtx, complete, SigHashType(), false, true),
+        m_wallet.FillPSBT(psbtx, complete, SigHashType(), false, true),
         TransactionError::OK);
 
     // Get the final tx
     CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
     ssTx << psbtx;
-    std::string final_hex = HexStr(ssTx.begin(), ssTx.end());
+    std::string final_hex = HexStr(ssTx);
     BOOST_CHECK_EQUAL(
         final_hex,
         "70736274ff0100a0020000000258e87a21b56daf0c23be8e7070456c336f7cbaa5c875"

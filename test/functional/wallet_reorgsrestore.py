@@ -87,8 +87,7 @@ class ReorgsRestoreTest(BitcoinTestFramework):
         assert_equal(conflicted["walletconflicts"][0], conflicting["txid"])
 
         # Node0 wallet is shutdown
-        self.stop_node(0)
-        self.start_node(0)
+        self.restart_node(0)
 
         # The block chain re-orgs and the tx is included in a different block
         self.nodes[1].generate(9)
@@ -109,7 +108,7 @@ class ReorgsRestoreTest(BitcoinTestFramework):
                 'wallet.bak'),
             os.path.join(
                 self.nodes[1].datadir,
-                'regtest',
+                self.chain,
                 'wallet.dat'))
         self.start_node(1)
         tx_after_reorg = self.nodes[1].gettransaction(txid)

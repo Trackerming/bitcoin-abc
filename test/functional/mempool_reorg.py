@@ -16,6 +16,11 @@ from test_framework.util import assert_equal, assert_raises_rpc_error
 class MempoolCoinbaseTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
+        self.extra_args = [
+            # immediate tx relay
+            ['-whitelist=noban@127.0.0.1', ],
+            []
+        ]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -43,19 +48,21 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
         b = [self.nodes[0].getblockhash(n) for n in range(101, 105)]
         coinbase_txids = [self.nodes[0].getblock(h)['tx'][0] for h in b]
         spend_101_raw = create_raw_transaction(
-            self.nodes[0], coinbase_txids[1], node1_address, 49.99)
+            self.nodes[0], coinbase_txids[1], node1_address, amount=49.99)
         spend_102_raw = create_raw_transaction(
-            self.nodes[0], coinbase_txids[2], node0_address, 49.99)
+            self.nodes[0], coinbase_txids[2], node0_address, amount=49.99)
         spend_103_raw = create_raw_transaction(
-            self.nodes[0], coinbase_txids[3], node0_address, 49.99)
+            self.nodes[0], coinbase_txids[3], node0_address, amount=49.99)
 
         # Create a transaction which is time-locked to two blocks in the future
         timelock_tx = self.nodes[0].createrawtransaction(
-            [{"txid": coinbase_txids[0], "vout": 0}], {node0_address: 49.99})
-        # Set the time lock
-        timelock_tx = timelock_tx.replace("ffffffff", "11111191", 1)
-        timelock_tx = timelock_tx[:-8] + \
-            hex(self.nodes[0].getblockcount() + 2)[2:] + "000000"
+            inputs=[{
+                "txid": coinbase_txids[0],
+                "vout": 0
+            }],
+            outputs={node0_address: 49.99},
+            locktime=self.nodes[0].getblockcount() + 2,
+        )
         timelock_tx = self.nodes[0].signrawtransactionwithwallet(timelock_tx)[
             "hex"]
         # This will raise an exception because the timelock transaction is too
@@ -73,13 +80,17 @@ class MempoolCoinbaseTest(BitcoinTestFramework):
 
         # Create 102_1 and 103_1:
         spend_102_1_raw = create_raw_transaction(
-            self.nodes[0], spend_102_id, node1_address, 49.98)
+            self.nodes[0], spend_102_id, node1_address, amount=49.98)
         spend_103_1_raw = create_raw_transaction(
-            self.nodes[0], spend_103_id, node1_address, 49.98)
+            self.nodes[0], spend_103_id, node1_address, amount=49.98)
 
         # Broadcast and mine 103_1:
         spend_103_1_id = self.nodes[0].sendrawtransaction(spend_103_1_raw)
         last_block = self.nodes[0].generate(1)
+        # Sync blocks, so that peer 1 gets the block before timelock_tx
+        # Otherwise, peer 1 would put the timelock_tx in recentRejects
+        self.sync_all()
+
         # Time-locked transaction can now be spent
         timelock_tx_id = self.nodes[0].sendrawtransaction(timelock_tx)
 

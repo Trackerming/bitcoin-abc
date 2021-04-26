@@ -10,13 +10,14 @@
 #include <config.h>
 #include <logging.h>
 #include <netbase.h>
+#include <node/ui_interface.h>
 #include <rpc/protocol.h> // For HTTP status codes
 #include <shutdown.h>
 #include <sync.h>
-#include <ui_interface.h>
 #include <util/strencodings.h>
 #include <util/system.h>
 #include <util/threadnames.h>
+#include <util/translation.h>
 
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
@@ -176,14 +177,15 @@ static bool InitHTTPAllowList() {
     rpc_allow_subnets.push_back(CSubNet(localv6));
     for (const std::string &strAllow : gArgs.GetArgs("-rpcallowip")) {
         CSubNet subnet;
-        LookupSubNet(strAllow.c_str(), subnet);
+        LookupSubNet(strAllow, subnet);
         if (!subnet.IsValid()) {
             uiInterface.ThreadSafeMessageBox(
-                strprintf("Invalid -rpcallowip subnet specification: %s. "
-                          "Valid are a single IP (e.g. 1.2.3.4), a "
-                          "network/netmask (e.g. 1.2.3.4/255.255.255.0) or a "
-                          "network/CIDR (e.g. 1.2.3.4/24).",
-                          strAllow),
+                strprintf(
+                    Untranslated("Invalid -rpcallowip subnet specification: "
+                                 "%s. Valid are a single IP (e.g. 1.2.3.4), a "
+                                 "network/netmask (e.g. 1.2.3.4/255.255.255.0) "
+                                 "or a network/CIDR (e.g. 1.2.3.4/24)."),
+                    strAllow),
                 "", CClientUIInterface::MSG_ERROR);
             return false;
         }
@@ -198,7 +200,7 @@ static bool InitHTTPAllowList() {
 }
 
 /** HTTP request method as string - use for logging only */
-static std::string RequestMethodString(HTTPRequest::RequestMethod m) {
+std::string RequestMethodString(HTTPRequest::RequestMethod m) {
     switch (m) {
         case HTTPRequest::GET:
             return "GET";
@@ -247,7 +249,7 @@ static void http_request_cb(struct evhttp_request *req, void *arg) {
         LogPrint(BCLog::HTTP,
                  "HTTP request from %s rejected: Unknown HTTP request method\n",
                  hreq->GetPeer().ToString());
-        hreq->WriteReply(HTTP_BADMETHOD);
+        hreq->WriteReply(HTTP_BAD_METHOD);
         return;
     }
 
@@ -286,10 +288,11 @@ static void http_request_cb(struct evhttp_request *req, void *arg) {
             LogPrintf("WARNING: request rejected because http work queue depth "
                       "exceeded, it can be increased with the -rpcworkqueue= "
                       "setting\n");
-            item->req->WriteReply(HTTP_INTERNAL, "Work queue depth exceeded");
+            item->req->WriteReply(HTTP_INTERNAL_SERVER_ERROR,
+                                  "Work queue depth exceeded");
         }
     } else {
-        hreq->WriteReply(HTTP_NOTFOUND);
+        hreq->WriteReply(HTTP_NOT_FOUND);
     }
 }
 
@@ -349,8 +352,7 @@ static bool HTTPBindAddresses(struct evhttp *http) {
         if (bind_handle) {
             CNetAddr addr;
             if (i->first.empty() ||
-                (LookupHost(i->first.c_str(), addr, false) &&
-                 addr.IsBindAny())) {
+                (LookupHost(i->first, addr, false) && addr.IsBindAny())) {
                 LogPrintf("WARNING: the RPC server is not safe to expose to "
                           "untrusted networks such as the public internet\n");
             }
@@ -458,7 +460,7 @@ bool UpdateHTTPServerLogging(bool enable) {
 #endif
 }
 
-static std::thread threadHTTP;
+static std::thread g_thread_http;
 static std::vector<std::thread> g_thread_http_workers;
 
 void StartHTTPServer() {
@@ -466,7 +468,7 @@ void StartHTTPServer() {
     int rpcThreads =
         std::max((long)gArgs.GetArg("-rpcthreads", DEFAULT_HTTP_THREADS), 1L);
     LogPrintf("HTTP: starting %d worker threads\n", rpcThreads);
-    threadHTTP = std::thread(ThreadHTTP, eventBase);
+    g_thread_http = std::thread(ThreadHTTP, eventBase);
 
     for (int i = 0; i < rpcThreads; i++) {
         g_thread_http_workers.emplace_back(HTTPWorkQueueRun, workQueue, i);
@@ -503,7 +505,9 @@ void StopHTTPServer() {
     boundSockets.clear();
     if (eventBase) {
         LogPrint(BCLog::HTTP, "Waiting for HTTP event thread to exit\n");
-        threadHTTP.join();
+        if (g_thread_http.joinable()) {
+            g_thread_http.join();
+        }
     }
     if (eventHTTP) {
         evhttp_free(eventHTTP);
@@ -547,13 +551,13 @@ void HTTPEvent::trigger(struct timeval *tv) {
         evtimer_add(ev, tv);
     }
 }
-HTTPRequest::HTTPRequest(struct evhttp_request *_req)
-    : req(_req), replySent(false) {}
+HTTPRequest::HTTPRequest(struct evhttp_request *_req, bool _replySent)
+    : req(_req), replySent(_replySent) {}
 HTTPRequest::~HTTPRequest() {
     if (!replySent) {
         // Keep track of whether reply was sent to avoid request leaks
         LogPrintf("%s: Unhandled request\n", __func__);
-        WriteReply(HTTP_INTERNAL, "Unhandled request");
+        WriteReply(HTTP_INTERNAL_SERVER_ERROR, "Unhandled request");
     }
     // evhttpd cleans up the request, as long as a reply was sent.
 }

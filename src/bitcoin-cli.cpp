@@ -20,11 +20,13 @@
 #include <event2/buffer.h>
 #include <event2/keyvalq_struct.h>
 
+#include <compat/stdin.h>
 #include <univalue.h>
 
 #include <cstdio>
 #include <functional>
 #include <memory>
+#include <string>
 #include <tuple>
 
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
@@ -33,8 +35,12 @@ static const char DEFAULT_RPCCONNECT[] = "127.0.0.1";
 static const int DEFAULT_HTTP_CLIENT_TIMEOUT = 900;
 static const bool DEFAULT_NAMED = false;
 static const int CONTINUE_EXECUTION = -1;
+static const std::string ONION{".onion"};
+static const size_t ONION_LEN{ONION.size()};
 
-static void SetupCliArgs() {
+static void SetupCliArgs(ArgsManager &argsman) {
+    SetupHelpOptions(argsman);
+
     const auto defaultBaseParams =
         CreateBaseChainParams(CBaseChainParams::MAIN);
     const auto testnetBaseParams =
@@ -42,18 +48,17 @@ static void SetupCliArgs() {
     const auto regtestBaseParams =
         CreateBaseChainParams(CBaseChainParams::REGTEST);
 
-    gArgs.AddArg("-?", "This help message", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-conf=<file>",
-                 strprintf("Specify configuration file. Relative paths will be "
-                           "prefixed by datadir location. (default: %s)",
-                           BITCOIN_CONF_FILENAME),
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-datadir=<dir>", "Specify data directory",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg(
+    argsman.AddArg("-version", "Print version and exit", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::OPTIONS);
+    argsman.AddArg(
+        "-conf=<file>",
+        strprintf("Specify configuration file. Relative paths will be "
+                  "prefixed by datadir location. (default: %s)",
+                  BITCOIN_CONF_FILENAME),
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-datadir=<dir>", "Specify data directory",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg(
         "-getinfo",
         "Get general information from the remote server. Note that unlike "
         "server-side RPC calls, the results of -getinfo is the result of "
@@ -61,60 +66,75 @@ static void SetupCliArgs() {
         "represent results from different states (e.g. wallet balance may be "
         "as of a different block from the chain state reported)",
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    SetupChainParamsBaseOptions();
-    gArgs.AddArg(
+    argsman.AddArg("-netinfo",
+                   "Get network peer connection information from the remote "
+                   "server. An optional integer argument from 0 to 4 can be "
+                   "passed for different peers listings (default: 0).",
+                   ArgsManager::ALLOW_INT, OptionsCategory::OPTIONS);
+
+    SetupChainParamsBaseOptions(argsman);
+    argsman.AddArg(
         "-named",
         strprintf("Pass named instead of positional arguments (default: %s)",
                   DEFAULT_NAMED),
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg(
+    argsman.AddArg(
         "-rpcconnect=<ip>",
         strprintf("Send commands to node running on <ip> (default: %s)",
                   DEFAULT_RPCCONNECT),
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpccookiefile=<loc>",
-                 "Location of the auth cookie. Relative paths will be prefixed "
-                 "by a net-specific datadir location. (default: data dir)",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpcport=<port>",
-                 strprintf("Connect to JSON-RPC on <port> (default: %u, "
-                           "testnet: %u, regtest: %u)",
-                           defaultBaseParams->RPCPort(),
-                           testnetBaseParams->RPCPort(),
-                           regtestBaseParams->RPCPort()),
-                 ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpcwait", "Wait for RPC server to start",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpcpassword=<pw>", "Password for JSON-RPC connections",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-rpcclienttimeout=<n>",
-                 strprintf("Timeout in seconds during HTTP requests, or 0 for "
-                           "no timeout. (default: %d)",
-                           DEFAULT_HTTP_CLIENT_TIMEOUT),
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-
-    gArgs.AddArg("-stdinrpcpass",
-                 strprintf("Read RPC password from standard input as a single "
-                           "line. When combined with -stdin, the first line "
-                           "from standard input is used for the RPC password."),
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-stdin",
-                 "Read extra arguments from standard input, one per line until "
-                 "EOF/Ctrl-D (recommended for sensitive information such as "
-                 "passphrases)",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg(
-        "-rpcwallet=<walletname>",
-        "Send RPC for non-default wallet on RPC server (needs to exactly match "
-        "corresponding -wallet option passed to bitcoind)",
+    argsman.AddArg(
+        "-rpccookiefile=<loc>",
+        "Location of the auth cookie. Relative paths will be prefixed "
+        "by a net-specific datadir location. (default: data dir)",
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-rpcport=<port>",
+                   strprintf("Connect to JSON-RPC on <port> (default: %u, "
+                             "testnet: %u, regtest: %u)",
+                             defaultBaseParams->RPCPort(),
+                             testnetBaseParams->RPCPort(),
+                             regtestBaseParams->RPCPort()),
+                   ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
+                   OptionsCategory::OPTIONS);
+    argsman.AddArg("-rpcwait", "Wait for RPC server to start",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-rpcuser=<user>", "Username for JSON-RPC connections",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-rpcpassword=<pw>", "Password for JSON-RPC connections",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg(
+        "-rpcclienttimeout=<n>",
+        strprintf("Timeout in seconds during HTTP requests, or 0 for "
+                  "no timeout. (default: %d)",
+                  DEFAULT_HTTP_CLIENT_TIMEOUT),
         ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 
-    // Hidden
-    gArgs.AddArg("-h", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
-    gArgs.AddArg("-help", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
+    argsman.AddArg("-stdinrpcpass",
+                   "Read RPC password from standard input as a single "
+                   "line. When combined with -stdin, the first line "
+                   "from standard input is used for the RPC password. When "
+                   "combined with -stdinwalletpassphrase, -stdinrpcpass "
+                   "consumes the first line, and -stdinwalletpassphrase "
+                   "consumes the second.",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-stdinwalletpassphrase",
+                   "Read wallet passphrase from standard input as a single "
+                   "line. When combined with -stdin, the first line "
+                   "from standard input is used for the wallet passphrase.",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg(
+        "-stdin",
+        "Read extra arguments from standard input, one per line until "
+        "EOF/Ctrl-D (recommended for sensitive information such as "
+        "passphrases). When combined with -stdinrpcpass, the first "
+        "line from standard input is used for the RPC password.",
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg(
+        "-rpcwallet=<walletname>",
+        "Send RPC for non-default wallet on RPC server (needs to exactly match "
+        "corresponding -wallet option passed to bitcoind). This changes the "
+        "RPC endpoint used, e.g. http://127.0.0.1:8332/wallet/<walletname>",
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
 }
 
 /** libevent event log callback */
@@ -152,7 +172,7 @@ static int AppInitRPC(int argc, char *argv[]) {
     //
     // Parameters
     //
-    SetupCliArgs();
+    SetupCliArgs(gArgs);
     std::string error;
     if (!gArgs.ParseParameters(argc, argv, error)) {
         tfm::format(std::cerr, "Error parsing command line arguments: %s\n",
@@ -214,7 +234,7 @@ struct HTTPReply {
     std::string body;
 };
 
-static const char *http_errorstring(int code) {
+static std::string http_errorstring(int code) {
     switch (code) {
 #if LIBEVENT_VERSION_NUMBER >= 0x02010300
         case EVREQ_HTTP_TIMEOUT:
@@ -285,6 +305,7 @@ public:
     const int ID_NETWORKINFO = 0;
     const int ID_BLOCKCHAININFO = 1;
     const int ID_WALLETINFO = 2;
+    const int ID_BALANCES = 3;
 
     /** Create a simulated `getinfo` request. */
     UniValue PrepareRequest(const std::string &method,
@@ -299,16 +320,18 @@ public:
                                            ID_BLOCKCHAININFO));
         result.push_back(
             JSONRPCRequestObj("getwalletinfo", NullUniValue, ID_WALLETINFO));
+        result.push_back(
+            JSONRPCRequestObj("getbalances", NullUniValue, ID_BALANCES));
         return result;
     }
 
     /** Collect values from the batch and form a simulated `getinfo` reply. */
     UniValue ProcessReply(const UniValue &batch_in) override {
         UniValue result(UniValue::VOBJ);
-        std::vector<UniValue> batch = JSONRPCProcessBatchReply(batch_in, 3);
+        const std::vector<UniValue> batch = JSONRPCProcessBatchReply(batch_in);
         // Errors in getnetworkinfo() and getblockchaininfo() are fatal, pass
-        // them on getwalletinfo() is allowed to fail in case there is no
-        // wallet.
+        // them on; getwalletinfo() and getbalances are allowed to fail if there
+        // is no wallet.
         if (!batch[ID_NETWORKINFO]["error"].isNull()) {
             return batch[ID_NETWORKINFO];
         }
@@ -316,14 +339,11 @@ public:
             return batch[ID_BLOCKCHAININFO];
         }
         result.pushKV("version", batch[ID_NETWORKINFO]["result"]["version"]);
-        result.pushKV("protocolversion",
-                      batch[ID_NETWORKINFO]["result"]["protocolversion"]);
-        if (!batch[ID_WALLETINFO].isNull()) {
-            result.pushKV("walletversion",
-                          batch[ID_WALLETINFO]["result"]["walletversion"]);
-            result.pushKV("balance", batch[ID_WALLETINFO]["result"]["balance"]);
-        }
         result.pushKV("blocks", batch[ID_BLOCKCHAININFO]["result"]["blocks"]);
+        result.pushKV("headers", batch[ID_BLOCKCHAININFO]["result"]["headers"]);
+        result.pushKV(
+            "verificationprogress",
+            batch[ID_BLOCKCHAININFO]["result"]["verificationprogress"]);
         result.pushKV("timeoffset",
                       batch[ID_NETWORKINFO]["result"]["timeoffset"]);
         result.pushKV("connections",
@@ -332,16 +352,9 @@ public:
                       batch[ID_NETWORKINFO]["result"]["networks"][0]["proxy"]);
         result.pushKV("difficulty",
                       batch[ID_BLOCKCHAININFO]["result"]["difficulty"]);
-        result.pushKV(
-            "testnet",
-            UniValue(batch[ID_BLOCKCHAININFO]["result"]["chain"].get_str() ==
-                     "test"));
-        if (!batch[ID_WALLETINFO].isNull()) {
-            result.pushKV("walletversion",
-                          batch[ID_WALLETINFO]["result"]["walletversion"]);
-            result.pushKV("balance", batch[ID_WALLETINFO]["result"]["balance"]);
-            result.pushKV("keypoololdest",
-                          batch[ID_WALLETINFO]["result"]["keypoololdest"]);
+        result.pushKV("chain",
+                      UniValue(batch[ID_BLOCKCHAININFO]["result"]["chain"]));
+        if (!batch[ID_WALLETINFO]["result"].isNull()) {
             result.pushKV("keypoolsize",
                           batch[ID_WALLETINFO]["result"]["keypoolsize"]);
             if (!batch[ID_WALLETINFO]["result"]["unlocked_until"].isNull()) {
@@ -351,9 +364,285 @@ public:
             result.pushKV("paytxfee",
                           batch[ID_WALLETINFO]["result"]["paytxfee"]);
         }
+        if (!batch[ID_BALANCES]["result"].isNull()) {
+            result.pushKV("balance",
+                          batch[ID_BALANCES]["result"]["mine"]["trusted"]);
+        }
         result.pushKV("relayfee", batch[ID_NETWORKINFO]["result"]["relayfee"]);
         result.pushKV("warnings", batch[ID_NETWORKINFO]["result"]["warnings"]);
         return JSONRPCReplyObj(result, NullUniValue, 1);
+    }
+};
+
+/** Process netinfo requests */
+class NetinfoRequestHandler : public BaseRequestHandler {
+private:
+    bool IsAddrIPv6(const std::string &addr) const {
+        return !addr.empty() && addr.front() == '[';
+    }
+    bool IsInboundOnion(const std::string &addr_local, int mapped_as) const {
+        return mapped_as == 0 && addr_local.find(ONION) != std::string::npos;
+    }
+    bool IsOutboundOnion(const std::string &addr, int mapped_as) const {
+        const size_t addr_len{addr.size()};
+        const size_t onion_pos{addr.rfind(ONION)};
+        return mapped_as == 0 && onion_pos != std::string::npos &&
+               addr_len > ONION_LEN &&
+               (onion_pos == addr_len - ONION_LEN ||
+                onion_pos == addr.find_last_of(":") - ONION_LEN);
+    }
+    //! Optional user-supplied arg to set dashboard details level
+    uint8_t m_details_level{0};
+    bool DetailsRequested() const {
+        return m_details_level > 0 && m_details_level < 5;
+    }
+    bool IsAddressSelected() const {
+        return m_details_level == 2 || m_details_level == 4;
+    }
+    bool IsVersionSelected() const {
+        return m_details_level == 3 || m_details_level == 4;
+    }
+    enum struct NetType {
+        ipv4,
+        ipv6,
+        onion,
+    };
+    struct Peer {
+        int id;
+        int mapped_as;
+        int version;
+        int64_t conn_time;
+        int64_t last_blck;
+        int64_t last_recv;
+        int64_t last_send;
+        int64_t last_trxn;
+        double min_ping;
+        double ping;
+        std::string addr;
+        std::string sub_version;
+        NetType net_type;
+        bool is_block_relay;
+        bool is_outbound;
+        bool operator<(const Peer &rhs) const {
+            return std::tie(is_outbound, min_ping) <
+                   std::tie(rhs.is_outbound, rhs.min_ping);
+        }
+    };
+    std::string NetTypeEnumToString(NetType t) {
+        switch (t) {
+            case NetType::ipv4:
+                return "ipv4";
+            case NetType::ipv6:
+                return "ipv6";
+            case NetType::onion:
+                return "onion";
+        } // no default case, so the compiler can warn about missing cases
+        assert(false);
+    }
+    std::string ChainToString() const {
+        if (gArgs.GetChainName() == CBaseChainParams::TESTNET) {
+            return " testnet";
+        }
+        if (gArgs.GetChainName() == CBaseChainParams::REGTEST) {
+            return " regtest";
+        }
+        return "";
+    }
+
+public:
+    const int ID_PEERINFO = 0;
+    const int ID_NETWORKINFO = 1;
+
+    UniValue PrepareRequest(const std::string &method,
+                            const std::vector<std::string> &args) override {
+        if (!args.empty()) {
+            uint8_t n{0};
+            if (ParseUInt8(args.at(0), &n)) {
+                m_details_level = n;
+            }
+        }
+        UniValue result(UniValue::VARR);
+        result.push_back(
+            JSONRPCRequestObj("getpeerinfo", NullUniValue, ID_PEERINFO));
+        result.push_back(
+            JSONRPCRequestObj("getnetworkinfo", NullUniValue, ID_NETWORKINFO));
+        return result;
+    }
+
+    UniValue ProcessReply(const UniValue &batch_in) override {
+        const std::vector<UniValue> batch{JSONRPCProcessBatchReply(batch_in)};
+        if (!batch[ID_PEERINFO]["error"].isNull()) {
+            return batch[ID_PEERINFO];
+        }
+        if (!batch[ID_NETWORKINFO]["error"].isNull()) {
+            return batch[ID_NETWORKINFO];
+        }
+
+        const UniValue &networkinfo{batch[ID_NETWORKINFO]["result"]};
+        if (networkinfo["version"].get_int() < 230000) {
+            throw std::runtime_error("-netinfo requires bitcoind server to be "
+                                     "running v0.23.0 and up");
+        }
+
+        // Count peer connection totals, and if DetailsRequested(), store peer
+        // data in a vector of structs.
+        const int64_t time_now{GetSystemTimeInSeconds()};
+        // inbound conn counters
+        int ipv4_i{0}, ipv6_i{0}, onion_i{0}, block_relay_i{0}, total_i{0};
+        // outbound conn counters
+        int ipv4_o{0}, ipv6_o{0}, onion_o{0}, block_relay_o{0}, total_o{0};
+        size_t max_peer_id_length{2}, max_addr_length{0};
+        bool is_asmap_on{false};
+        std::vector<Peer> peers;
+        const UniValue &getpeerinfo{batch[ID_PEERINFO]["result"]};
+
+        for (const UniValue &peer : getpeerinfo.getValues()) {
+            const std::string addr{peer["addr"].get_str()};
+            const std::string addr_local{
+                peer["addrlocal"].isNull() ? "" : peer["addrlocal"].get_str()};
+            const int mapped_as{
+                peer["mapped_as"].isNull() ? 0 : peer["mapped_as"].get_int()};
+            const bool is_block_relay{!peer["relaytxes"].get_bool()};
+            const bool is_inbound{peer["inbound"].get_bool()};
+            NetType net_type{NetType::ipv4};
+            if (is_inbound) {
+                if (IsAddrIPv6(addr)) {
+                    net_type = NetType::ipv6;
+                    ++ipv6_i;
+                } else if (IsInboundOnion(addr_local, mapped_as)) {
+                    net_type = NetType::onion;
+                    ++onion_i;
+                } else {
+                    ++ipv4_i;
+                }
+                if (is_block_relay) {
+                    ++block_relay_i;
+                }
+            } else {
+                if (IsAddrIPv6(addr)) {
+                    net_type = NetType::ipv6;
+                    ++ipv6_o;
+                } else if (IsOutboundOnion(addr, mapped_as)) {
+                    net_type = NetType::onion;
+                    ++onion_o;
+                } else {
+                    ++ipv4_o;
+                }
+                if (is_block_relay) {
+                    ++block_relay_o;
+                }
+            }
+            if (DetailsRequested()) {
+                // Push data for this peer to the peers vector.
+                const int peer_id{peer["id"].get_int()};
+                const int version{peer["version"].get_int()};
+                const std::string sub_version{peer["subver"].get_str()};
+                const int64_t conn_time{peer["conntime"].get_int64()};
+                const int64_t last_blck{peer["last_block"].get_int64()};
+                const int64_t last_recv{peer["lastrecv"].get_int64()};
+                const int64_t last_send{peer["lastsend"].get_int64()};
+                const int64_t last_trxn{peer["last_transaction"].get_int64()};
+                const double min_ping{
+                    peer["minping"].isNull() ? -1 : peer["minping"].get_real()};
+                const double ping{peer["pingtime"].isNull()
+                                      ? -1
+                                      : peer["pingtime"].get_real()};
+                peers.push_back({peer_id, mapped_as, version, conn_time,
+                                 last_blck, last_recv, last_send, last_trxn,
+                                 min_ping, ping, addr, sub_version, net_type,
+                                 is_block_relay, !is_inbound});
+                max_peer_id_length =
+                    std::max(ToString(peer_id).length(), max_peer_id_length);
+                max_addr_length = std::max(addr.length() + 1, max_addr_length);
+                is_asmap_on |= (mapped_as != 0);
+            }
+        }
+
+        // Generate report header.
+        std::string result{strprintf("%s %s%s - %i%s\n\n", PACKAGE_NAME,
+                                     FormatFullVersion(), ChainToString(),
+                                     networkinfo["protocolversion"].get_int(),
+                                     networkinfo["subversion"].get_str())};
+
+        // Report detailed peer connections list sorted by direction and minimum
+        // ping time.
+        if (DetailsRequested() && !peers.empty()) {
+            std::sort(peers.begin(), peers.end());
+            result += "Peer connections sorted by direction and min ping\n<-> "
+                      "relay   net mping   ping send recv  txn  blk uptime ";
+            if (is_asmap_on) {
+                result += " asmap ";
+            }
+            result += strprintf("%*s %-*s%s\n", max_peer_id_length, "id",
+                                IsAddressSelected() ? max_addr_length : 0,
+                                IsAddressSelected() ? "address" : "",
+                                IsVersionSelected() ? "version" : "");
+            for (const Peer &peer : peers) {
+                std::string version{ToString(peer.version) + peer.sub_version};
+                result += strprintf(
+                    "%3s %5s %5s%6s%7s%5s%5s%5s%5s%7s%*i %*s %-*s%s\n",
+                    peer.is_outbound ? "out" : "in",
+                    peer.is_block_relay ? "block" : "full",
+                    NetTypeEnumToString(peer.net_type),
+                    peer.min_ping == -1 ? ""
+                                        : ToString(round(1000 * peer.min_ping)),
+                    peer.ping == -1 ? "" : ToString(round(1000 * peer.ping)),
+                    peer.last_send == 0 ? ""
+                                        : ToString(time_now - peer.last_send),
+                    peer.last_recv == 0 ? ""
+                                        : ToString(time_now - peer.last_recv),
+                    peer.last_trxn == 0
+                        ? ""
+                        : ToString((time_now - peer.last_trxn) / 60),
+                    peer.last_blck == 0
+                        ? ""
+                        : ToString((time_now - peer.last_blck) / 60),
+                    peer.conn_time == 0
+                        ? ""
+                        : ToString((time_now - peer.conn_time) / 60),
+                    // variable spacing
+                    is_asmap_on ? 7 : 0,
+                    is_asmap_on && peer.mapped_as != 0
+                        ? ToString(peer.mapped_as)
+                        : "",
+                    // variable spacing
+                    max_peer_id_length, peer.id,
+                    // variable spacing
+                    IsAddressSelected() ? max_addr_length : 0,
+                    IsAddressSelected() ? peer.addr : "",
+                    IsVersionSelected() && version != "0" ? version : "");
+            }
+            result +=
+                "                   ms     ms  sec  sec  min  min    min\n\n";
+        }
+
+        // Report peer connection totals by type.
+        total_i = ipv4_i + ipv6_i + onion_i;
+        total_o = ipv4_o + ipv6_o + onion_o;
+        result += "        ipv4    ipv6   onion   total  block-relay\n";
+        result += strprintf("in     %5i   %5i   %5i   %5i   %5i\n", ipv4_i,
+                            ipv6_i, onion_i, total_i, block_relay_i);
+        result += strprintf("out    %5i   %5i   %5i   %5i   %5i\n", ipv4_o,
+                            ipv6_o, onion_o, total_o, block_relay_o);
+        result += strprintf("total  %5i   %5i   %5i   %5i   %5i\n",
+                            ipv4_i + ipv4_o, ipv6_i + ipv6_o, onion_i + onion_o,
+                            total_i + total_o, block_relay_i + block_relay_o);
+
+        // Report local addresses, ports, and scores.
+        result += "\nLocal addresses";
+        const UniValue &local_addrs{networkinfo["localaddresses"]};
+        if (local_addrs.empty()) {
+            result += ": n/a\n";
+        } else {
+            for (const UniValue &addr : local_addrs.getValues()) {
+                result +=
+                    strprintf("\n%-40i  port %5i     score %6i",
+                              addr["address"].get_str(), addr["port"].get_int(),
+                              addr["score"].get_int());
+            }
+        }
+
+        return JSONRPCReplyObj(UniValue{result}, NullUniValue, 1);
     }
 };
 
@@ -377,7 +666,8 @@ public:
 };
 
 static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
-                        const std::vector<std::string> &args) {
+                        const std::vector<std::string> &args,
+                        const std::optional<std::string> &rpcwallet = {}) {
     std::string host;
     // In preference order, we choose the following for the port:
     //     1. -rpcport
@@ -393,9 +683,22 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
     // Synchronously look up hostname
     raii_evhttp_connection evcon =
         obtain_evhttp_connection_base(base.get(), host, port);
-    evhttp_connection_set_timeout(
-        evcon.get(),
-        gArgs.GetArg("-rpcclienttimeout", DEFAULT_HTTP_CLIENT_TIMEOUT));
+
+    // Set connection timeout
+    {
+        const int timeout =
+            gArgs.GetArg("-rpcclienttimeout", DEFAULT_HTTP_CLIENT_TIMEOUT);
+        if (timeout > 0) {
+            evhttp_connection_set_timeout(evcon.get(), timeout);
+        } else {
+            // Indefinite request timeouts are not possible in libevent-http,
+            // so we set the timeout to a very long time period instead.
+
+            // Average length of year in Gregorian calendar
+            constexpr int YEAR_IN_SECONDS = 31556952;
+            evhttp_connection_set_timeout(evcon.get(), 5 * YEAR_IN_SECONDS);
+        }
+    }
 
     HTTPReply response;
     raii_evhttp_request req =
@@ -439,10 +742,9 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
 
     // check if we should use a special wallet endpoint
     std::string endpoint = "/";
-    if (!gArgs.GetArgs("-rpcwallet").empty()) {
-        std::string walletName = gArgs.GetArg("-rpcwallet", "");
+    if (rpcwallet) {
         char *encodedURI =
-            evhttp_uriencode(walletName.data(), walletName.size(), false);
+            evhttp_uriencode(rpcwallet->data(), rpcwallet->size(), false);
         if (encodedURI) {
             endpoint = "/wallet/" + std::string(encodedURI);
             free(encodedURI);
@@ -507,6 +809,79 @@ static UniValue CallRPC(BaseRequestHandler *rh, const std::string &strMethod,
     return reply;
 }
 
+/**
+ * ConnectAndCallRPC wraps CallRPC with -rpcwait and an exception handler.
+ *
+ * @param[in] rh         Pointer to RequestHandler.
+ * @param[in] strMethod  Reference to const string method to forward to CallRPC.
+ * @param[in] rpcwallet  Reference to const optional string wallet name to
+ *                       forward to CallRPC.
+ * @returns the RPC response as a UniValue object.
+ * @throws a CConnectionFailed std::runtime_error if connection failed or RPC
+ * server still in warmup.
+ */
+static UniValue
+ConnectAndCallRPC(BaseRequestHandler *rh, const std::string &strMethod,
+                  const std::vector<std::string> &args,
+                  const std::optional<std::string> &rpcwallet = {}) {
+    UniValue response(UniValue::VOBJ);
+    // Execute and handle connection failures with -rpcwait.
+    const bool fWait = gArgs.GetBoolArg("-rpcwait", false);
+    do {
+        try {
+            response = CallRPC(rh, strMethod, args, rpcwallet);
+            if (fWait) {
+                const UniValue &error = find_value(response, "error");
+                if (!error.isNull() &&
+                    error["code"].get_int() == RPC_IN_WARMUP) {
+                    throw CConnectionFailed("server in warmup");
+                }
+            }
+            break; // Connection succeeded, no need to retry.
+        } catch (const CConnectionFailed &) {
+            if (fWait) {
+                UninterruptibleSleep(std::chrono::milliseconds{1000});
+            } else {
+                throw;
+            }
+        }
+    } while (fWait);
+    return response;
+}
+
+/**
+ * GetWalletBalances calls listwallets; if more than one wallet is loaded, it
+ * then fetches mine.trusted balances for each loaded wallet and pushes them to
+ * `result`.
+ *
+ * @param result  Reference to UniValue object the wallet names and balances are
+ *                pushed to.
+ */
+[[maybe_unused]] static void GetWalletBalances(UniValue &result) {
+    std::unique_ptr<BaseRequestHandler> rh{
+        std::make_unique<DefaultRequestHandler>()};
+    const UniValue listwallets =
+        ConnectAndCallRPC(rh.get(), "listwallets", /* args=*/{});
+    if (!find_value(listwallets, "error").isNull()) {
+        return;
+    }
+    const UniValue &wallets = find_value(listwallets, "result");
+    if (wallets.size() <= 1) {
+        return;
+    }
+
+    UniValue balances(UniValue::VOBJ);
+    for (const UniValue &wallet : wallets.getValues()) {
+        const std::string wallet_name = wallet.get_str();
+        const UniValue getbalances = ConnectAndCallRPC(
+            rh.get(), "getbalances", /* args=*/{}, wallet_name);
+        const UniValue &balance =
+            find_value(getbalances, "result")["mine"]["trusted"];
+        balances.pushKV(wallet_name, balance);
+    }
+    result.pushKV("balances", balances);
+}
+
 static int CommandLineRPC(int argc, char *argv[]) {
     std::string strPrint;
     int nRet = 0;
@@ -518,26 +893,60 @@ static int CommandLineRPC(int argc, char *argv[]) {
         }
         std::string rpcPass;
         if (gArgs.GetBoolArg("-stdinrpcpass", false)) {
+            NO_STDIN_ECHO();
+            if (!StdinReady()) {
+                fputs("RPC password> ", stderr);
+                fflush(stderr);
+            }
             if (!std::getline(std::cin, rpcPass)) {
                 throw std::runtime_error("-stdinrpcpass specified but failed "
                                          "to read from standard input");
+            }
+            if (StdinTerminal()) {
+                fputc('\n', stdout);
             }
             gArgs.ForceSetArg("-rpcpassword", rpcPass);
         }
         std::vector<std::string> args =
             std::vector<std::string>(&argv[1], &argv[argc]);
+        if (gArgs.GetBoolArg("-stdinwalletpassphrase", false)) {
+            NO_STDIN_ECHO();
+            std::string walletPass;
+            if (args.size() < 1 ||
+                args[0].substr(0, 16) != "walletpassphrase") {
+                throw std::runtime_error(
+                    "-stdinwalletpassphrase is only applicable for "
+                    "walletpassphrase(change)");
+            }
+            if (!StdinReady()) {
+                fputs("Wallet passphrase> ", stderr);
+                fflush(stderr);
+            }
+            if (!std::getline(std::cin, walletPass)) {
+                throw std::runtime_error("-stdinwalletpassphrase specified but "
+                                         "failed to read from standard input");
+            }
+            if (StdinTerminal()) {
+                fputc('\n', stdout);
+            }
+            args.insert(args.begin() + 1, walletPass);
+        }
         if (gArgs.GetBoolArg("-stdin", false)) {
             // Read one arg per line from stdin and append
             std::string line;
             while (std::getline(std::cin, line)) {
                 args.push_back(line);
             }
+            if (StdinTerminal()) {
+                fputc('\n', stdout);
+            }
         }
         std::unique_ptr<BaseRequestHandler> rh;
         std::string method;
-        if (gArgs.GetBoolArg("-getinfo", false)) {
+        if (gArgs.IsArgSet("-getinfo")) {
             rh.reset(new GetinfoRequestHandler());
-            method = "";
+        } else if (gArgs.GetBoolArg("-netinfo", false)) {
+            rh.reset(new NetinfoRequestHandler());
         } else {
             rh.reset(new DefaultRequestHandler());
             if (args.size() < 1) {
@@ -549,63 +958,50 @@ static int CommandLineRPC(int argc, char *argv[]) {
             args.erase(args.begin());
         }
 
-        // Execute and handle connection failures with -rpcwait
-        const bool fWait = gArgs.GetBoolArg("-rpcwait", false);
-        do {
-            try {
-                const UniValue reply = CallRPC(rh.get(), method, args);
+        std::optional<std::string> wallet_name{};
+        if (gArgs.IsArgSet("-rpcwallet")) {
+            wallet_name = gArgs.GetArg("-rpcwallet", "");
+        }
+        const UniValue reply =
+            ConnectAndCallRPC(rh.get(), method, args, wallet_name);
 
-                // Parse reply
-                const UniValue &result = find_value(reply, "result");
-                const UniValue &error = find_value(reply, "error");
+        // Parse reply
+        UniValue result = find_value(reply, "result");
+        const UniValue &error = find_value(reply, "error");
+        if (!error.isNull()) {
+            // Error
+            strPrint = "error: " + error.write();
+            nRet = abs(error["code"].get_int());
+            if (error.isObject()) {
+                const UniValue &errCode = find_value(error, "code");
+                const UniValue &errMsg = find_value(error, "message");
+                strPrint = errCode.isNull()
+                               ? ""
+                               : ("error code: " + errCode.getValStr() + "\n");
 
-                if (!error.isNull()) {
-                    // Error
-                    int code = error["code"].get_int();
-                    if (fWait && code == RPC_IN_WARMUP) {
-                        throw CConnectionFailed("server in warmup");
-                    }
-                    strPrint = "error: " + error.write();
-                    nRet = abs(code);
-                    if (error.isObject()) {
-                        UniValue errCode = find_value(error, "code");
-                        UniValue errMsg = find_value(error, "message");
-                        strPrint =
-                            errCode.isNull()
-                                ? ""
-                                : "error code: " + errCode.getValStr() + "\n";
-
-                        if (errMsg.isStr()) {
-                            strPrint += "error message:\n" + errMsg.get_str();
-                        }
-
-                        if (errCode.isNum() &&
-                            errCode.get_int() == RPC_WALLET_NOT_SPECIFIED) {
-                            strPrint += "\nTry adding "
-                                        "\"-rpcwallet=<filename>\" option to "
-                                        "bitcoin-cli command line.";
-                        }
-                    }
-                } else {
-                    // Result
-                    if (result.isNull()) {
-                        strPrint = "";
-                    } else if (result.isStr()) {
-                        strPrint = result.get_str();
-                    } else {
-                        strPrint = result.write(2);
-                    }
+                if (errMsg.isStr()) {
+                    strPrint += ("error message:\n" + errMsg.get_str());
                 }
-                // Connection succeeded, no need to retry.
-                break;
-            } catch (const CConnectionFailed &) {
-                if (fWait) {
-                    UninterruptibleSleep(std::chrono::milliseconds{1000});
-                } else {
-                    throw;
+                if (errCode.isNum() &&
+                    errCode.get_int() == RPC_WALLET_NOT_SPECIFIED) {
+                    strPrint += "\nTry adding \"-rpcwallet=<filename>\" option "
+                                "to bitcoin-cli command line.";
                 }
             }
-        } while (fWait);
+        } else {
+            if (gArgs.IsArgSet("-getinfo") && !gArgs.IsArgSet("-rpcwallet")) {
+                // fetch multiwallet balances and append to result
+                GetWalletBalances(result);
+            }
+            // Result
+            if (result.isNull()) {
+                strPrint = "";
+            } else if (result.isStr()) {
+                strPrint = result.get_str();
+            } else {
+                strPrint = result.write(2);
+            }
+        }
     } catch (const std::exception &e) {
         strPrint = std::string("error: ") + e.what();
         nRet = EXIT_FAILURE;

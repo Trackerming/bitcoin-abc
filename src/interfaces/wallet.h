@@ -5,12 +5,15 @@
 #ifndef BITCOIN_INTERFACES_WALLET_H
 #define BITCOIN_INTERFACES_WALLET_H
 
-#include <amount.h>                 // For Amount
+#include <amount.h> // For Amount
+#include <primitives/blockhash.h>
 #include <primitives/transaction.h> // For CTxOut
 #include <pubkey.h> // For CKeyID and CScriptID (definitions needed in CTxDestination instantiation)
+#include <script/sighashtype.h>
 #include <script/standard.h>           // For CTxDestination
 #include <support/allocators/secure.h> // For SecureString
-#include <ui_interface.h>              // For ChangeType
+#include <util/message.h>
+#include <util/ui_change_type.h>
 
 #include <cstdint>
 #include <functional>
@@ -28,13 +31,15 @@ class CMutableTransaction;
 class COutPoint;
 class CTransaction;
 class CWallet;
-enum isminetype : unsigned int;
 enum class FeeReason;
-typedef uint8_t isminefilter;
-
 enum class OutputType;
+enum class TransactionError;
+enum isminetype : unsigned int;
 struct CRecipient;
+struct PartiallySignedTransaction;
+typedef uint8_t isminefilter;
 struct TxId;
+struct bilingual_str;
 
 namespace interfaces {
 
@@ -95,10 +100,13 @@ public:
                                    CTxDestination &dest) = 0;
 
     //! Get public key.
-    virtual bool getPubKey(const CKeyID &address, CPubKey &pub_key) = 0;
+    virtual bool getPubKey(const CScript &script, const CKeyID &address,
+                           CPubKey &pub_key) = 0;
 
-    //! Get private key.
-    virtual bool getPrivKey(const CKeyID &address, CKey &key) = 0;
+    //! Sign message
+    virtual SigningResult signMessage(const std::string &message,
+                                      const PKHash &pkhash,
+                                      std::string &str_sig) = 0;
 
     //! Return whether wallet has private key.
     virtual bool isSpendable(const CTxDestination &dest) = 0;
@@ -120,10 +128,6 @@ public:
 
     //! Get wallet address list.
     virtual std::vector<WalletAddress> getAddresses() = 0;
-
-    //! Add scripts to key store so old so software versions opening the wallet
-    //! database can detect payments to newer address types.
-    virtual void learnRelatedScripts(const CPubKey &key, OutputType type) = 0;
 
     //! Add dest data.
     virtual bool addDestData(const CTxDestination &dest, const std::string &key,
@@ -154,7 +158,7 @@ public:
     createTransaction(const std::vector<CRecipient> &recipients,
                       const CCoinControl &coin_control, bool sign,
                       int &change_pos, Amount &fee,
-                      std::string &fail_reason) = 0;
+                      bilingual_str &fail_reason) = 0;
 
     //! Commit transaction.
     virtual void commitTransaction(CTransactionRef tx, WalletValueMap value_map,
@@ -186,11 +190,18 @@ public:
                                         WalletOrderForm &order_form,
                                         bool &in_mempool, int &num_blocks) = 0;
 
+    //! Fill PSBT.
+    virtual TransactionError fillPSBT(SigHashType sighash_type, bool sign,
+                                      bool bip32derivs,
+                                      PartiallySignedTransaction &psbtx,
+                                      bool &complete) const = 0;
+
     //! Get balances.
     virtual WalletBalances getBalances() = 0;
 
     //! Get balances if possible without blocking.
-    virtual bool tryGetBalances(WalletBalances &balances, int &num_blocks) = 0;
+    virtual bool tryGetBalances(WalletBalances &balances,
+                                BlockHash &block_hash) = 0;
 
     //! Get balance.
     virtual Amount getBalance() = 0;
@@ -231,10 +242,10 @@ public:
     virtual bool hdEnabled() = 0;
 
     // Return whether the wallet is blank.
-    virtual bool canGetAddresses() = 0;
+    virtual bool canGetAddresses() const = 0;
 
-    // Check if a certain wallet flag is set.
-    virtual bool IsWalletFlagSet(uint64_t flag) = 0;
+    // Return whether private keys enabled.
+    virtual bool privateKeysDisabled() = 0;
 
     // Get default address type.
     virtual OutputType getDefaultAddressType() = 0;
@@ -247,6 +258,9 @@ public:
 
     // Remove wallet.
     virtual void remove() = 0;
+
+    //! Return whether is a legacy wallet
+    virtual bool isLegacy() = 0;
 
     //! Register handler for unload message.
     using UnloadFn = std::function<void()>;
@@ -284,6 +298,9 @@ public:
     using CanGetAddressesChangedFn = std::function<void()>;
     virtual std::unique_ptr<Handler>
     handleCanGetAddressesChanged(CanGetAddressesChangedFn fn) = 0;
+
+    //! Return pointer to internal wallet class, useful for testing.
+    virtual CWallet *wallet() { return nullptr; }
 };
 
 //! Information about one wallet address.

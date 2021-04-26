@@ -9,7 +9,7 @@ import mock
 import os
 import unittest
 
-from phabricator import Result
+from build import BuildStatus, BuildTarget
 from phabricator_wrapper import BITCOIN_ABC_PROJECT_PHID, BITCOIN_ABC_REPO
 import test.mocks.phabricator
 
@@ -246,10 +246,22 @@ class PhabricatorTests(unittest.TestCase):
             commit_hash,
             "0000000000000000000000000000000123456789")
 
+    def test_get_revision_changed_files(self):
+        self.phab.differential.getcommitpaths.return_value = [
+            "file1",
+            "dir/file2",
+        ]
+        self.assertEqual(
+            self.phab.get_revision_changed_files(1234),
+            [
+                "file1",
+                "dir/file2",
+            ])
+
     def test_get_file_content_from_master(self):
         commit_hash = "0000000000000000000000000000000123456789"
         file_phid = "PHID-FILE-somefile"
-        path = "some/file"
+        path = "some/file/"
 
         self.phab.get_latest_master_commit_hash = mock.Mock()
         self.phab.get_latest_master_commit_hash.return_value = commit_hash
@@ -345,8 +357,9 @@ class PhabricatorTests(unittest.TestCase):
 
         # Check the file content can be retrieved
         expected_content = b'Some nice content'
-        self.phab.file.download.return_value = Result(
-            b64encode(expected_content))
+        result = test.mocks.phabricator.Result([])
+        result.response = b64encode(expected_content)
+        self.phab.file.download.return_value = result
         configure_file_content_query()
         file_content = self.phab.get_file_content_from_master(path)
         assert_file_commit_and_file_searched()
@@ -428,6 +441,111 @@ class PhabricatorTests(unittest.TestCase):
         self.phab.dashboard.panel.edit.return_value["error"] = "You shall not pass !"
         with self.assertRaisesRegex(AssertionError, "Failed to edit panel"):
             call_set_text_panel_content()
+
+    def test_update_build_target_status(self):
+        build_target = BuildTarget("PHID-HMBT-1234")
+
+        # With no builds queued, default to pass
+        self.phab.update_build_target_status(build_target)
+        self.phab.harbormaster.sendmessage.assert_called_with(
+            buildTargetPHID=build_target.phid, type="pass")
+
+        # Queue a build
+        build_target.queue_build("build-1", "build-name")
+        self.phab.update_build_target_status(build_target)
+        self.phab.harbormaster.sendmessage.assert_called_with(
+            buildTargetPHID=build_target.phid, type="work")
+
+        # Test various statuses
+        self.phab.update_build_target_status(
+            build_target, "build-1", BuildStatus.Queued)
+        self.phab.harbormaster.sendmessage.assert_called_with(
+            buildTargetPHID=build_target.phid, type="work")
+
+        self.phab.update_build_target_status(
+            build_target, "build-1", BuildStatus.Running)
+        self.phab.harbormaster.sendmessage.assert_called_with(
+            buildTargetPHID=build_target.phid, type="work")
+
+        self.phab.update_build_target_status(
+            build_target, "build-1", BuildStatus.Failure)
+        self.phab.harbormaster.sendmessage.assert_called_with(
+            buildTargetPHID=build_target.phid, type="fail")
+
+        self.phab.update_build_target_status(
+            build_target, "build-1", BuildStatus.Success)
+        self.phab.harbormaster.sendmessage.assert_called_with(
+            buildTargetPHID=build_target.phid, type="pass")
+
+    def test_get_object_token(self):
+        user_PHID = "PHID-USER-foobarbaz"
+        self.phab.user.whoami.return_value = {
+            "phid": user_PHID,
+        }
+
+        object_PHID = "PHID-DREV-abcdef"
+
+        def assert_token_given_called():
+            self.phab.token.given.assert_called_with(
+                authorPHIDs=[user_PHID],
+                objectPHIDs=[object_PHID],
+                tokenPHIDs=[],
+            )
+
+        # There is no token for this object
+        self.phab.token.given.return_value = []
+        token = self.phab.get_object_token(object_PHID)
+        assert_token_given_called()
+        self.assertEqual(token, "")
+
+        # There is exactly 1 token for this object
+        self.phab.token.given.return_value = [
+            {
+                "authorPHID": user_PHID,
+                "objectPHID": object_PHID,
+                "tokenPHID": "PHID-TOKN-like-1",
+                "dateCreated": 0,
+            },
+        ]
+        token = self.phab.get_object_token(object_PHID)
+        assert_token_given_called()
+        self.assertEqual(token, "PHID-TOKN-like-1")
+
+        # If there is more than a single token only the first one is returned
+        self.phab.token.given.return_value = [
+            {
+                "authorPHID": user_PHID,
+                "objectPHID": object_PHID,
+                "tokenPHID": "PHID-TOKN-like-1",
+                "dateCreated": 0,
+            },
+            {
+                "authorPHID": user_PHID,
+                "objectPHID": object_PHID,
+                "tokenPHID": "PHID-TOKN-like-2",
+                "dateCreated": 1,
+            },
+        ]
+        token = self.phab.get_object_token(object_PHID)
+        assert_token_given_called()
+        self.assertEqual(token, "PHID-TOKN-like-1")
+
+    def test_set_object_token(self):
+        object_PHID = "PHID-DREV-abcdef"
+
+        def assert_token_give_called(token_PHID):
+            self.phab.token.give.assert_called_with(
+                objectPHID=object_PHID,
+                tokenPHID=token_PHID,
+            )
+
+        # Rescind any previoulsy awarded token
+        self.phab.set_object_token(object_PHID)
+        assert_token_give_called("")
+
+        token_PHID = "PHID-TOKN-like-1"
+        self.phab.set_object_token(object_PHID, token_PHID)
+        assert_token_give_called(token_PHID)
 
 
 if __name__ == '__main__':

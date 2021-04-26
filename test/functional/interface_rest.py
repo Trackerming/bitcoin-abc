@@ -21,6 +21,8 @@ from test_framework.util import (
     hex_str_to_bytes,
 )
 
+from test_framework.messages import BLOCK_HEADER_SIZE
+
 
 class ReqType(Enum):
     JSON = 1
@@ -45,6 +47,7 @@ class RESTTest (BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 2
         self.extra_args = [["-rest"], []]
+        self.supports_cli = False
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -159,7 +162,7 @@ class RESTTest (BitcoinTestFramework):
         bin_response = self.test_rest_request(
             "/getutxos", http_method='POST', req_type=ReqType.BIN, body=bin_request, ret_type=RetType.BYTES)
         output = BytesIO(bin_response)
-        chain_height, = unpack("i", output.read(4))
+        chain_height, = unpack("<i", output.read(4))
         response_hash = output.read(32)[::-1].hex()
 
         # Check if getutxo's chaintip during calculation was fine
@@ -228,26 +231,46 @@ class RESTTest (BitcoinTestFramework):
             1)
         self.sync_all()
 
-        self.log.info("Test the /block and /headers URIs")
+        self.log.info("Test the /block, /blockhashbyheight and /headers URIs")
         bb_hash = self.nodes[0].getbestblockhash()
+
+        # Check result if block does not exists
+        assert_equal(self.test_rest_request(
+            '/headers/1/0000000000000000000000000000000000000000000000000000000000000000'), [])
+        self.test_rest_request(
+            '/block/0000000000000000000000000000000000000000000000000000000000000000',
+            status=404,
+            ret_type=RetType.OBJ)
+
+        # Check result if block is not in the active chain
+        self.nodes[0].invalidateblock(bb_hash)
+        assert_equal(
+            self.test_rest_request(
+                '/headers/1/{}'.format(bb_hash)), [])
+        self.test_rest_request('/block/{}'.format(bb_hash))
+        self.nodes[0].reconsiderblock(bb_hash)
 
         # Check binary format
         response = self.test_rest_request(
             "/block/{}".format(bb_hash), req_type=ReqType.BIN, ret_type=RetType.OBJ)
-        assert_greater_than(int(response.getheader('content-length')), 80)
+        assert_greater_than(int(response.getheader(
+            'content-length')), BLOCK_HEADER_SIZE)
         response_bytes = response.read()
 
         # Compare with block header
         response_header = self.test_rest_request(
             "/headers/1/{}".format(bb_hash), req_type=ReqType.BIN, ret_type=RetType.OBJ)
-        assert_equal(int(response_header.getheader('content-length')), 80)
+        assert_equal(int(response_header.getheader(
+            'content-length')), BLOCK_HEADER_SIZE)
         response_header_bytes = response_header.read()
-        assert_equal(response_bytes[0:80], response_header_bytes)
+        assert_equal(
+            response_bytes[0:BLOCK_HEADER_SIZE], response_header_bytes)
 
         # Check block hex format
         response_hex = self.test_rest_request(
             "/block/{}".format(bb_hash), req_type=ReqType.HEX, ret_type=RetType.OBJ)
-        assert_greater_than(int(response_hex.getheader('content-length')), 160)
+        assert_greater_than(int(response_hex.getheader(
+            'content-length')), BLOCK_HEADER_SIZE * 2)
         response_hex_bytes = response_hex.read().strip(b'\n')
         assert_equal(binascii.hexlify(response_bytes), response_hex_bytes)
 
@@ -255,14 +278,59 @@ class RESTTest (BitcoinTestFramework):
         response_header_hex = self.test_rest_request(
             "/headers/1/{}".format(bb_hash), req_type=ReqType.HEX, ret_type=RetType.OBJ)
         assert_greater_than(
-            int(response_header_hex.getheader('content-length')), 160)
-        response_header_hex_bytes = response_header_hex.read(160)
+            int(response_header_hex.getheader('content-length')), BLOCK_HEADER_SIZE * 2)
+        response_header_hex_bytes = response_header_hex.read(
+            BLOCK_HEADER_SIZE * 2)
         assert_equal(binascii.hexlify(
-            response_bytes[:80]), response_header_hex_bytes)
+            response_bytes[:BLOCK_HEADER_SIZE]), response_header_hex_bytes)
 
         # Check json format
         block_json_obj = self.test_rest_request("/block/{}".format(bb_hash))
         assert_equal(block_json_obj['hash'], bb_hash)
+        assert_equal(self.test_rest_request(
+            "/blockhashbyheight/{}".format(block_json_obj['height']))['blockhash'], bb_hash)
+
+        # Check hex/bin format
+        resp_hex = self.test_rest_request(
+            "/blockhashbyheight/{}".format(
+                block_json_obj['height']),
+            req_type=ReqType.HEX,
+            ret_type=RetType.OBJ)
+        assert_equal(resp_hex.read().decode('utf-8').rstrip(), bb_hash)
+        resp_bytes = self.test_rest_request(
+            "/blockhashbyheight/{}".format(
+                block_json_obj['height']),
+            req_type=ReqType.BIN,
+            ret_type=RetType.BYTES)
+        blockhash = binascii.hexlify(resp_bytes[::-1]).decode('utf-8')
+        assert_equal(blockhash, bb_hash)
+
+        # Check invalid blockhashbyheight requests
+        resp = self.test_rest_request(
+            "/blockhashbyheight/abc",
+            ret_type=RetType.OBJ,
+            status=400)
+        assert_equal(
+            resp.read().decode('utf-8').rstrip(),
+            "Invalid height: abc")
+        resp = self.test_rest_request(
+            "/blockhashbyheight/1000000",
+            ret_type=RetType.OBJ,
+            status=404)
+        assert_equal(
+            resp.read().decode('utf-8').rstrip(),
+            "Block height out of range")
+        resp = self.test_rest_request(
+            "/blockhashbyheight/-1",
+            ret_type=RetType.OBJ,
+            status=400)
+        assert_equal(
+            resp.read().decode('utf-8').rstrip(),
+            "Invalid height: -1")
+        self.test_rest_request(
+            "/blockhashbyheight/",
+            ret_type=RetType.OBJ,
+            status=400)
 
         # Compare with json block header
         json_obj = self.test_rest_request("/headers/1/{}".format(bb_hash))

@@ -6,7 +6,9 @@
 #include <util/system.h>
 
 #include <chainparamsbase.h>
+#include <sync.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <util/translation.h>
 
 #include <univalue.h>
@@ -15,6 +17,7 @@
 
 #include <memory>
 #include <thread>
+#include <typeinfo>
 
 #if (defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__DragonFly__))
 #include <pthread.h>
@@ -22,7 +25,8 @@
 #endif
 
 #ifndef WIN32
-// for posix_fallocate
+// for posix_fallocate, in config/CMakeLists.txt we check if it is present after
+// this
 #ifdef __linux__
 
 #ifdef _POSIX_C_SOURCE
@@ -48,17 +52,6 @@
 #pragma warning(disable : 4717)
 #endif
 
-#ifdef _WIN32_WINNT
-#undef _WIN32_WINNT
-#endif
-#define _WIN32_WINNT 0x0501
-
-#ifdef _WIN32_IE
-#undef _WIN32_IE
-#endif
-#define _WIN32_IE 0x0501
-
-#define WIN32_LEAN_AND_MEAN 1
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -73,25 +66,29 @@
 #include <malloc.h>
 #endif
 
+#include <boost/algorithm/string/replace.hpp>
+
 // Application startup time (used for uptime calculation)
 const int64_t nStartupTime = GetTime();
 
 const char *const BITCOIN_CONF_FILENAME = "bitcoin.conf";
+const char *const BITCOIN_SETTINGS_FILENAME = "settings.json";
 
 ArgsManager gArgs;
 
+/** Mutex to protect dir_locks. */
+static Mutex cs_dir_locks;
 /**
  * A map that contains all the currently held directory locks. After successful
  * locking, these will be held here until the global destructor cleans them up
  * and thus automatically unlocks them, or ReleaseDirectoryLocks is called.
  */
-static std::map<std::string, std::unique_ptr<fsbridge::FileLock>> dir_locks;
-/** Mutex to protect dir_locks. */
-static std::mutex cs_dir_locks;
+static std::map<std::string, std::unique_ptr<fsbridge::FileLock>>
+    dir_locks GUARDED_BY(cs_dir_locks);
 
 bool LockDirectory(const fs::path &directory, const std::string lockfile_name,
                    bool probe_only) {
-    std::lock_guard<std::mutex> ulock(cs_dir_locks);
+    LOCK(cs_dir_locks);
     fs::path pathLockFile = directory / lockfile_name;
 
     // If a lock for this directory already exists in the map, don't try to
@@ -119,12 +116,12 @@ bool LockDirectory(const fs::path &directory, const std::string lockfile_name,
 
 void UnlockDirectory(const fs::path &directory,
                      const std::string &lockfile_name) {
-    std::lock_guard<std::mutex> lock(cs_dir_locks);
+    LOCK(cs_dir_locks);
     dir_locks.erase((directory / lockfile_name).string());
 }
 
 void ReleaseDirectoryLocks() {
-    std::lock_guard<std::mutex> ulock(cs_dir_locks);
+    LOCK(cs_dir_locks);
     dir_locks.clear();
 }
 
@@ -148,6 +145,12 @@ bool CheckDiskSpace(const fs::path &dir, uint64_t additional_bytes) {
 
     uint64_t free_bytes_available = fs::space(dir).available;
     return free_bytes_available >= min_disk_space + additional_bytes;
+}
+
+std::streampos GetFileSize(const char *path, std::streamsize max) {
+    std::ifstream file(path, std::ios::binary);
+    file.ignore(max);
+    return file.gcount();
 }
 
 /**
@@ -239,9 +242,11 @@ static bool CheckValid(const std::string &key, const util::SettingsValue &val,
     return true;
 }
 
-ArgsManager::ArgsManager() {
-    // nothing to do
-}
+// Define default constructor and destructor that are not inline, so code
+// instantiating this class doesn't need to #include class definitions for all
+// members. For example, m_settings has an internal dependency on univalue.
+ArgsManager::ArgsManager() {}
+ArgsManager::~ArgsManager() {}
 
 const std::set<std::string> ArgsManager::GetUnsuitableSectionOnlyArgs() const {
     std::set<std::string> unsuitables;
@@ -331,22 +336,21 @@ bool ArgsManager::ParseParameters(int argc, const char *const argv[],
         key.erase(0, 1);
         std::string section;
         util::SettingsValue value = InterpretOption(section, key, val);
-        Optional<unsigned int> flags = GetArgFlags('-' + key);
-        if (flags) {
-            if (!CheckValid(key, value, *flags, error)) {
-                return false;
-            }
-            // Weird behavior preserved for backwards compatibility: command
-            // line options with section prefixes are allowed but ignored. It
-            // would be better if these options triggered the Invalid parameter
-            // error below.
-            if (section.empty()) {
-                m_settings.command_line_options[key].push_back(value);
-            }
-        } else {
-            error = strprintf("Invalid parameter -%s", key);
+        std::optional<unsigned int> flags = GetArgFlags('-' + key);
+
+        // Unknown command line options and command line options with dot
+        // characters (which are returned from InterpretOption with nonempty
+        // section strings) are not valid.
+        if (!flags || !section.empty()) {
+            error = strprintf("Invalid parameter %s", argv[i]);
             return false;
         }
+
+        if (!CheckValid(key, value, *flags, error)) {
+            return false;
+        }
+
+        m_settings.command_line_options[key].push_back(value);
     }
 
     // we do not allow -includeconf from command line
@@ -363,7 +367,8 @@ bool ArgsManager::ParseParameters(int argc, const char *const argv[],
     return success;
 }
 
-Optional<unsigned int> ArgsManager::GetArgFlags(const std::string &name) const {
+std::optional<unsigned int>
+ArgsManager::GetArgFlags(const std::string &name) const {
     LOCK(cs_args);
     for (const auto &arg_map : m_available_args) {
         const auto search = arg_map.second.find(name);
@@ -371,7 +376,7 @@ Optional<unsigned int> ArgsManager::GetArgFlags(const std::string &name) const {
             return search->second.m_flags;
         }
     }
-    return nullopt;
+    return std::nullopt;
 }
 
 std::vector<std::string> ArgsManager::GetArgs(const std::string &strArg) const {
@@ -385,6 +390,87 @@ std::vector<std::string> ArgsManager::GetArgs(const std::string &strArg) const {
 
 bool ArgsManager::IsArgSet(const std::string &strArg) const {
     return !GetSetting(strArg).isNull();
+}
+
+bool ArgsManager::InitSettings(std::string &error) {
+    if (!GetSettingsPath()) {
+        return true; // Do nothing if settings file disabled.
+    }
+
+    std::vector<std::string> errors;
+    if (!ReadSettingsFile(&errors)) {
+        error = strprintf("Failed loading settings file:\n- %s\n",
+                          Join(errors, "\n- "));
+        return false;
+    }
+    if (!WriteSettingsFile(&errors)) {
+        error = strprintf("Failed saving settings file:\n- %s\n",
+                          Join(errors, "\n- "));
+        return false;
+    }
+    return true;
+}
+
+bool ArgsManager::GetSettingsPath(fs::path *filepath, bool temp) const {
+    if (IsArgNegated("-settings")) {
+        return false;
+    }
+    if (filepath) {
+        std::string settings = GetArg("-settings", BITCOIN_SETTINGS_FILENAME);
+        *filepath = fs::absolute(temp ? settings + ".tmp" : settings,
+                                 GetDataDir(/* net_specific= */ true));
+    }
+    return true;
+}
+
+static void SaveErrors(const std::vector<std::string> errors,
+                       std::vector<std::string> *error_out) {
+    for (const auto &error : errors) {
+        if (error_out) {
+            error_out->emplace_back(error);
+        } else {
+            LogPrintf("%s\n", error);
+        }
+    }
+}
+
+bool ArgsManager::ReadSettingsFile(std::vector<std::string> *errors) {
+    fs::path path;
+    if (!GetSettingsPath(&path, /* temp= */ false)) {
+        return true; // Do nothing if settings file disabled.
+    }
+
+    LOCK(cs_args);
+    m_settings.rw_settings.clear();
+    std::vector<std::string> read_errors;
+    if (!util::ReadSettings(path, m_settings.rw_settings, read_errors)) {
+        SaveErrors(read_errors, errors);
+        return false;
+    }
+    return true;
+}
+
+bool ArgsManager::WriteSettingsFile(std::vector<std::string> *errors) const {
+    fs::path path, path_tmp;
+    if (!GetSettingsPath(&path, /* temp= */ false) ||
+        !GetSettingsPath(&path_tmp, /* temp= */ true)) {
+        throw std::logic_error("Attempt to write settings file when dynamic "
+                               "settings are disabled.");
+    }
+
+    LOCK(cs_args);
+    std::vector<std::string> write_errors;
+    if (!util::WriteSettings(path_tmp, m_settings.rw_settings, write_errors)) {
+        SaveErrors(write_errors, errors);
+        return false;
+    }
+    if (!RenameOver(path_tmp, path)) {
+        SaveErrors({strprintf("Failed renaming settings file %s to %s\n",
+                              path_tmp.string(), path.string())},
+                   errors);
+        return false;
+    }
+    return true;
 }
 
 bool ArgsManager::IsArgNegated(const std::string &strArg) const {
@@ -569,6 +655,12 @@ bool HelpRequested(const ArgsManager &args) {
            args.IsArgSet("-help") || args.IsArgSet("-help-debug");
 }
 
+void SetupHelpOptions(ArgsManager &args) {
+    args.AddArg("-?", "Print this help message and exit", false,
+                OptionsCategory::OPTIONS);
+    args.AddHiddenArgs({"-h", "-help"});
+}
+
 static const int screenWidth = 79;
 static const int optIndent = 2;
 static const int msgIndent = 7;
@@ -722,16 +814,6 @@ fs::path GetConfigFile(const std::string &confPath) {
     return AbsPathForConfigVal(fs::path(confPath), false);
 }
 
-static std::string TrimString(const std::string &str,
-                              const std::string &pattern) {
-    std::string::size_type front = str.find_first_not_of(pattern);
-    if (front == std::string::npos) {
-        return std::string();
-    }
-    std::string::size_type end = str.find_last_not_of(pattern);
-    return str.substr(front, end - front + 1);
-}
-
 static bool
 GetConfigOptions(std::istream &stream, const std::string &filepath,
                  std::string &error,
@@ -807,7 +889,7 @@ bool ArgsManager::ReadConfigStream(std::istream &stream,
         std::string key = option.first;
         util::SettingsValue value =
             InterpretOption(section, key, option.second);
-        Optional<unsigned int> flags = GetArgFlags('-' + key);
+        std::optional<unsigned int> flags = GetArgFlags('-' + key);
         if (flags) {
             if (!CheckValid(key, value, *flags, error)) {
                 return false;
@@ -984,7 +1066,7 @@ void ArgsManager::logArgsPrefix(
     std::string section_str = section.empty() ? "" : "[" + section + "] ";
     for (const auto &arg : args) {
         for (const auto &value : arg.second) {
-            Optional<unsigned int> flags = GetArgFlags('-' + arg.first);
+            std::optional<unsigned int> flags = GetArgFlags('-' + arg.first);
             if (flags) {
                 std::string value_str =
                     (*flags & SENSITIVE) ? "****" : value.write();
@@ -999,6 +1081,10 @@ void ArgsManager::LogArgs() const {
     LOCK(cs_args);
     for (const auto &section : m_settings.ro_config) {
         logArgsPrefix("Config file arg:", section.first, section.second);
+    }
+    for (const auto &setting : m_settings.rw_settings) {
+        LogPrintf("Setting file arg: %s = %s\n", setting.first,
+                  setting.second.write());
     }
     logArgsPrefix("Command-line arg:", "", m_settings.command_line_options);
 }
@@ -1083,7 +1169,7 @@ bool TruncateFile(FILE *file, unsigned int length) {
  */
 int RaiseFileDescriptorLimit(int nMinFD) {
 #if defined(WIN32)
-    return 2048;
+    return 8192;
 #else
     struct rlimit limitFD;
     if (getrlimit(RLIMIT_NOFILE, &limitFD) != -1) {
@@ -1118,20 +1204,24 @@ void AllocateFileRange(FILE *file, unsigned int offset, unsigned int length) {
     SetFilePointerEx(hFile, nFileSize, 0, FILE_BEGIN);
     SetEndOfFile(hFile);
 #elif defined(MAC_OSX)
-    // OSX specific version.
+    // OSX specific version
+    // NOTE: Contrary to other OS versions, the OSX version assumes that
+    // NOTE: offset is the size of the file.
     fstore_t fst;
     fst.fst_flags = F_ALLOCATECONTIG;
     fst.fst_posmode = F_PEOFPOSMODE;
     fst.fst_offset = 0;
-    fst.fst_length = (off_t)offset + length;
+    // mac os fst_length takes the number of free bytes to allocate,
+    // not the desired file size
+    fst.fst_length = length;
     fst.fst_bytesalloc = 0;
     if (fcntl(fileno(file), F_PREALLOCATE, &fst) == -1) {
         fst.fst_flags = F_ALLOCATEALL;
         fcntl(fileno(file), F_PREALLOCATE, &fst);
     }
-    ftruncate(fileno(file), fst.fst_length);
-#elif defined(__linux__)
-    // Version using posix_fallocate.
+    ftruncate(fileno(file), static_cast<off_t>(offset) + length);
+#elif defined(HAVE_POSIX_FALLOCATE)
+    // Version using posix_fallocate
     off_t nEndPos = (off_t)offset + length;
     posix_fallocate(fileno(file), 0, nEndPos);
 #else
@@ -1167,6 +1257,14 @@ fs::path GetSpecialFolderPath(int nFolder, bool fCreate) {
 }
 #endif
 
+#ifndef WIN32
+std::string ShellEscape(const std::string &arg) {
+    std::string escaped = arg;
+    boost::replace_all(escaped, "'", "'\"'\"'");
+    return "'" + escaped + "'";
+}
+#endif
+
 #if defined(HAVE_SYSTEM)
 void runCommand(const std::string &strCommand) {
     if (strCommand.empty()) {
@@ -1199,14 +1297,14 @@ void SetupEnvironment() {
     }
 #endif
 // On most POSIX systems (e.g. Linux, but not BSD) the environment's locale may
-// be invalid, in which case the "C" locale is used as fallback.
+// be invalid, in which case the "C.UTF-8" locale is used as fallback.
 #if !defined(WIN32) && !defined(MAC_OSX) && !defined(__FreeBSD__) &&           \
     !defined(__OpenBSD__)
     try {
         // Raises a runtime error if current locale is invalid.
         std::locale("");
     } catch (const std::runtime_error &) {
-        setenv("LC_ALL", "C", 1);
+        setenv("LC_ALL", "C.UTF-8", 1);
     }
 #elif defined(WIN32)
     // Set the default input/output charset is utf-8

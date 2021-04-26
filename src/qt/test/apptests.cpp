@@ -14,6 +14,7 @@
 #include <qt/rpcconsole.h>
 #include <rpc/server.h>
 #include <shutdown.h>
+#include <util/ref.h>
 #include <validation.h>
 
 #if defined(HAVE_CONFIG_H)
@@ -66,9 +67,8 @@ void AppTests::appTests() {
         // and fails to handle returned nulls
         // (https://bugreports.qt.io/browse/QTBUG-49686).
         QWARN("Skipping AppTests on mac build with 'minimal' platform set due "
-              "to Qt bugs. To run AppTests, invoke "
-              "with 'test_bitcoin-qt -platform cocoa' on mac, or else use a "
-              "linux or windows build.");
+              "to Qt bugs. To run AppTests, invoke with 'QT_QPA_PLATFORM=cocoa "
+              "test_bitcoin-qt' on mac, or else use a linux or windows build.");
         return;
     }
 #endif
@@ -76,11 +76,10 @@ void AppTests::appTests() {
     Config &config = const_cast<Config &>(GetConfig());
 
     // Create a temp data directory to backup the gui settings to
-    BasicTestingSetup test{CBaseChainParams::REGTEST};
-    // Already started by the common test setup, so stop it to avoid
-    // interference
-    ECC_Stop();
-    LogInstance().DisconnectTestLogger();
+    fs::create_directories([] {
+        BasicTestingSetup test{CBaseChainParams::REGTEST};
+        return GetDataDir() / "blocks";
+    }());
 
     m_app.parameterSetup();
     m_app.createOptionsModel(true /* reset settings */);
@@ -94,15 +93,18 @@ void AppTests::appTests() {
     m_app.baseInitialize(config);
 
     RPCServer rpcServer;
-    HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer);
+    util::Ref context;
+    HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer, context);
     m_app.requestInitialize(config, rpcServer, httpRPCRequestProcessor);
     m_app.exec();
     m_app.requestShutdown(config);
     m_app.exec();
 
     // Reset global state to avoid interfering with later tests.
+    LogInstance().DisconnectTestLogger();
     AbortShutdown();
     UnloadBlockIndex();
+    WITH_LOCK(::cs_main, g_chainman.Reset());
 }
 
 //! Entry point for BitcoinGUI tests.

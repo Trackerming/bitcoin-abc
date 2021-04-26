@@ -18,8 +18,6 @@ noinst_HEADERS += src/scalar_8x32_impl.h
 noinst_HEADERS += src/scalar_low_impl.h
 noinst_HEADERS += src/group.h
 noinst_HEADERS += src/group_impl.h
-noinst_HEADERS += src/num_gmp.h
-noinst_HEADERS += src/num_gmp_impl.h
 noinst_HEADERS += src/ecdsa.h
 noinst_HEADERS += src/ecdsa_impl.h
 noinst_HEADERS += src/eckey.h
@@ -30,19 +28,21 @@ noinst_HEADERS += src/ecmult_const.h
 noinst_HEADERS += src/ecmult_const_impl.h
 noinst_HEADERS += src/ecmult_gen.h
 noinst_HEADERS += src/ecmult_gen_impl.h
-noinst_HEADERS += src/num.h
-noinst_HEADERS += src/num_impl.h
 noinst_HEADERS += src/field_10x26.h
 noinst_HEADERS += src/field_10x26_impl.h
 noinst_HEADERS += src/field_5x52.h
 noinst_HEADERS += src/field_5x52_impl.h
 noinst_HEADERS += src/field_5x52_int128_impl.h
 noinst_HEADERS += src/field_5x52_asm_impl.h
-noinst_HEADERS += src/java/org_bitcoin_NativeSecp256k1.h
-noinst_HEADERS += src/java/org_bitcoin_Secp256k1Context.h
+noinst_HEADERS += src/modinv32.h
+noinst_HEADERS += src/modinv32_impl.h
+noinst_HEADERS += src/modinv64.h
+noinst_HEADERS += src/modinv64_impl.h
+noinst_HEADERS += src/assumptions.h
 noinst_HEADERS += src/util.h
 noinst_HEADERS += src/scratch.h
 noinst_HEADERS += src/scratch_impl.h
+noinst_HEADERS += src/selftest.h
 noinst_HEADERS += src/testrand.h
 noinst_HEADERS += src/testrand_impl.h
 noinst_HEADERS += src/hash.h
@@ -50,6 +50,8 @@ noinst_HEADERS += src/hash_impl.h
 noinst_HEADERS += src/field.h
 noinst_HEADERS += src/field_impl.h
 noinst_HEADERS += src/bench.h
+noinst_HEADERS += src/java/org_bitcoin_NativeSecp256k1.h
+noinst_HEADERS += src/java/org_bitcoin_Secp256k1Context.h
 noinst_HEADERS += contrib/lax_der_parsing.h
 noinst_HEADERS += contrib/lax_der_parsing.c
 noinst_HEADERS += contrib/lax_der_privatekey_parsing.h
@@ -88,6 +90,8 @@ if USE_BENCHMARK
 noinst_PROGRAMS += bench_verify bench_sign bench_internal bench_ecmult
 bench_verify_SOURCES = src/bench_verify.c
 bench_verify_LDADD = libsecp256k1.la $(SECP_LIBS) $(SECP_TEST_LIBS) $(COMMON_LIB)
+# SECP_TEST_INCLUDES are only used here for CRYPTO_CPPFLAGS
+bench_verify_CPPFLAGS = -DSECP256K1_BUILD $(SECP_TEST_INCLUDES)
 bench_sign_SOURCES = src/bench_sign.c
 bench_sign_LDADD = libsecp256k1.la $(SECP_LIBS) $(SECP_TEST_LIBS) $(COMMON_LIB)
 bench_internal_SOURCES = src/bench_internal.c
@@ -107,7 +111,7 @@ if VALGRIND_ENABLED
 tests_CPPFLAGS += -DVALGRIND
 noinst_PROGRAMS += valgrind_ctime_test
 valgrind_ctime_test_SOURCES = src/valgrind_ctime_test.c
-valgrind_ctime_test_LDADD = libsecp256k1.la $(SECP_LIBS) $(SECP_TEST_LIBS) $(COMMON_LIB)
+valgrind_ctime_test_LDADD = libsecp256k1.la $(SECP_LIBS) $(SECP_LIBS) $(COMMON_LIB)
 endif
 if !ENABLE_COVERAGE
 tests_CPPFLAGS += -DVERIFY
@@ -193,4 +197,12 @@ endif
 
 if ENABLE_MODULE_SCHNORR
 include src/modules/schnorr/Makefile.am.include
+endif
+
+if ENABLE_MODULE_EXTRAKEYS
+include src/modules/extrakeys/Makefile.am.include
+endif
+
+if ENABLE_MODULE_SCHNORRSIG
+include src/modules/schnorrsig/Makefile.am.include
 endif

@@ -95,7 +95,7 @@ static ScriptErrorDesc script_errors[] = {
     {ScriptError::INVALID_BIT_RANGE, "BIT_RANGE"},
 };
 
-static const char *FormatScriptError(ScriptError err) {
+static std::string FormatScriptError(ScriptError err) {
     for (size_t i = 0; i < ARRAYLEN(script_errors); ++i) {
         if (script_errors[i].err == err) {
             return script_errors[i].name;
@@ -138,10 +138,9 @@ static void DoTest(const CScript &scriptPubKey, const CScript &scriptSig,
                                          &tx, 0, txCredit.vout[0].nValue),
                                      &err) == expect,
                         message);
-    BOOST_CHECK_MESSAGE(err == scriptError,
-                        std::string(FormatScriptError(err)) + " where " +
-                            std::string(FormatScriptError(scriptError)) +
-                            " expected: " + message);
+    BOOST_CHECK_MESSAGE(err == scriptError, FormatScriptError(err) + " where " +
+                                                FormatScriptError(scriptError) +
+                                                " expected: " + message);
 
     // Verify that removing flags from a passing test or adding flags to a
     // failing test does not change the result, except for some special flags.
@@ -314,9 +313,9 @@ public:
         return *this;
     }
 
-    TestBuilder &Add(const CScript &_script) {
+    TestBuilder &Opcode(const opcodetype &_op) {
         DoPush();
-        spendTx.vin[0].scriptSig += _script;
+        spendTx.vin[0].scriptSig << _op;
         return *this;
     }
 
@@ -1085,7 +1084,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                                 0)
                         .Num(0)
                         .PushSigECDSA(keys.key1)
-                        .Add(CScript() << OP_DUP));
+                        .Opcode(OP_DUP));
     tests.push_back(
         TestBuilder(
             CScript() << OP_2 << ToByteVector(keys.pubkey1C)
@@ -1095,7 +1094,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
             SCRIPT_VERIFY_SIGPUSHONLY)
             .Num(0)
             .PushSigECDSA(keys.key1)
-            .Add(CScript() << OP_DUP)
+            .Opcode(OP_DUP)
             .SetScriptError(ScriptError::SIG_PUSHONLY));
     tests.push_back(
         TestBuilder(
@@ -1103,19 +1102,19 @@ BOOST_AUTO_TEST_CASE(script_build) {
             "P2SH(P2PK) with non-push scriptSig but no P2SH or SIGPUSHONLY", 0,
             true)
             .PushSigECDSA(keys.key2)
-            .Add(CScript() << OP_NOP8)
+            .Opcode(OP_NOP8)
             .PushRedeem());
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG,
                     "P2PK with non-push scriptSig but with P2SH validation", 0)
             .PushSigECDSA(keys.key2)
-            .Add(CScript() << OP_NOP8));
+            .Opcode(OP_NOP8));
     tests.push_back(
         TestBuilder(CScript() << ToByteVector(keys.pubkey2C) << OP_CHECKSIG,
                     "P2SH(P2PK) with non-push scriptSig but no SIGPUSHONLY",
                     SCRIPT_VERIFY_P2SH, true)
             .PushSigECDSA(keys.key2)
-            .Add(CScript() << OP_NOP8)
+            .Opcode(OP_NOP8)
             .PushRedeem()
             .SetScriptError(ScriptError::SIG_PUSHONLY));
     tests.push_back(
@@ -1123,7 +1122,7 @@ BOOST_AUTO_TEST_CASE(script_build) {
                     "P2SH(P2PK) with non-push scriptSig but not P2SH",
                     SCRIPT_VERIFY_SIGPUSHONLY, true)
             .PushSigECDSA(keys.key2)
-            .Add(CScript() << OP_NOP8)
+            .Opcode(OP_NOP8)
             .PushRedeem()
             .SetScriptError(ScriptError::SIG_PUSHONLY));
     tests.push_back(
@@ -3208,23 +3207,151 @@ BOOST_AUTO_TEST_CASE(script_HasValidOps) {
     BOOST_CHECK(!script.HasValidOps());
 }
 
-BOOST_AUTO_TEST_CASE(script_can_append_self) {
-    CScript s, d;
+#if defined(HAVE_CONSENSUS_LIB)
 
-    s = ScriptFromHex("00");
-    s += s;
-    d = ScriptFromHex("0000");
-    BOOST_CHECK(s == d);
+/* Test simple (successful) usage of bitcoinconsensus_verify_script */
+BOOST_AUTO_TEST_CASE(bitcoinconsensus_verify_script_returns_true) {
+    unsigned int libconsensus_flags = 0;
+    int nIn = 0;
 
-    // check doubling a script that's large enough to require reallocation
-    static const char hex[] =
-        "04678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6"
-        "bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5f";
-    s = CScript() << ParseHex(hex) << OP_CHECKSIG;
-    d = CScript() << ParseHex(hex) << OP_CHECKSIG << ParseHex(hex)
-                  << OP_CHECKSIG;
-    s += s;
-    BOOST_CHECK(s == d);
+    CScript scriptPubKey;
+    CScript scriptSig;
+
+    scriptPubKey << OP_1;
+    const CTransaction creditTx(
+        BuildCreditingTransaction(scriptPubKey, SATOSHI));
+    const CTransaction spendTx(BuildSpendingTransaction(scriptSig, creditTx));
+
+    CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+    stream << spendTx;
+
+    bitcoinconsensus_error err;
+    int result = bitcoinconsensus_verify_script(
+        scriptPubKey.data(), scriptPubKey.size(), (const uint8_t *)&stream[0],
+        stream.size(), nIn, libconsensus_flags, &err);
+    BOOST_CHECK_EQUAL(result, 1);
+    BOOST_CHECK_EQUAL(err, bitcoinconsensus_ERR_OK);
 }
 
+/* Test bitcoinconsensus_verify_script returns invalid tx index err*/
+BOOST_AUTO_TEST_CASE(bitcoinconsensus_verify_script_tx_index_err) {
+    unsigned int libconsensus_flags = 0;
+    int nIn = 3;
+
+    CScript scriptPubKey;
+    CScript scriptSig;
+
+    scriptPubKey << OP_EQUAL;
+    const CTransaction creditTx(
+        BuildCreditingTransaction(scriptPubKey, SATOSHI));
+    const CTransaction spendTx(BuildSpendingTransaction(scriptSig, creditTx));
+
+    CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+    stream << spendTx;
+
+    bitcoinconsensus_error err;
+    int result = bitcoinconsensus_verify_script(
+        scriptPubKey.data(), scriptPubKey.size(), (const uint8_t *)&stream[0],
+        stream.size(), nIn, libconsensus_flags, &err);
+    BOOST_CHECK_EQUAL(result, 0);
+    BOOST_CHECK_EQUAL(err, bitcoinconsensus_ERR_TX_INDEX);
+}
+
+/* Test bitcoinconsensus_verify_script returns tx size mismatch err*/
+BOOST_AUTO_TEST_CASE(bitcoinconsensus_verify_script_tx_size) {
+    unsigned int libconsensus_flags = 0;
+    int nIn = 0;
+
+    CScript scriptPubKey;
+    CScript scriptSig;
+
+    scriptPubKey << OP_EQUAL;
+    const CTransaction creditTx(
+        BuildCreditingTransaction(scriptPubKey, SATOSHI));
+    const CTransaction spendTx(BuildSpendingTransaction(scriptSig, creditTx));
+
+    CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+    stream << spendTx;
+
+    bitcoinconsensus_error err;
+    int result = bitcoinconsensus_verify_script(
+        scriptPubKey.data(), scriptPubKey.size(), (const uint8_t *)&stream[0],
+        stream.size() * 2, nIn, libconsensus_flags, &err);
+    BOOST_CHECK_EQUAL(result, 0);
+    BOOST_CHECK_EQUAL(err, bitcoinconsensus_ERR_TX_SIZE_MISMATCH);
+}
+
+/* Test bitcoinconsensus_verify_script returns invalid tx serialization error */
+BOOST_AUTO_TEST_CASE(bitcoinconsensus_verify_script_tx_serialization) {
+    unsigned int libconsensus_flags = 0;
+    int nIn = 0;
+
+    CScript scriptPubKey;
+    CScript scriptSig;
+
+    scriptPubKey << OP_EQUAL;
+    const CTransaction creditTx(
+        BuildCreditingTransaction(scriptPubKey, SATOSHI));
+    const CTransaction spendTx(BuildSpendingTransaction(scriptSig, creditTx));
+
+    CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+    stream << 0xffffffff;
+
+    bitcoinconsensus_error err;
+    int result = bitcoinconsensus_verify_script(
+        scriptPubKey.data(), scriptPubKey.size(), (const uint8_t *)&stream[0],
+        stream.size(), nIn, libconsensus_flags, &err);
+    BOOST_CHECK_EQUAL(result, 0);
+    BOOST_CHECK_EQUAL(err, bitcoinconsensus_ERR_TX_DESERIALIZE);
+}
+
+/* Test bitcoinconsensus_verify_script returns amount required error */
+BOOST_AUTO_TEST_CASE(bitcoinconsensus_verify_script_amount_required_err) {
+    unsigned int libconsensus_flags =
+        bitcoinconsensus_SCRIPT_ENABLE_SIGHASH_FORKID;
+    int nIn = 0;
+
+    CScript scriptPubKey;
+    CScript scriptSig;
+
+    scriptPubKey << OP_EQUAL;
+    const CTransaction creditTx(
+        BuildCreditingTransaction(scriptPubKey, SATOSHI));
+    const CTransaction spendTx(BuildSpendingTransaction(scriptSig, creditTx));
+
+    CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+    stream << spendTx;
+
+    bitcoinconsensus_error err;
+    int result = bitcoinconsensus_verify_script(
+        scriptPubKey.data(), scriptPubKey.size(), (const uint8_t *)&stream[0],
+        stream.size(), nIn, libconsensus_flags, &err);
+    BOOST_CHECK_EQUAL(result, 0);
+    BOOST_CHECK_EQUAL(err, bitcoinconsensus_ERR_AMOUNT_REQUIRED);
+}
+
+/* Test bitcoinconsensus_verify_script returns invalid flags err */
+BOOST_AUTO_TEST_CASE(bitcoinconsensus_verify_script_invalid_flags) {
+    unsigned int libconsensus_flags = 1 << 3;
+    int nIn = 0;
+
+    CScript scriptPubKey;
+    CScript scriptSig;
+
+    scriptPubKey << OP_EQUAL;
+    const CTransaction creditTx(
+        BuildCreditingTransaction(scriptPubKey, SATOSHI));
+    const CTransaction spendTx(BuildSpendingTransaction(scriptSig, creditTx));
+    CDataStream stream(SER_NETWORK, PROTOCOL_VERSION);
+    stream << spendTx;
+
+    bitcoinconsensus_error err;
+    int result = bitcoinconsensus_verify_script(
+        scriptPubKey.data(), scriptPubKey.size(), (const uint8_t *)&stream[0],
+        stream.size(), nIn, libconsensus_flags, &err);
+    BOOST_CHECK_EQUAL(result, 0);
+    BOOST_CHECK_EQUAL(err, bitcoinconsensus_ERR_INVALID_FLAGS);
+}
+
+#endif
 BOOST_AUTO_TEST_SUITE_END()

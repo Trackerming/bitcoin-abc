@@ -21,6 +21,8 @@ namespace NetMsgType {
 const char *VERSION = "version";
 const char *VERACK = "verack";
 const char *ADDR = "addr";
+const char *ADDRV2 = "addrv2";
+const char *SENDADDRV2 = "sendaddrv2";
 const char *INV = "inv";
 const char *GETDATA = "getdata";
 const char *MERKLEBLOCK = "merkleblock";
@@ -37,15 +39,22 @@ const char *NOTFOUND = "notfound";
 const char *FILTERLOAD = "filterload";
 const char *FILTERADD = "filteradd";
 const char *FILTERCLEAR = "filterclear";
-const char *REJECT = "reject";
 const char *SENDHEADERS = "sendheaders";
 const char *FEEFILTER = "feefilter";
 const char *SENDCMPCT = "sendcmpct";
 const char *CMPCTBLOCK = "cmpctblock";
 const char *GETBLOCKTXN = "getblocktxn";
 const char *BLOCKTXN = "blocktxn";
+const char *GETCFILTERS = "getcfilters";
+const char *CFILTER = "cfilter";
+const char *GETCFHEADERS = "getcfheaders";
+const char *CFHEADERS = "cfheaders";
+const char *GETCFCHECKPT = "getcfcheckpt";
+const char *CFCHECKPT = "cfcheckpt";
+const char *AVAHELLO = "avahello";
 const char *AVAPOLL = "avapoll";
 const char *AVARESPONSE = "avaresponse";
+const char *AVAPROOF = "avaproof";
 
 bool IsBlockLike(const std::string &strCommand) {
     return strCommand == NetMsgType::BLOCK ||
@@ -59,15 +68,17 @@ bool IsBlockLike(const std::string &strCommand) {
  * above and in protocol.h.
  */
 static const std::string allNetMessageTypes[] = {
-    NetMsgType::VERSION,     NetMsgType::VERACK,     NetMsgType::ADDR,
-    NetMsgType::INV,         NetMsgType::GETDATA,    NetMsgType::MERKLEBLOCK,
-    NetMsgType::GETBLOCKS,   NetMsgType::GETHEADERS, NetMsgType::TX,
-    NetMsgType::HEADERS,     NetMsgType::BLOCK,      NetMsgType::GETADDR,
-    NetMsgType::MEMPOOL,     NetMsgType::PING,       NetMsgType::PONG,
-    NetMsgType::NOTFOUND,    NetMsgType::FILTERLOAD, NetMsgType::FILTERADD,
-    NetMsgType::FILTERCLEAR, NetMsgType::REJECT,     NetMsgType::SENDHEADERS,
-    NetMsgType::FEEFILTER,   NetMsgType::SENDCMPCT,  NetMsgType::CMPCTBLOCK,
-    NetMsgType::GETBLOCKTXN, NetMsgType::BLOCKTXN,
+    NetMsgType::VERSION,     NetMsgType::VERACK,       NetMsgType::ADDR,
+    NetMsgType::ADDRV2,      NetMsgType::SENDADDRV2,   NetMsgType::INV,
+    NetMsgType::GETDATA,     NetMsgType::MERKLEBLOCK,  NetMsgType::GETBLOCKS,
+    NetMsgType::GETHEADERS,  NetMsgType::TX,           NetMsgType::HEADERS,
+    NetMsgType::BLOCK,       NetMsgType::GETADDR,      NetMsgType::MEMPOOL,
+    NetMsgType::PING,        NetMsgType::PONG,         NetMsgType::NOTFOUND,
+    NetMsgType::FILTERLOAD,  NetMsgType::FILTERADD,    NetMsgType::FILTERCLEAR,
+    NetMsgType::SENDHEADERS, NetMsgType::FEEFILTER,    NetMsgType::SENDCMPCT,
+    NetMsgType::CMPCTBLOCK,  NetMsgType::GETBLOCKTXN,  NetMsgType::BLOCKTXN,
+    NetMsgType::GETCFILTERS, NetMsgType::CFILTER,      NetMsgType::GETCFHEADERS,
+    NetMsgType::CFHEADERS,   NetMsgType::GETCFCHECKPT, NetMsgType::CFCHECKPT,
 };
 static const std::vector<std::string>
     allNetMessageTypesVec(allNetMessageTypes,
@@ -205,20 +216,6 @@ void SetServiceFlagsIBDCache(bool state) {
     g_initial_block_download_completed = state;
 }
 
-CAddress::CAddress() : CService() {
-    Init();
-}
-
-CAddress::CAddress(CService ipIn, ServiceFlags nServicesIn) : CService(ipIn) {
-    Init();
-    nServices = nServicesIn;
-}
-
-void CAddress::Init() {
-    nServices = NODE_NONE;
-    nTime = 100000000;
-}
-
 std::string CInv::GetCommand() const {
     std::string cmd;
     switch (GetKind()) {
@@ -230,6 +227,8 @@ std::string CInv::GetCommand() const {
             return cmd.append(NetMsgType::MERKLEBLOCK);
         case MSG_CMPCT_BLOCK:
             return cmd.append(NetMsgType::CMPCTBLOCK);
+        case MSG_AVA_PROOF:
+            return cmd.append(NetMsgType::AVAPROOF);
         default:
             throw std::out_of_range(
                 strprintf("CInv::GetCommand(): type=%d unknown type", type));
@@ -246,4 +245,49 @@ std::string CInv::ToString() const {
 
 const std::vector<std::string> &getAllNetMessageTypes() {
     return allNetMessageTypesVec;
+}
+
+/**
+ * Convert a service flag (NODE_*) to a human readable string.
+ * It supports unknown service flags which will be returned as "UNKNOWN[...]".
+ * @param[in] bit the service flag is calculated as (1 << bit)
+ */
+static std::string serviceFlagToStr(const size_t bit) {
+    const uint64_t service_flag = 1ULL << bit;
+    switch (ServiceFlags(service_flag)) {
+        case NODE_NONE:
+            // impossible
+            abort();
+        case NODE_NETWORK:
+            return "NETWORK";
+        case NODE_GETUTXO:
+            return "GETUTXO";
+        case NODE_BLOOM:
+            return "BLOOM";
+        case NODE_NETWORK_LIMITED:
+            return "NETWORK_LIMITED";
+        case NODE_COMPACT_FILTERS:
+            return "COMPACT_FILTERS";
+        case NODE_AVALANCHE:
+            return "AVALANCHE";
+        default:
+            std::ostringstream stream;
+            stream.imbue(std::locale::classic());
+            stream << "UNKNOWN[";
+            stream << "2^" << bit;
+            stream << "]";
+            return stream.str();
+    }
+}
+
+std::vector<std::string> serviceFlagsToStr(const uint64_t flags) {
+    std::vector<std::string> str_flags;
+
+    for (size_t i = 0; i < sizeof(flags) * 8; ++i) {
+        if (flags & (1ULL << i)) {
+            str_flags.emplace_back(serviceFlagToStr(i));
+        }
+    }
+
+    return str_flags;
 }

@@ -11,8 +11,10 @@ import hmac
 import os
 from pathlib import Path
 import server
+import shutil
 import unittest
 
+import test.mocks.cirrus
 import test.mocks.fixture
 import test.mocks.phabricator
 import test.mocks.slackbot
@@ -38,17 +40,24 @@ class ABCBotFixture(unittest.TestCase):
             TEST_USER, TEST_PASSWORD).encode()).decode('utf-8')
         self.headers = {'Authorization': 'Basic ' + self.credentials}
 
+        self.test_output_dir = os.path.join(
+            os.path.dirname(__file__), "test_output")
+        self.db_file_no_ext = None
+
     def setUp(self):
+        shutil.rmtree(self.test_output_dir, ignore_errors=True)
+        os.makedirs(self.test_output_dir, exist_ok=True)
         self.phab = test.mocks.phabricator.instance()
         self.slackbot = test.mocks.slackbot.instance()
         self.teamcity = test.mocks.teamcity.instance()
-        self.travis = test.mocks.travis.instance()
+        self.cirrus = test.mocks.cirrus.instance()
         self.app = server.create_server(
             self.teamcity,
             self.phab,
             self.slackbot,
-            self.travis,
-            test.mocks.fixture.MockJSONEncoder).test_client()
+            self.cirrus,
+            db_file_no_ext=self.db_file_no_ext,
+            jsonEncoder=test.mocks.fixture.MockJSONEncoder).test_client()
 
     def tearDown(self):
         pass

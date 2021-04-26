@@ -48,6 +48,7 @@ add_library(testutil OBJECT
 	util/blockfilter.cpp
 	util/logging.cpp
 	util/mining.cpp
+	util/net.cpp
 	util/setup_common.cpp
 	util/str.cpp
 	util/transaction_utils.cpp
@@ -67,17 +68,46 @@ if(BUILD_BITCOIN_WALLET)
 		../wallet/test/init_tests.cpp
 		../wallet/test/ismine_tests.cpp
 		../wallet/test/psbt_wallet_tests.cpp
+		../wallet/test/scriptpubkeyman_tests.cpp
 		../wallet/test/wallet_tests.cpp
 		../wallet/test/walletdb_tests.cpp
 		../wallet/test/wallet_crypto_tests.cpp
 	)
 endif()
 
+function(gen_asmap_headers HEADERS_VAR)
+	foreach(INPUT_FILE ${ARGN})
+		set(OUTPUT_FILE "${CMAKE_CURRENT_BINARY_DIR}/${INPUT_FILE}.h")
+
+		add_custom_command(
+			OUTPUT "${OUTPUT_FILE}"
+			COMMENT "Generate ASMAP header from ${INPUT_FILE}"
+			COMMAND
+				"${Python_EXECUTABLE}"
+				"${CMAKE_CURRENT_SOURCE_DIR}/data/generate_asmap.py"
+				"${CMAKE_CURRENT_SOURCE_DIR}/${INPUT_FILE}"
+				"${OUTPUT_FILE}"
+			MAIN_DEPENDENCY "${INPUT_FILE}"
+			DEPENDS
+				"data/generate_header.py"
+			VERBATIM
+		)
+		list(APPEND ${HEADERS_VAR} "${OUTPUT_FILE}")
+	endforeach()
+	set(${HEADERS_VAR} ${${HEADERS_VAR}} PARENT_SCOPE)
+endfunction()
+
+gen_asmap_headers(ASMAP_HEADERS
+	data/asmap.raw
+)
+
 add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 	fixture.cpp
 	jsonutil.cpp
 	scriptflags.cpp
 	sigutil.cpp
+
+	${ASMAP_HEADERS}
 
 	# Tests generated from JSON
 	${JSON_HEADERS}
@@ -111,6 +141,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		checkpoints_tests.cpp
 		checkqueue_tests.cpp
 		coins_tests.cpp
+		compilerbug_tests.cpp
 		compress_tests.cpp
 		config_tests.cpp
 		core_io_tests.cpp
@@ -127,11 +158,13 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		fs_tests.cpp
 		getarg_tests.cpp
 		hash_tests.cpp
+		interfaces_tests.cpp
 		inv_tests.cpp
 		key_io_tests.cpp
 		key_tests.cpp
 		lcg_tests.cpp
 		limitedmap_tests.cpp
+		logging_tests.cpp
 		mempool_tests.cpp
 		merkle_tests.cpp
 		merkleblock_tests.cpp
@@ -142,12 +175,14 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		netbase_tests.cpp
 		op_reversebytes_tests.cpp
 		pmt_tests.cpp
+		policy_fee_tests.cpp
 		policyestimator_tests.cpp
 		prevector_tests.cpp
 		radix_tests.cpp
 		raii_event_tests.cpp
 		random_tests.cpp
 		rcu_tests.cpp
+		ref_tests.cpp
 		reverselock_tests.cpp
 		rpc_tests.cpp
 		rpc_server_tests.cpp
@@ -161,6 +196,7 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		script_standard_tests.cpp
 		script_tests.cpp
 		scriptnum_tests.cpp
+		dnsseeds_tests.cpp
 		serialize_tests.cpp
 		settings_tests.cpp
 		sigcache_tests.cpp
@@ -182,6 +218,9 @@ add_boost_unit_tests_to_suite(bitcoin test_bitcoin
 		util_tests.cpp
 		util_threadnames_tests.cpp
 		validation_block_tests.cpp
+		validation_chainstate_tests.cpp
+		validation_chainstatemanager_tests.cpp
+		validation_flush_tests.cpp
 		validation_tests.cpp
 		validationinterface_tests.cpp
 		versionbits_tests.cpp
@@ -226,6 +265,7 @@ function(add_boost_test_runners_with_upgrade_activated SUITE EXECUTABLE)
 			JUNIT
 			"--run_test=${_test_name}"
 			"--logger=${HRF_LOGGER}${JUNIT_LOGGER}"
+			"--catch_system_errors=no"
 			# Dec. 1st, 2019 at 00:00:00
 			--
 			"-testsuitename=Bitcoin ABC unit tests with next upgrade activated"

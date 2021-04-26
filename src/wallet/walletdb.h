@@ -11,7 +11,8 @@
 #include <key.h>
 #include <script/sign.h>
 #include <script/standard.h> // for CTxDestination
-#include <wallet/db.h>
+#include <wallet/bdb.h>
+#include <wallet/walletutil.h>
 
 #include <cstdint>
 #include <string>
@@ -54,6 +55,38 @@ enum class DBErrors {
     NEED_REWRITE
 };
 
+namespace DBKeys {
+extern const std::string ACENTRY;
+extern const std::string ACTIVEEXTERNALSPK;
+extern const std::string ACTIVEINTERNALSPK;
+extern const std::string BESTBLOCK;
+extern const std::string BESTBLOCK_NOMERKLE;
+extern const std::string CRYPTED_KEY;
+extern const std::string CSCRIPT;
+extern const std::string DEFAULTKEY;
+extern const std::string DESTDATA;
+extern const std::string FLAGS;
+extern const std::string HDCHAIN;
+extern const std::string KEY;
+extern const std::string KEYMETA;
+extern const std::string MASTER_KEY;
+extern const std::string MINVERSION;
+extern const std::string NAME;
+extern const std::string OLD_KEY;
+extern const std::string ORDERPOSNEXT;
+extern const std::string POOL;
+extern const std::string PURPOSE;
+extern const std::string SETTINGS;
+extern const std::string TX;
+extern const std::string VERSION;
+extern const std::string WALLETDESCRIPTOR;
+extern const std::string WALLETDESCRIPTORCACHE;
+extern const std::string WALLETDESCRIPTORCKEY;
+extern const std::string WALLETDESCRIPTORKEY;
+extern const std::string WATCHMETA;
+extern const std::string WATCHS;
+} // namespace DBKeys
+
 /* simple HD chain data model */
 class CHDChain {
 public:
@@ -68,14 +101,11 @@ public:
     int nVersion;
 
     CHDChain() { SetNull(); }
-    ADD_SERIALIZE_METHODS;
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(this->nVersion);
-        READWRITE(nExternalChainCounter);
-        READWRITE(seed_id);
-        if (this->nVersion >= VERSION_HD_CHAIN_SPLIT) {
-            READWRITE(nInternalChainCounter);
+
+    SERIALIZE_METHODS(CHDChain, obj) {
+        READWRITE(obj.nVersion, obj.nExternalChainCounter, obj.seed_id);
+        if (obj.nVersion >= VERSION_HD_CHAIN_SPLIT) {
+            READWRITE(obj.nInternalChainCounter);
         }
     }
 
@@ -84,6 +114,10 @@ public:
         nExternalChainCounter = 0;
         nInternalChainCounter = 0;
         seed_id.SetNull();
+    }
+
+    bool operator==(const CHDChain &chain) const {
+        return seed_id == chain.seed_id;
     }
 };
 
@@ -103,7 +137,7 @@ public:
     CKeyID hd_seed_id;
     // Key origin info with path and fingerprint
     KeyOriginInfo key_origin;
-    //< Whether the key_origin is useful
+    //! Whether the key_origin is useful
     bool has_key_origin = false;
 
     CKeyMetadata() { SetNull(); }
@@ -112,19 +146,14 @@ public:
         nCreateTime = nCreateTime_;
     }
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(this->nVersion);
-        READWRITE(nCreateTime);
-        if (this->nVersion >= VERSION_WITH_HDDATA) {
-            READWRITE(hdKeypath);
-            READWRITE(hd_seed_id);
+    SERIALIZE_METHODS(CKeyMetadata, obj) {
+        READWRITE(obj.nVersion, obj.nCreateTime);
+        if (obj.nVersion >= VERSION_WITH_HDDATA) {
+            READWRITE(obj.hdKeypath, obj.hd_seed_id);
         }
-        if (this->nVersion >= VERSION_WITH_KEY_ORIGIN) {
-            READWRITE(key_origin);
-            READWRITE(has_key_origin);
+        if (obj.nVersion >= VERSION_WITH_KEY_ORIGIN) {
+            READWRITE(obj.key_origin);
+            READWRITE(obj.has_key_origin);
         }
     }
 
@@ -214,43 +243,44 @@ public:
 
     bool WriteMinVersion(int nVersion);
 
+    bool WriteDescriptorKey(const uint256 &desc_id, const CPubKey &pubkey,
+                            const CPrivKey &privkey);
+    bool WriteCryptedDescriptorKey(const uint256 &desc_id,
+                                   const CPubKey &pubkey,
+                                   const std::vector<uint8_t> &secret);
+    bool WriteDescriptor(const uint256 &desc_id,
+                         const WalletDescriptor &descriptor);
+    bool WriteDescriptorDerivedCache(const CExtPubKey &xpub,
+                                     const uint256 &desc_id,
+                                     uint32_t key_exp_index,
+                                     uint32_t der_index);
+    bool WriteDescriptorParentCache(const CExtPubKey &xpub,
+                                    const uint256 &desc_id,
+                                    uint32_t key_exp_index);
+
     /// Write destination data key,value tuple to database.
     bool WriteDestData(const CTxDestination &address, const std::string &key,
                        const std::string &value);
     /// Erase destination data tuple from wallet database.
     bool EraseDestData(const CTxDestination &address, const std::string &key);
 
+    bool WriteActiveScriptPubKeyMan(uint8_t type, const uint256 &id,
+                                    bool internal);
+
     DBErrors LoadWallet(CWallet *pwallet);
-    DBErrors FindWalletTx(std::vector<TxId> &txIds,
-                          std::vector<CWalletTx> &vWtx);
-    DBErrors ZapWalletTx(std::vector<CWalletTx> &vWtx);
+    DBErrors FindWalletTx(std::vector<TxId> &txIds, std::list<CWalletTx> &vWtx);
+    DBErrors ZapWalletTx(std::list<CWalletTx> &vWtx);
     DBErrors ZapSelectTx(std::vector<TxId> &txIdsIn,
                          std::vector<TxId> &txIdsOut);
-    /* Try to (very carefully!) recover wallet database (with a possible key
-     * type filter) */
-    static bool Recover(const fs::path &wallet_path, void *callbackDataIn,
-                        bool (*recoverKVcallback)(void *callbackData,
-                                                  CDataStream ssKey,
-                                                  CDataStream ssValue),
-                        std::string &out_backup_filename);
-    /* Recover convenience-function to bypass the key filter callback, called
-     * when verify fails, recovers everything */
-    static bool Recover(const fs::path &wallet_path,
-                        std::string &out_backup_filename);
-    /* Recover filter (used as callback), will only let keys (cryptographical
-     * keys) as KV/key-type pass through */
-    static bool RecoverKeysOnlyFilter(void *callbackData, CDataStream ssKey,
-                                      CDataStream ssValue);
     /* Function to determine if a certain KV/key-type is a key (cryptographical
      * key) type */
     static bool IsKeyType(const std::string &strType);
     /* verifies the database environment */
     static bool VerifyEnvironment(const fs::path &wallet_path,
-                                  std::string &errorStr);
+                                  bilingual_str &errorStr);
     /* verifies the database file */
     static bool VerifyDatabaseFile(const fs::path &wallet_path,
-                                   std::vector<std::string> &warnings,
-                                   std::string &errorStr);
+                                   bilingual_str &errorStr);
 
     //! write the hdchain model (external chain child index counter)
     bool WriteHDChain(const CHDChain &chain);
@@ -271,5 +301,12 @@ private:
 //! Compacts BDB state so that wallet.dat is self-contained (if there are
 //! changes)
 void MaybeCompactWalletDB();
+
+//! Unserialize a given Key-Value pair and load it into the wallet
+bool ReadKeyValue(CWallet *pwallet, CDataStream &ssKey, CDataStream &ssValue,
+                  std::string &strType, std::string &strErr);
+
+/** Return whether a wallet database is currently loaded. */
+bool IsWalletLoaded(const fs::path &wallet_path);
 
 #endif // BITCOIN_WALLET_WALLETDB_H

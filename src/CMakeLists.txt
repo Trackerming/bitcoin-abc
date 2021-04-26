@@ -2,7 +2,8 @@
 
 project(bitcoind)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Default visibility is hidden on all targets.
 set(CMAKE_C_VISIBILITY_PRESET hidden)
@@ -25,7 +26,18 @@ option(ENABLE_UPNP "Enable UPnP support" ON)
 option(START_WITH_UPNP "Make UPnP the default to map ports" OFF)
 option(ENABLE_CLANG_TIDY "Enable clang-tidy checks for Bitcoin ABC" OFF)
 option(ENABLE_PROFILING "Select the profiling tool to use" OFF)
-option(USE_LD_GOLD "Try to use gold as a linker if available" ON)
+
+# Linker option
+if(CMAKE_CROSSCOMPILING)
+	set(DEFAULT_LINKER "")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	set(DEFAULT_LINKER lld)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+	set(DEFAULT_LINKER gold)
+else()
+	set(DEFAULT_LINKER "")
+endif()
+set(USE_LINKER "${DEFAULT_LINKER}" CACHE STRING "Linker to be used (default: ${DEFAULT_LINKER}). Set to empty string to use the system's default.")
 
 set(OS_WITH_JEMALLOC_AS_SYSTEM_DEFAULT
 	"Android"
@@ -35,6 +47,13 @@ set(OS_WITH_JEMALLOC_AS_SYSTEM_DEFAULT
 if(NOT CMAKE_SYSTEM_NAME IN_LIST OS_WITH_JEMALLOC_AS_SYSTEM_DEFAULT)
 	set(USE_JEMALLOC_DEFAULT ON)
 endif()
+
+# FIXME: Building against jemalloc causes the software to segfault on OSX.
+# See https://github.com/Bitcoin-ABC/bitcoin-abc/issues/401
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin" AND NOT CMAKE_CROSSCOMPILING)
+	set(USE_JEMALLOC_DEFAULT OFF)
+endif()
+
 option(USE_JEMALLOC "Use jemalloc as an allocation library" ${USE_JEMALLOC_DEFAULT})
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
@@ -59,8 +78,8 @@ native_add_cmake_flags(
 	"-DENABLE_QRCODE=OFF"
 	"-DENABLE_UPNP=OFF"
 	"-DUSE_JEMALLOC=OFF"
-	# Forward the current setting for clang-tidy
-	"-DENABLE_CLANG_TIDY=${ENABLE_CLANG_TIDY}"
+	"-DENABLE_CLANG_TIDY=OFF"
+	"-DENABLE_BIP70=OFF"
 )
 
 if(ENABLE_CLANG_TIDY)
@@ -74,8 +93,13 @@ endif()
 
 include(AddCompilerFlags)
 
-if(USE_LD_GOLD)
-	add_linker_flags(-fuse-ld=gold)
+if(USE_LINKER)
+	set(LINKER_FLAG "-fuse-ld=${USE_LINKER}")
+	check_linker_flag(IS_LINKER_SUPPORTED ${LINKER_FLAG})
+	if(NOT IS_LINKER_SUPPORTED)
+		message(FATAL_ERROR "The ${USE_LINKER} linker is not supported, make sure ${USE_LINKER} is properly installed or use -DUSE_LINKER= to use the system's linker")
+	endif()
+	add_linker_flags(${LINKER_FLAG})
 endif()
 
 # Prefer -g3, defaults to -g if unavailable
@@ -102,13 +126,22 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
 	add_compiler_flags(-fstack-reuse=none)
 endif()
 
-# Ensure that WINDRES_PREPROC is enabled when using windres.
 if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	# Ensure that WINDRES_PREPROC is enabled when using windres.
 	list(APPEND CMAKE_RC_FLAGS "-DWINDRES_PREPROC")
 
 	# Build all static so there is no dll file to distribute.
 	add_linker_flags(-static)
+
+	add_compile_definitions(
+		# Windows 7
+		_WIN32_WINNT=0x0601
+		# Internet Explorer 5.01 (!)
+		_WIN32_IE=0x0501
+		# Define WIN32_LEAN_AND_MEAN to exclude APIs such as Cryptography, DDE,
+		# RPC, Shell, and Windows Sockets.
+		WIN32_LEAN_AND_MEAN
+	)
 endif()
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
@@ -185,20 +218,32 @@ add_compiler_flags(
 	-Wall
 	-Wextra
 	-Wformat
+	-Wgnu
 	-Wvla
 	-Wcast-align
 	-Wunused-parameter
 	-Wmissing-braces
-	-Wthread-safety-analysis
-	-Wshadow
-	-Wshadow-field
+	-Wthread-safety
 	-Wrange-loop-analysis
 	-Wredundant-decls
+	-Wunreachable-code-loop-increment
+	-Wsign-compare
+	-Wconditional-uninitialized
 )
 add_compiler_flag_group(-Wformat -Wformat-security)
 add_cxx_compiler_flags(
 	-Wredundant-move
 )
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+	# GCC has no flag variant which is granular enough to avoid raising the clang
+	# -Wshadow-uncaptured-local equivalent. This is causing a lot of warnings
+	# on serialize.h which cannot be disabled locally, so drop the flag.
+	add_compiler_flags(
+		-Wshadow
+		-Wshadow-field
+	)
+endif()
 
 option(EXTRA_WARNINGS "Enable extra warnings" OFF)
 if(EXTRA_WARNINGS)
@@ -321,14 +366,17 @@ add_library(util
 	randomenv.cpp
 	rcu.cpp
 	rpc/request.cpp
+	blockdb.cpp
 	support/cleanse.cpp
 	support/lockedpool.cpp
 	sync.cpp
 	threadinterrupt.cpp
 	uint256.cpp
+	util/asmap.cpp
 	util/bip32.cpp
 	util/bytevectorhash.cpp
 	util/error.cpp
+	util/message.cpp
 	util/moneystr.cpp
 	util/settings.cpp
 	util/spanparsing.cpp
@@ -338,7 +386,6 @@ add_library(util
 	util/threadnames.cpp
 	util/time.cpp
 	util/url.cpp
-	util/validation.cpp
 
 	# obj/build.h
 	"${BUILD_HEADER}"
@@ -371,29 +418,38 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
 	target_compile_definitions(util PUBLIC BOOST_THREAD_USE_LIB)
 endif()
 
-# Boost packages
-set(BOOST_PACKAGES_REQUIRED chrono filesystem thread)
+target_link_libraries(util univalue crypto)
 
-function(prepend var prefix)
-	set(listVar "")
-	foreach(f ${ARGN})
-		list(APPEND listVar "${prefix}${f}")
-	endforeach(f)
-	set(${var} "${listVar}" PARENT_SCOPE)
-endfunction(prepend)
+macro(link_event TARGET)
+	non_native_target_link_libraries(${TARGET} Event 2.0.22 ${ARGN})
+endmacro()
 
-prepend(BOOST_LIBRARIES "Boost::" ${BOOST_PACKAGES_REQUIRED})
+link_event(util event)
 
-find_package(Boost 1.59 REQUIRED ${BOOST_PACKAGES_REQUIRED})
+macro(link_boost TARGET)
+	non_native_target_link_libraries(${TARGET} Boost 1.59 ${ARGN})
+endmacro()
 
-# This require libevent
-set(EVENT_MIN_VERSION 2.0.22)
-find_package(Event ${EVENT_MIN_VERSION} REQUIRED COMPONENTS event)
-
-target_link_libraries(util univalue crypto Event::event ${BOOST_LIBRARIES})
-
+link_boost(util filesystem thread)
 # Make sure boost uses std::atomic (it doesn't before 1.63)
 target_compile_definitions(util PUBLIC BOOST_SP_USE_STD_ATOMIC BOOST_AC_USE_STD_ATOMIC)
+
+function(add_network_sources NETWORK_SOURCES)
+	set(NETWORK_DIR abc)
+
+	list(TRANSFORM
+		ARGN
+		PREPEND "networks/${NETWORK_DIR}/"
+		OUTPUT_VARIABLE NETWORK_SOURCES
+	)
+	set(NETWORK_SOURCES ${NETWORK_SOURCES} PARENT_SCOPE)
+endfunction()
+
+add_network_sources(NETWORK_SOURCES
+	checkpoints.cpp
+	network.cpp
+	chainparamsconstants.cpp
+)
 
 # More completely unrelated features shared by all executables.
 # Because nothing says this is different from util than "common"
@@ -429,9 +485,11 @@ add_library(common
 	salteduint256hasher.cpp
 	versionbitsinfo.cpp
 	warnings.cpp
+
+	${NETWORK_SOURCES}
 )
 
-target_link_libraries(common util secp256k1 script)
+target_link_libraries(common bitcoinconsensus util secp256k1 script)
 
 # script library
 add_library(script
@@ -479,6 +537,8 @@ endif()
 add_library(server
 	addrdb.cpp
 	addrman.cpp
+	avalanche/delegation.cpp
+	avalanche/delegationbuilder.cpp
 	avalanche/peermanager.cpp
 	avalanche/processor.cpp
 	avalanche/proof.cpp
@@ -493,6 +553,7 @@ add_library(server
 	consensus/activation.cpp
 	consensus/tx_verify.cpp
 	dbwrapper.cpp
+	dnsseeds.cpp
 	flatfile.cpp
 	httprpc.cpp
 	httpserver.cpp
@@ -511,12 +572,14 @@ add_library(server
 	node/context.cpp
 	node/psbt.cpp
 	node/transaction.cpp
+	node/ui_interface.cpp
 	noui.cpp
 	policy/fees.cpp
 	policy/settings.cpp
 	pow/aserti32d.cpp
 	pow/daa.cpp
 	pow/eda.cpp
+	pow/grasberg.cpp
 	pow/pow.cpp
 	rest.cpp
 	rpc/abc.cpp
@@ -535,7 +598,6 @@ add_library(server
 	torcontrol.cpp
 	txdb.cpp
 	txmempool.cpp
-	ui_interface.cpp
 	validation.cpp
 	validationinterface.cpp
 	versionbits.cpp
@@ -544,19 +606,18 @@ add_library(server
 target_include_directories(server PRIVATE leveldb/helpers/memenv)
 
 target_link_libraries(server
-	Event::event
 	bitcoinconsensus
 	leveldb
 	memenv
 )
 
+link_event(server event)
 if(NOT ${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	find_package(Event ${EVENT_MIN_VERSION} REQUIRED COMPONENTS pthreads)
-	target_link_libraries(server Event::pthreads)
+	link_event(server pthreads)
 endif()
 
 if(ENABLE_UPNP)
-	find_package(MiniUPnPc 1.5 REQUIRED)
+	find_package(MiniUPnPc 1.9 REQUIRED)
 	target_link_libraries(server MiniUPnPc::miniupnpc)
 
 	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
@@ -579,6 +640,7 @@ add_subdirectory(pow/test)
 add_subdirectory(bench)
 
 include(BinaryTest)
+include(WindowsVersionInfo)
 
 # Wallet
 if(BUILD_BITCOIN_WALLET)
@@ -587,9 +649,9 @@ if(BUILD_BITCOIN_WALLET)
 
 	# bitcoin-wallet
 	add_executable(bitcoin-wallet bitcoin-wallet.cpp)
-	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-		target_sources(bitcoin-wallet PRIVATE bitcoin-wallet-res.rc)
-	endif()
+	generate_windows_version_info(bitcoin-wallet
+		DESCRIPTION "CLI tool for ${PACKAGE_NAME} wallets"
+	)
 
 	target_link_libraries(bitcoin-wallet wallet-tool common util)
 
@@ -609,7 +671,11 @@ if(BUILD_BITCOIN_ZMQ)
 endif()
 
 # RPC client support
-add_library(rpcclient rpc/client.cpp)
+add_library(rpcclient
+	compat/stdin.cpp
+	rpc/client.cpp
+)
+
 target_link_libraries(rpcclient univalue util)
 
 # bitcoin-seeder
@@ -620,11 +686,12 @@ endif()
 # bitcoin-cli
 if(BUILD_BITCOIN_CLI)
 	add_executable(bitcoin-cli bitcoin-cli.cpp)
-	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-		target_sources(bitcoin-cli PRIVATE bitcoin-cli-res.rc)
-	endif()
+	generate_windows_version_info(bitcoin-cli
+		DESCRIPTION "JSON-RPC client for ${PACKAGE_NAME}"
+	)
 
-	target_link_libraries(bitcoin-cli common rpcclient Event::event)
+	target_link_libraries(bitcoin-cli common rpcclient)
+	link_event(bitcoin-cli event)
 
 	add_to_symbols_check(bitcoin-cli)
 	add_to_security_check(bitcoin-cli)
@@ -636,9 +703,9 @@ endif()
 # bitcoin-tx
 if(BUILD_BITCOIN_TX)
 	add_executable(bitcoin-tx bitcoin-tx.cpp)
-	if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-		target_sources(bitcoin-tx PRIVATE bitcoin-tx-res.rc)
-	endif()
+	generate_windows_version_info(bitcoin-tx
+		DESCRIPTION "CLI Bitcoin transaction editor utility"
+	)
 
 	target_link_libraries(bitcoin-tx bitcoinconsensus)
 
@@ -652,9 +719,9 @@ endif()
 # bitcoind
 add_executable(bitcoind bitcoind.cpp)
 target_link_libraries(bitcoind server)
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	target_sources(bitcoind PRIVATE bitcoind-res.rc)
-endif()
+generate_windows_version_info(bitcoind
+	DESCRIPTION "Bitcoin node with a JSON-RPC server"
+)
 add_to_symbols_check(bitcoind)
 add_to_security_check(bitcoind)
 

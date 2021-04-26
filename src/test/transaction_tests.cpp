@@ -21,6 +21,7 @@
 #include <script/standard.h>
 #include <streams.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <util/system.h>
 #include <validation.h>
 
@@ -29,6 +30,7 @@
 #include <test/jsonutil.h>
 #include <test/scriptflags.h>
 #include <test/util/setup_common.h>
+#include <test/util/transaction_utils.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -275,53 +277,12 @@ BOOST_AUTO_TEST_CASE(basic_transaction_tests) {
                         "Transaction with duplicate txins should be invalid.");
 }
 
-//
-// Helper: create two dummy transactions, each with
-// two outputs.  The first has 11 and 50 CENT outputs
-// paid to a TX_PUBKEY, the second 21 and 22 CENT outputs
-// paid to a TX_PUBKEYHASH.
-//
-static std::vector<CMutableTransaction>
-SetupDummyInputs(FillableSigningProvider &keystoreRet,
-                 CCoinsViewCache &coinsRet) {
-    std::vector<CMutableTransaction> dummyTransactions;
-    dummyTransactions.resize(2);
-
-    // Add some keys to the keystore:
-    CKey key[4];
-    for (int i = 0; i < 4; i++) {
-        key[i].MakeNewKey(i % 2);
-        keystoreRet.AddKey(key[i]);
-    }
-
-    // Create some dummy input transactions
-    dummyTransactions[0].vout.resize(2);
-    dummyTransactions[0].vout[0].nValue = 11 * CENT;
-    dummyTransactions[0].vout[0].scriptPubKey
-        << ToByteVector(key[0].GetPubKey()) << OP_CHECKSIG;
-    dummyTransactions[0].vout[1].nValue = 50 * CENT;
-    dummyTransactions[0].vout[1].scriptPubKey
-        << ToByteVector(key[1].GetPubKey()) << OP_CHECKSIG;
-    AddCoins(coinsRet, CTransaction(dummyTransactions[0]), 0);
-
-    dummyTransactions[1].vout.resize(2);
-    dummyTransactions[1].vout[0].nValue = 21 * CENT;
-    dummyTransactions[1].vout[0].scriptPubKey =
-        GetScriptForDestination(PKHash(key[2].GetPubKey()));
-    dummyTransactions[1].vout[1].nValue = 22 * CENT;
-    dummyTransactions[1].vout[1].scriptPubKey =
-        GetScriptForDestination(PKHash(key[3].GetPubKey()));
-    AddCoins(coinsRet, CTransaction(dummyTransactions[1]), 0);
-
-    return dummyTransactions;
-}
-
 BOOST_AUTO_TEST_CASE(test_Get) {
     FillableSigningProvider keystore;
     CCoinsView coinsDummy;
     CCoinsViewCache coins(&coinsDummy);
-    std::vector<CMutableTransaction> dummyTransactions =
-        SetupDummyInputs(keystore, coins);
+    std::vector<CMutableTransaction> dummyTransactions = SetupDummyInputs(
+        keystore, coins, {{11 * CENT, 50 * CENT, 21 * CENT, 22 * CENT}});
 
     CMutableTransaction t1;
     t1.vin.resize(3);
@@ -339,8 +300,6 @@ BOOST_AUTO_TEST_CASE(test_Get) {
 
     BOOST_CHECK(AreInputsStandard(CTransaction(t1), coins,
                                   STANDARD_SCRIPT_VERIFY_FLAGS));
-    BOOST_CHECK_EQUAL(coins.GetValueIn(CTransaction(t1)),
-                      (50 + 21 + 22) * CENT);
 }
 
 static void CreateCreditAndSpend(const FillableSigningProvider &keystore,
@@ -635,8 +594,8 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     FillableSigningProvider keystore;
     CCoinsView coinsDummy;
     CCoinsViewCache coins(&coinsDummy);
-    std::vector<CMutableTransaction> dummyTransactions =
-        SetupDummyInputs(keystore, coins);
+    std::vector<CMutableTransaction> dummyTransactions = SetupDummyInputs(
+        keystore, coins, {{11 * CENT, 50 * CENT, 21 * CENT, 22 * CENT}});
 
     CMutableTransaction t;
     t.vin.resize(1);
@@ -656,9 +615,34 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     BOOST_CHECK_EQUAL(nDustThreshold, 546 * SATOSHI);
     // dust:
     t.vout[0].nValue = nDustThreshold - SATOSHI;
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "dust");
     // not dust:
     t.vout[0].nValue = nDustThreshold;
+    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
+
+    // Disallowed nVersion
+    t.nVersion = -1;
+    reason.clear();
+    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "version");
+
+    t.nVersion = 0;
+    reason.clear();
+    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "version");
+
+    t.nVersion = 3;
+    reason.clear();
+    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "version");
+
+    // Allowed nVersion
+    t.nVersion = 1;
+    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
+
+    t.nVersion = 2;
     BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
 
     // Check dust with odd relay fee to verify rounding:
@@ -666,16 +650,20 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     dustRelayFee = CFeeRate(1234 * SATOSHI);
     // dust:
     t.vout[0].nValue = (672 - 1) * SATOSHI;
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "dust");
     // not dust:
     t.vout[0].nValue = 672 * SATOSHI;
     BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
     dustRelayFee = CFeeRate(DUST_RELAY_TX_FEE);
 
     t.vout[0].scriptPubKey = CScript() << OP_1;
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "scriptpubkey");
 
-    // MAX_OP_RETURN_RELAY-byte TX_NULL_DATA (standard)
+    // MAX_OP_RETURN_RELAY-byte TxoutType::NULL_DATA (standard)
     t.vout[0].scriptPubKey =
         CScript() << OP_RETURN
                   << ParseHex("646578784062697477617463682e636f2092c558ed52c56d"
@@ -691,7 +679,7 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
     BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY, t.vout[0].scriptPubKey.size());
     BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
 
-    // MAX_OP_RETURN_RELAY+1-byte TX_NULL_DATA (non-standard)
+    // MAX_OP_RETURN_RELAY+1-byte TxoutType::NULL_DATA (non-standard)
     t.vout[0].scriptPubKey =
         CScript() << OP_RETURN
                   << ParseHex("646578784062697477617463682e636f2092c558ed52c56d"
@@ -705,13 +693,15 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
                               "f5d00d4adf73f2dd112ca75cf19754651909becfbe65aed1"
                               "3afb2ab800");
     BOOST_CHECK_EQUAL(MAX_OP_RETURN_RELAY + 1, t.vout[0].scriptPubKey.size());
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "scriptpubkey");
 
     /**
      * Check when a custom value is used for -datacarriersize .
      */
     unsigned newMaxSize = 90;
-    gArgs.ForceSetArg("-datacarriersize", std::to_string(newMaxSize));
+    gArgs.ForceSetArg("-datacarriersize", ToString(newMaxSize));
 
     // Max user provided payload size is standard
     t.vout[0].scriptPubKey =
@@ -756,14 +746,16 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
 
     // ...so long as it only contains PUSHDATA's
     t.vout[0].scriptPubKey = CScript() << OP_RETURN << OP_RETURN;
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "scriptpubkey");
 
-    // TX_NULL_DATA w/o PUSHDATA
+    // TxoutType::NULL_DATA w/o PUSHDATA
     t.vout.resize(1);
     t.vout[0].scriptPubKey = CScript() << OP_RETURN;
     BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
 
-    // Only one TX_NULL_DATA permitted in all cases
+    // Only one TxoutType::NULL_DATA permitted in all cases
     t.vout.resize(2);
     t.vout[0].scriptPubKey =
         CScript() << OP_RETURN
@@ -773,18 +765,106 @@ BOOST_AUTO_TEST_CASE(test_IsStandard) {
         CScript() << OP_RETURN
                   << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909"
                               "a67962e0ea1f61deb649f6bc3f4cef38");
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "multi-op-return");
 
     t.vout[0].scriptPubKey =
         CScript() << OP_RETURN
                   << ParseHex("04678afdb0fe5548271967f1a67130b7105cd6a828e03909"
                               "a67962e0ea1f61deb649f6bc3f4cef38");
     t.vout[1].scriptPubKey = CScript() << OP_RETURN;
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "multi-op-return");
 
     t.vout[0].scriptPubKey = CScript() << OP_RETURN;
     t.vout[1].scriptPubKey = CScript() << OP_RETURN;
+    reason.clear();
     BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "multi-op-return");
+
+    // Check large scriptSig (non-standard if size is >1650 bytes)
+    t.vout.resize(1);
+    t.vout[0].nValue = MAX_MONEY;
+    t.vout[0].scriptPubKey = GetScriptForDestination(PKHash(key.GetPubKey()));
+    // OP_PUSHDATA2 with len (3 bytes) + data (1647 bytes) = 1650 bytes
+    t.vin[0].scriptSig = CScript() << std::vector<uint8_t>(1647, 0); // 1650
+    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
+
+    t.vin[0].scriptSig = CScript() << std::vector<uint8_t>(1648, 0); // 1651
+    reason.clear();
+    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "scriptsig-size");
+
+    // Check scriptSig format (non-standard if there are any other ops than just
+    // PUSHs)
+    t.vin[0].scriptSig = CScript()
+                         // OP_n (single byte pushes: n = 1, 0, -1, 16)
+                         << OP_TRUE << OP_0 << OP_1NEGATE
+                         << OP_16
+                         // OP_PUSHx [...x bytes...]
+                         << std::vector<uint8_t>(75, 0)
+                         // OP_PUSHDATA1 x [...x bytes...]
+                         << std::vector<uint8_t>(235, 0)
+                         // OP_PUSHDATA2 x [...x bytes...]
+                         << std::vector<uint8_t>(1234, 0) << OP_9;
+    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
+
+    const std::vector<uint8_t> non_push_ops = {
+        // arbitrary set of non-push operations
+        OP_NOP,
+        OP_VERIFY,
+        OP_IF,
+        OP_ROT,
+        OP_3DUP,
+        OP_SIZE,
+        OP_EQUAL,
+        OP_ADD,
+        OP_SUB,
+        OP_HASH256,
+        OP_CODESEPARATOR,
+        OP_CHECKSIG,
+        OP_CHECKLOCKTIMEVERIFY};
+
+    CScript::const_iterator pc = t.vin[0].scriptSig.begin();
+    while (pc < t.vin[0].scriptSig.end()) {
+        opcodetype opcode;
+        CScript::const_iterator prev_pc = pc;
+        // advance to next op
+        t.vin[0].scriptSig.GetOp(pc, opcode);
+        // for the sake of simplicity, we only replace single-byte push
+        // operations
+        if (opcode >= 1 && opcode <= OP_PUSHDATA4) {
+            continue;
+        }
+
+        int index = prev_pc - t.vin[0].scriptSig.begin();
+        // save op
+        uint8_t orig_op = *prev_pc;
+        // replace current push-op with each non-push-op
+        for (auto op : non_push_ops) {
+            t.vin[0].scriptSig[index] = op;
+            BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+            BOOST_CHECK_EQUAL(reason, "scriptsig-not-pushonly");
+        }
+        // restore op
+        t.vin[0].scriptSig[index] = orig_op;
+        BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
+    }
+
+    // Check bare multisig (standard if policy flag fIsBareMultisigStd is set)
+    fIsBareMultisigStd = true;
+    // simple 1-of-1
+    t.vout[0].scriptPubKey = GetScriptForMultisig(1, {key.GetPubKey()});
+    t.vin[0].scriptSig = CScript() << std::vector<uint8_t>(65, 0);
+    BOOST_CHECK(IsStandardTx(CTransaction(t), reason));
+
+    fIsBareMultisigStd = false;
+    reason.clear();
+    BOOST_CHECK(!IsStandardTx(CTransaction(t), reason));
+    BOOST_CHECK_EQUAL(reason, "bare-multisig");
+    fIsBareMultisigStd = DEFAULT_PERMIT_BAREMULTISIG;
 }
 
 BOOST_AUTO_TEST_CASE(txsize_activation_test) {
@@ -801,8 +881,59 @@ BOOST_AUTO_TEST_CASE(txsize_activation_test) {
         params, minTx, state, magneticAnomalyActivationHeight - 1, 5678, 1234));
     BOOST_CHECK(!ContextualCheckTransaction(
         params, minTx, state, magneticAnomalyActivationHeight, 5678, 1234));
-    BOOST_CHECK_EQUAL(state.GetRejectCode(), REJECT_INVALID);
     BOOST_CHECK_EQUAL(state.GetRejectReason(), "bad-txns-undersize");
+}
+
+BOOST_AUTO_TEST_CASE(tx_getvalueout) {
+    CMutableTransaction mtx;
+
+    // Negative output value
+    mtx.vout.resize(1);
+    mtx.vout[0].nValue = -1 * SATOSHI;
+    CTransaction negative_tx{mtx};
+    BOOST_CHECK_THROW(negative_tx.GetValueOut(), std::runtime_error);
+
+    // Good output
+    mtx.vout[0].nValue = 10000 * SATOSHI;
+    CTransaction valid_one_output_tx{mtx};
+    BOOST_CHECK_EQUAL(valid_one_output_tx.GetValueOut(), 10000 * SATOSHI);
+
+    // Maximum output
+    mtx.vout[0].nValue = MAX_MONEY;
+    CTransaction max_one_output_tx{mtx};
+    BOOST_CHECK_EQUAL(max_one_output_tx.GetValueOut(), MAX_MONEY);
+
+    // Too high output
+    mtx.vout[0].nValue = MAX_MONEY + 1 * SATOSHI;
+    CTransaction too_high_tx{mtx};
+    BOOST_CHECK_THROW(too_high_tx.GetValueOut(), std::runtime_error);
+
+    // Valid sum
+    mtx.vout.resize(2);
+    mtx.vout[0].nValue = 42 * SATOSHI;
+    mtx.vout[1].nValue = 1337 * SATOSHI;
+    CTransaction valid_tx{mtx};
+    BOOST_CHECK_EQUAL(valid_tx.GetValueOut(), 1379 * SATOSHI);
+
+    // Maximum sum
+    mtx.vout[0].nValue = MAX_MONEY - 1 * SATOSHI;
+    mtx.vout[1].nValue = 1 * SATOSHI;
+    CTransaction max_two_outputs_tx{mtx};
+    BOOST_CHECK_EQUAL(max_two_outputs_tx.GetValueOut(), MAX_MONEY);
+
+    // Too high sum
+    mtx.vout[0].nValue = MAX_MONEY - 1 * SATOSHI;
+    mtx.vout[1].nValue = 2 * SATOSHI;
+    CTransaction too_high_sum_tx{mtx};
+    BOOST_CHECK_THROW(too_high_sum_tx.GetValueOut(), std::runtime_error);
+
+    // First output valid, but the second output would cause an int64 overflow.
+    // This issue was encountered while fuzzing:
+    // https://github.com/bitcoin/bitcoin/issues/18046
+    mtx.vout[0].nValue = 2 * SATOSHI;
+    mtx.vout[1].nValue = (std::numeric_limits<int64_t>::max() - 1) * SATOSHI;
+    CTransaction overflow_sum_tx{mtx};
+    BOOST_CHECK_THROW(overflow_sum_tx.GetValueOut(), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

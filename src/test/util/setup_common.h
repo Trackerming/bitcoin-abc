@@ -14,6 +14,8 @@
 #include <pubkey.h>
 #include <random.h>
 #include <scheduler.h>
+#include <util/check.h>
+#include <util/string.h>
 #include <util/system.h>
 
 #include <boost/thread.hpp> // For boost::thread_group
@@ -51,12 +53,30 @@ extern FastRandomContext g_insecure_rand_ctx;
  */
 extern bool g_mock_deterministic_tests;
 
-static inline void SeedInsecureRand(bool deterministic = false) {
-    g_insecure_rand_ctx = FastRandomContext(deterministic);
+enum class SeedRand {
+    ZEROS, //!< Seed with a compile time constant of zeros
+    SEED,  //!< Call the Seed() helper
+};
+
+/**
+ * Seed the given random ctx or use the seed passed in via an
+ * environment var
+ */
+void Seed(FastRandomContext &ctx);
+
+static inline void SeedInsecureRand(SeedRand seed = SeedRand::SEED) {
+    if (seed == SeedRand::ZEROS) {
+        g_insecure_rand_ctx = FastRandomContext(/* deterministic */ true);
+    } else {
+        Seed(g_insecure_rand_ctx);
+    }
 }
 
 static inline uint32_t InsecureRand32() {
     return g_insecure_rand_ctx.rand32();
+}
+static inline uint160 InsecureRand160() {
+    return g_insecure_rand_ctx.rand160();
 }
 static inline uint256 InsecureRand256() {
     return g_insecure_rand_ctx.rand256();
@@ -73,6 +93,8 @@ static inline bool InsecureRandBool() {
 
 static constexpr Amount CENT(COIN / 100);
 
+extern std::vector<const char *> fixture_extra_args;
+
 /**
  * Basic testing setup.
  * This just configures logging, data dir and chain parameters.
@@ -82,7 +104,8 @@ struct BasicTestingSetup {
     NodeContext m_node;
 
     explicit BasicTestingSetup(
-        const std::string &chainName = CBaseChainParams::MAIN);
+        const std::string &chainName = CBaseChainParams::MAIN,
+        const std::vector<const char *> &extra_args = {});
     ~BasicTestingSetup();
 
 private:
@@ -96,8 +119,8 @@ private:
 struct TestingSetup : public BasicTestingSetup {
     boost::thread_group threadGroup;
 
-    explicit TestingSetup(
-        const std::string &chainName = CBaseChainParams::MAIN);
+    explicit TestingSetup(const std::string &chainName = CBaseChainParams::MAIN,
+                          const std::vector<const char *> &extra_args = {});
     ~TestingSetup();
 };
 
@@ -177,5 +200,21 @@ std::ostream &operator<<(std::ostream &os, const uint256 &num);
 std::ostream &operator<<(std::ostream &os, const ScriptError &err);
 
 CBlock getBlock13b8a();
+
+/**
+ * BOOST_CHECK_EXCEPTION predicates to check the specific validation error.
+ * Use as
+ * BOOST_CHECK_EXCEPTION(code that throws, exception type, HasReason("foo"));
+ */
+class HasReason {
+public:
+    explicit HasReason(const std::string &reason) : m_reason(reason) {}
+    template <typename E> bool operator()(const E &e) const {
+        return std::string(e.what()).find(m_reason) != std::string::npos;
+    };
+
+private:
+    const std::string m_reason;
+};
 
 #endif // BITCOIN_TEST_UTIL_SETUP_COMMON_H

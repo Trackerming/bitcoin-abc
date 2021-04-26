@@ -45,7 +45,7 @@ bool ContextualCheckTransaction(const Consensus::Params &params,
     if (!IsFinalTx(tx, nHeight, nLockTimeCutoff)) {
         // While this is only one transaction, we use txns in the error to
         // ensure continuity with other clients.
-        return state.Invalid(TxValidationResult::TX_CONSENSUS, REJECT_INVALID,
+        return state.Invalid(TxValidationResult::TX_CONSENSUS,
                              "bad-txns-nonfinal", "non-final transaction");
     }
 
@@ -53,7 +53,7 @@ bool ContextualCheckTransaction(const Consensus::Params &params,
         // Size limit
         if (::GetSerializeSize(tx, PROTOCOL_VERSION) < MIN_TX_SIZE) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS,
-                                 REJECT_INVALID, "bad-txns-undersize");
+                                 "bad-txns-undersize");
         }
     }
 
@@ -68,9 +68,9 @@ bool ContextualCheckTransaction(const Consensus::Params &params,
  */
 std::pair<int, int64_t> CalculateSequenceLocks(const CTransaction &tx,
                                                int flags,
-                                               std::vector<int> *prevHeights,
+                                               std::vector<int> &prevHeights,
                                                const CBlockIndex &block) {
-    assert(prevHeights->size() == tx.vin.size());
+    assert(prevHeights.size() == tx.vin.size());
 
     // Will be set to the equivalent height- and time-based nLockTime
     // values that would be necessary to satisfy all relative lock-
@@ -100,11 +100,11 @@ std::pair<int, int64_t> CalculateSequenceLocks(const CTransaction &tx,
         // consensus-enforced meaning at this point.
         if (txin.nSequence & CTxIn::SEQUENCE_LOCKTIME_DISABLE_FLAG) {
             // The height of this input is not relevant for sequence locks
-            (*prevHeights)[txinIndex] = 0;
+            prevHeights[txinIndex] = 0;
             continue;
         }
 
-        int nCoinHeight = (*prevHeights)[txinIndex];
+        int nCoinHeight = prevHeights[txinIndex];
 
         if (txin.nSequence & CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG) {
             int64_t nCoinTime = block.GetAncestor(std::max(nCoinHeight - 1, 0))
@@ -149,7 +149,7 @@ bool EvaluateSequenceLocks(const CBlockIndex &block,
 }
 
 bool SequenceLocks(const CTransaction &tx, int flags,
-                   std::vector<int> *prevHeights, const CBlockIndex &block) {
+                   std::vector<int> &prevHeights, const CBlockIndex &block) {
     return EvaluateSequenceLocks(
         block, CalculateSequenceLocks(tx, flags, prevHeights, block));
 }
@@ -161,7 +161,7 @@ bool CheckTxInputs(const CTransaction &tx, TxValidationState &state,
     // are the actual inputs available?
     if (!inputs.HaveInputs(tx)) {
         return state.Invalid(TxValidationResult::TX_MISSING_INPUTS,
-                             REJECT_INVALID, "bad-txns-inputs-missingorspent",
+                             "bad-txns-inputs-missingorspent",
                              strprintf("%s: inputs missing/spent", __func__));
     }
 
@@ -175,7 +175,7 @@ bool CheckTxInputs(const CTransaction &tx, TxValidationState &state,
         if (coin.IsCoinBase() &&
             nSpendHeight - coin.GetHeight() < COINBASE_MATURITY) {
             return state.Invalid(
-                TxValidationResult::TX_PREMATURE_SPEND, REJECT_INVALID,
+                TxValidationResult::TX_PREMATURE_SPEND,
                 "bad-txns-premature-spend-of-coinbase",
                 strprintf("tried to spend coinbase at depth %d",
                           nSpendHeight - coin.GetHeight()));
@@ -185,24 +185,22 @@ bool CheckTxInputs(const CTransaction &tx, TxValidationState &state,
         nValueIn += coin.GetTxOut().nValue;
         if (!MoneyRange(coin.GetTxOut().nValue) || !MoneyRange(nValueIn)) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS,
-                                 REJECT_INVALID,
                                  "bad-txns-inputvalues-outofrange");
         }
     }
 
     const Amount value_out = tx.GetValueOut();
     if (nValueIn < value_out) {
-        return state.Invalid(TxValidationResult::TX_CONSENSUS, REJECT_INVALID,
-                             "bad-txns-in-belowout",
-                             strprintf("value in (%s) < value out (%s)",
-                                       FormatMoney(nValueIn),
-                                       FormatMoney(value_out)));
+        return state.Invalid(
+            TxValidationResult::TX_CONSENSUS, "bad-txns-in-belowout",
+            strprintf("value in (%s) < value out (%s)", FormatMoney(nValueIn),
+                      FormatMoney(value_out)));
     }
 
     // Tally transaction fees
     const Amount txfee_aux = nValueIn - value_out;
     if (!MoneyRange(txfee_aux)) {
-        return state.Invalid(TxValidationResult::TX_CONSENSUS, REJECT_INVALID,
+        return state.Invalid(TxValidationResult::TX_CONSENSUS,
                              "bad-txns-fee-outofrange");
     }
 

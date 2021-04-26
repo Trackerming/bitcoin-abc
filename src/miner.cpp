@@ -24,7 +24,6 @@
 #include <timedata.h>
 #include <util/moneystr.h>
 #include <util/system.h>
-#include <util/validation.h>
 #include <validation.h>
 
 #include <algorithm>
@@ -59,17 +58,16 @@ BlockAssembler::Options::Options()
       blockMinFeeRate(DEFAULT_BLOCK_MIN_TX_FEE_PER_KB) {}
 
 BlockAssembler::BlockAssembler(const CChainParams &params,
-                               const CTxMemPool &_mempool,
+                               const CTxMemPool &mempool,
                                const Options &options)
-    : chainParams(params), mempool(&_mempool) {
+    : chainParams(params), m_mempool(mempool) {
     blockMinFeeRate = options.blockMinFeeRate;
     // Limit size to between 1K and options.nExcessiveBlockSize -1K for sanity:
     nMaxGeneratedBlockSize = std::max<uint64_t>(
         1000, std::min<uint64_t>(options.nExcessiveBlockSize - 1000,
                                  options.nMaxGeneratedBlockSize));
     // Calculate the max consensus sigchecks for this block.
-    auto nMaxBlockSigChecks =
-        GetMaxBlockSigChecksCount(options.nExcessiveBlockSize);
+    auto nMaxBlockSigChecks = GetMaxBlockSigChecksCount(nMaxGeneratedBlockSize);
     // Allow the full amount of signature check operations in lieu of a separate
     // config option. (We are mining relayed transactions with validity cached
     // by everyone else, and so the block will propagate quickly, regardless of
@@ -100,9 +98,9 @@ static BlockAssembler::Options DefaultOptions(const Config &config) {
     return options;
 }
 
-BlockAssembler::BlockAssembler(const Config &config, const CTxMemPool &_mempool)
-    : BlockAssembler(config.GetChainParams(), _mempool,
-                     DefaultOptions(config)) {}
+BlockAssembler::BlockAssembler(const Config &config, const CTxMemPool &mempool)
+    : BlockAssembler(config.GetChainParams(), mempool, DefaultOptions(config)) {
+}
 
 void BlockAssembler::resetBlock() {
     inBlock.clear();
@@ -116,8 +114,8 @@ void BlockAssembler::resetBlock() {
     nFees = Amount::zero();
 }
 
-Optional<int64_t> BlockAssembler::m_last_block_num_txs{nullopt};
-Optional<int64_t> BlockAssembler::m_last_block_size{nullopt};
+std::optional<int64_t> BlockAssembler::m_last_block_num_txs{std::nullopt};
+std::optional<int64_t> BlockAssembler::m_last_block_size{std::nullopt};
 
 std::unique_ptr<CBlockTemplate>
 BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
@@ -136,7 +134,7 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
     // Add dummy coinbase tx as first transaction.  It is updated at the end.
     pblocktemplate->entries.emplace_back(CTransactionRef(), -SATOSHI, -1);
 
-    LOCK2(cs_main, mempool->cs);
+    LOCK2(cs_main, m_mempool.cs);
     CBlockIndex *pindexPrev = ::ChainActive().Tip();
     assert(pindexPrev != nullptr);
     nHeight = pindexPrev->nHeight + 1;
@@ -229,8 +227,7 @@ BlockAssembler::CreateNewBlock(const CScript &scriptPubKeyIn) {
                                .withCheckPoW(false)
                                .withCheckMerkleRoot(false))) {
         throw std::runtime_error(strprintf("%s: TestBlockValidity failed: %s",
-                                           __func__,
-                                           FormatStateMessage(state)));
+                                           __func__, state.ToString()));
     }
     int64_t nTime2 = GetTimeMicros();
 
@@ -322,7 +319,7 @@ int BlockAssembler::UpdatePackagesForAdded(
     int nDescendantsUpdated = 0;
     for (CTxMemPool::txiter it : alreadyAdded) {
         CTxMemPool::setEntries descendants;
-        mempool->CalculateDescendants(it, descendants);
+        m_mempool.CalculateDescendants(it, descendants);
         // Insert all descendants (not yet in block) into the modified set.
         for (CTxMemPool::txiter desc : descendants) {
             if (alreadyAdded.count(desc)) {
@@ -357,7 +354,7 @@ int BlockAssembler::UpdatePackagesForAdded(
 bool BlockAssembler::SkipMapTxEntry(
     CTxMemPool::txiter it, indexed_modified_transaction_set &mapModifiedTx,
     CTxMemPool::setEntries &failedTx) {
-    assert(it != mempool->mapTx.end());
+    assert(it != m_mempool.mapTx.end());
     return mapModifiedTx.count(it) || inBlock.count(it) || failedTx.count(it);
 }
 
@@ -404,7 +401,7 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected,
     UpdatePackagesForAdded(inBlock, mapModifiedTx);
 
     CTxMemPool::indexed_transaction_set::index<ancestor_score>::type::iterator
-        mi = mempool->mapTx.get<ancestor_score>().begin();
+        mi = m_mempool.mapTx.get<ancestor_score>().begin();
     CTxMemPool::txiter iter;
 
     // Limit the number of attempts to add transactions to the block when it is
@@ -413,11 +410,11 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected,
     const int64_t MAX_CONSECUTIVE_FAILURES = 1000;
     int64_t nConsecutiveFailed = 0;
 
-    while (mi != mempool->mapTx.get<ancestor_score>().end() ||
+    while (mi != m_mempool.mapTx.get<ancestor_score>().end() ||
            !mapModifiedTx.empty()) {
         // First try to find a new transaction in mapTx to evaluate.
-        if (mi != mempool->mapTx.get<ancestor_score>().end() &&
-            SkipMapTxEntry(mempool->mapTx.project<0>(mi), mapModifiedTx,
+        if (mi != m_mempool.mapTx.get<ancestor_score>().end() &&
+            SkipMapTxEntry(m_mempool.mapTx.project<0>(mi), mapModifiedTx,
                            failedTx)) {
             ++mi;
             continue;
@@ -428,13 +425,13 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected,
         bool fUsingModified = false;
 
         modtxscoreiter modit = mapModifiedTx.get<ancestor_score>().begin();
-        if (mi == mempool->mapTx.get<ancestor_score>().end()) {
+        if (mi == m_mempool.mapTx.get<ancestor_score>().end()) {
             // We're out of entries in mapTx; use the entry from mapModifiedTx
             iter = modit->iter;
             fUsingModified = true;
         } else {
             // Try to compare the mapTx entry to the mapModifiedTx entry.
-            iter = mempool->mapTx.project<0>(mi);
+            iter = m_mempool.mapTx.project<0>(mi);
             if (modit != mapModifiedTx.get<ancestor_score>().end() &&
                 CompareTxMemPoolEntryByAncestorFee()(
                     *modit, CTxMemPoolModifiedEntry(iter))) {
@@ -503,8 +500,9 @@ void BlockAssembler::addPackageTxs(int &nPackagesSelected,
         CTxMemPool::setEntries ancestors;
         uint64_t nNoLimit = std::numeric_limits<uint64_t>::max();
         std::string dummy;
-        mempool->CalculateMemPoolAncestors(*iter, ancestors, nNoLimit, nNoLimit,
-                                           nNoLimit, nNoLimit, dummy, false);
+        m_mempool.CalculateMemPoolAncestors(*iter, ancestors, nNoLimit,
+                                            nNoLimit, nNoLimit, nNoLimit, dummy,
+                                            false);
 
         onlyUnconfirmed(ancestors);
         ancestors.insert(iter);
@@ -561,8 +559,7 @@ void IncrementExtraNonce(CBlock *pblock, const CBlockIndex *pindexPrev,
     CMutableTransaction txCoinbase(*pblock->vtx[0]);
     txCoinbase.vin[0].scriptSig =
         (CScript() << nHeight << CScriptNum(nExtraNonce)
-                   << getExcessiveBlockSizeSig(nExcessiveBlockSize)) +
-        COINBASE_FLAGS;
+                   << getExcessiveBlockSizeSig(nExcessiveBlockSize));
 
     // Make sure the coinbase is big enough.
     uint64_t coinbaseSize = ::GetSerializeSize(txCoinbase, PROTOCOL_VERSION);

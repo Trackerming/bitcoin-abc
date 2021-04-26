@@ -4,13 +4,12 @@
 
 #include <qt/peertablemodel.h>
 
-#include <qt/clientmodel.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 
 #include <interfaces/node.h>
 
-#include <algorithm>
+#include <utility>
 
 #include <QDebug>
 #include <QList>
@@ -99,9 +98,8 @@ public:
     }
 };
 
-PeerTableModel::PeerTableModel(interfaces::Node &node, ClientModel *parent)
-    : QAbstractTableModel(parent), m_node(node), clientModel(parent),
-      timer(nullptr) {
+PeerTableModel::PeerTableModel(interfaces::Node &node, QObject *parent)
+    : QAbstractTableModel(parent), m_node(node), timer(nullptr) {
     columns << tr("NodeId") << tr("Node/Service") << tr("Ping") << tr("Sent")
             << tr("Received") << tr("User Agent");
     priv.reset(new PeerTablePriv());
@@ -150,7 +148,10 @@ QVariant PeerTableModel::data(const QModelIndex &index, int role) const {
             case NetNodeId:
                 return (qint64)rec->nodeStats.nodeid;
             case Address:
-                return QString::fromStdString(rec->nodeStats.addrName);
+                // prepend to peer address down-arrow symbol for inbound
+                // connection and up-arrow for outbound connection
+                return QString(rec->nodeStats.fInbound ? "↓ " : "↑ ") +
+                       QString::fromStdString(rec->nodeStats.addrName);
             case Subversion:
                 return QString::fromStdString(rec->nodeStats.cleanSubVer);
             case Ping:

@@ -18,6 +18,7 @@
 #include <script/signingprovider.h>
 #include <util/moneystr.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <util/system.h>
 #include <util/translation.h>
 
@@ -35,68 +36,65 @@ static const int CONTINUE_EXECUTION = -1;
 
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
-static void SetupBitcoinTxArgs() {
-    gArgs.AddArg("-?", "This help message", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-create", "Create new, empty TX.", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-json", "Select JSON output", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-txid",
-                 "Output only the hex-encoded transaction id of the resultant "
-                 "transaction.",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    SetupChainParamsBaseOptions();
+static void SetupBitcoinTxArgs(ArgsManager &argsman) {
+    SetupHelpOptions(argsman);
 
-    gArgs.AddArg("delin=N", "Delete input N from TX", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::COMMANDS);
-    gArgs.AddArg("delout=N", "Delete output N from TX", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::COMMANDS);
-    gArgs.AddArg("in=TXID:VOUT(:SEQUENCE_NUMBER)", "Add input to TX",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
-    gArgs.AddArg("locktime=N", "Set TX lock time to N", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::COMMANDS);
-    gArgs.AddArg("nversion=N", "Set TX version to N", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::COMMANDS);
-    gArgs.AddArg("outaddr=VALUE:ADDRESS", "Add address-based output to TX",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
-    gArgs.AddArg("outpubkey=VALUE:PUBKEY[:FLAGS]",
-                 "Add pay-to-pubkey output to TX. "
-                 "Optionally add the \"S\" flag to wrap the output in a "
-                 "pay-to-script-hash.",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
-    gArgs.AddArg("outdata=[VALUE:]DATA", "Add data-based output to TX",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
-    gArgs.AddArg("outscript=VALUE:SCRIPT[:FLAGS]",
-                 "Add raw script output to TX. "
-                 "Optionally add the \"S\" flag to wrap the output in a "
-                 "pay-to-script-hash.",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
-    gArgs.AddArg(
+    argsman.AddArg("-create", "Create new, empty TX.", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::OPTIONS);
+    argsman.AddArg("-json", "Select JSON output", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::OPTIONS);
+    argsman.AddArg(
+        "-txid",
+        "Output only the hex-encoded transaction id of the resultant "
+        "transaction.",
+        ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    SetupChainParamsBaseOptions(argsman);
+
+    argsman.AddArg("delin=N", "Delete input N from TX", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::COMMANDS);
+    argsman.AddArg("delout=N", "Delete output N from TX",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg("in=TXID:VOUT(:SEQUENCE_NUMBER)", "Add input to TX",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg("locktime=N", "Set TX lock time to N",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg("nversion=N", "Set TX version to N", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::COMMANDS);
+    argsman.AddArg("outaddr=VALUE:ADDRESS", "Add address-based output to TX",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg("outpubkey=VALUE:PUBKEY[:FLAGS]",
+                   "Add pay-to-pubkey output to TX. "
+                   "Optionally add the \"S\" flag to wrap the output in a "
+                   "pay-to-script-hash.",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg("outdata=[VALUE:]DATA", "Add data-based output to TX",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg("outscript=VALUE:SCRIPT[:FLAGS]",
+                   "Add raw script output to TX. "
+                   "Optionally add the \"S\" flag to wrap the output in a "
+                   "pay-to-script-hash.",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg(
         "outmultisig=VALUE:REQUIRED:PUBKEYS:PUBKEY1:PUBKEY2:....[:FLAGS]",
         "Add Pay To n-of-m Multi-sig output to TX. n = REQUIRED, m = PUBKEYS. "
         "Optionally add the \"S\" flag to wrap the output in a "
         "pay-to-script-hash.",
         ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
-    gArgs.AddArg("sign=SIGHASH-FLAGS",
-                 "Add zero or more signatures to transaction. "
-                 "This command requires JSON registers:"
-                 "prevtxs=JSON object, "
-                 "privatekeys=JSON object. "
-                 "See signrawtransactionwithkey docs for format of sighash "
-                 "flags, JSON objects.",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
+    argsman.AddArg("sign=SIGHASH-FLAGS",
+                   "Add zero or more signatures to transaction. "
+                   "This command requires JSON registers:"
+                   "prevtxs=JSON object, "
+                   "privatekeys=JSON object. "
+                   "See signrawtransactionwithkey docs for format of sighash "
+                   "flags, JSON objects.",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
 
-    gArgs.AddArg("load=NAME:FILENAME",
-                 "Load JSON file FILENAME into register NAME",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::REGISTER_COMMANDS);
-    gArgs.AddArg("set=NAME:JSON-STRING",
-                 "Set register NAME to given JSON-STRING",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::REGISTER_COMMANDS);
-
-    // Hidden
-    gArgs.AddArg("-h", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
-    gArgs.AddArg("-help", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
+    argsman.AddArg("load=NAME:FILENAME",
+                   "Load JSON file FILENAME into register NAME",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::REGISTER_COMMANDS);
+    argsman.AddArg("set=NAME:JSON-STRING",
+                   "Set register NAME to given JSON-STRING",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::REGISTER_COMMANDS);
 }
 
 //
@@ -107,7 +105,7 @@ static int AppInitRawTx(int argc, char *argv[]) {
     //
     // Parameters
     //
-    SetupBitcoinTxArgs();
+    SetupBitcoinTxArgs(gArgs);
     std::string error;
     if (!gArgs.ParseParameters(argc, argv, error)) {
         tfm::format(std::cerr, "Error parsing command line arguments: %s\n",
@@ -384,8 +382,8 @@ static void MutateTxAddOutMultiSig(CMutableTransaction &tx,
     if (required < 1 || required > MAX_PUBKEYS_PER_MULTISIG || numkeys < 1 ||
         numkeys > MAX_PUBKEYS_PER_MULTISIG || numkeys < required) {
         throw std::runtime_error("multisig parameter mismatch. Required " +
-                                 std::to_string(required) + " of " +
-                                 std::to_string(numkeys) + "signatures.");
+                                 ToString(required) + " of " +
+                                 ToString(numkeys) + "signatures.");
     }
 
     // extract and validate PUBKEYs

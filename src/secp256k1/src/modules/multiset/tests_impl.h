@@ -1,11 +1,11 @@
-/**********************************************************************
- * Copyright (c) 2017 Tomas van der Wansem                            *
- * Distributed under the MIT software license, see the accompanying   *
- * file COPYING or http://www.opensource.org/licenses/mit-license.php.*
- **********************************************************************/
+/***********************************************************************
+ * Copyright (c) 2017 Tomas van der Wansem                             *
+ * Distributed under the MIT software license, see the accompanying    *
+ * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
+ ***********************************************************************/
 
-#ifndef _SECP256K1_MODULE_MULTISET_TESTS_
-#define _SECP256K1_MODULE_MULTISET_TESTS_
+#ifndef SECP256K1_MODULE_MULTISET_TESTS_H
+#define SECP256K1_MODULE_MULTISET_TESTS_H
 
 
 #include "include/secp256k1.h"
@@ -40,7 +40,7 @@ static void initdata(void) {
     int n,m;
     for(n=0; n < DATACOUNT; n++) {
         for(m=0; m < DATALEN/4; m++) {
-            uint32_t x = secp256k1_rand32();
+            uint32_t x = secp256k1_testrand32();
             memcpy(&elements[n][m], &x, sizeof(x));
         }
 
@@ -344,4 +344,4 @@ void run_multiset_tests(void) {
     test_testvector();
 }
 
-#endif /* _SECP256K1_MODULE_MULTISET_TESTS_ */
+#endif /* SECP256K1_MODULE_MULTISET_TESTS_H */

@@ -42,7 +42,7 @@ from test_framework.util import assert_equal, assert_raises_rpc_error
 REPLAY_PROTECTION_START_TIME = 2000000000
 
 # Error due to invalid signature
-RPC_INVALID_SIGNATURE_ERROR = "mandatory-script-verify-flag-failed (Signature must be zero for failed CHECK(MULTI)SIG operation) (code 16)"
+RPC_INVALID_SIGNATURE_ERROR = "mandatory-script-verify-flag-failed (Signature must be zero for failed CHECK(MULTI)SIG operation)"
 
 
 class PreviousSpendableOutput(object):
@@ -60,7 +60,7 @@ class ReplayProtectionTest(BitcoinTestFramework):
         self.block_heights = {}
         self.tip = None
         self.blocks = {}
-        self.extra_args = [['-whitelist=127.0.0.1',
+        self.extra_args = [['-whitelist=noban@127.0.0.1',
                             "-replayprotectionactivationtime={}".format(
                                 REPLAY_PROTECTION_START_TIME),
                             "-acceptnonstdtxn=1"]]
@@ -155,7 +155,7 @@ class ReplayProtectionTest(BitcoinTestFramework):
             # Fund transaction
             script = CScript([public_key, OP_CHECKSIG])
             txfund = create_tx_with_script(
-                spend.tx, spend.n, b'', 50 * COIN - 1000, script)
+                spend.tx, spend.n, b'', amount=50 * COIN - 1000, script_pub_key=script)
             txfund.rehash()
 
             # Spend transaction

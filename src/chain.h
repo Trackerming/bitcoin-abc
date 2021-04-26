@@ -82,43 +82,48 @@ bool AreOnTheSameFork(const CBlockIndex *pa, const CBlockIndex *pb);
 /** Used to marshal pointers into hashes for db storage. */
 class CDiskBlockIndex : public CBlockIndex {
 public:
+    static constexpr int TRACK_SIZE_VERSION = 220800;
+
     BlockHash hashPrev;
 
-    CDiskBlockIndex() { hashPrev = BlockHash(); }
+    CDiskBlockIndex() : hashPrev() {}
 
     explicit CDiskBlockIndex(const CBlockIndex *pindex) : CBlockIndex(*pindex) {
         hashPrev = (pprev ? pprev->GetBlockHash() : BlockHash());
     }
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
+    SERIALIZE_METHODS(CDiskBlockIndex, obj) {
         int _nVersion = s.GetVersion();
         if (!(s.GetType() & SER_GETHASH)) {
-            READWRITE(VARINT(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
+            READWRITE(VARINT_MODE(_nVersion, VarIntMode::NONNEGATIVE_SIGNED));
         }
 
-        READWRITE(VARINT(nHeight, VarIntMode::NONNEGATIVE_SIGNED));
-        READWRITE(nStatus);
-        READWRITE(VARINT(nTx));
-        if (nStatus.hasData() || nStatus.hasUndo()) {
-            READWRITE(VARINT(nFile, VarIntMode::NONNEGATIVE_SIGNED));
+        READWRITE(VARINT_MODE(obj.nHeight, VarIntMode::NONNEGATIVE_SIGNED));
+        READWRITE(obj.nStatus);
+        READWRITE(VARINT(obj.nTx));
+
+        // The size of the blocks are tracked starting at version 0.22.8
+        if (obj.nStatus.hasData() && _nVersion >= TRACK_SIZE_VERSION) {
+            READWRITE(VARINT(obj.nSize));
         }
-        if (nStatus.hasData()) {
-            READWRITE(VARINT(nDataPos));
+
+        if (obj.nStatus.hasData() || obj.nStatus.hasUndo()) {
+            READWRITE(VARINT_MODE(obj.nFile, VarIntMode::NONNEGATIVE_SIGNED));
         }
-        if (nStatus.hasUndo()) {
-            READWRITE(VARINT(nUndoPos));
+        if (obj.nStatus.hasData()) {
+            READWRITE(VARINT(obj.nDataPos));
+        }
+        if (obj.nStatus.hasUndo()) {
+            READWRITE(VARINT(obj.nUndoPos));
         }
 
         // block header
-        READWRITE(this->nVersion);
-        READWRITE(hashPrev);
-        READWRITE(hashMerkleRoot);
-        READWRITE(nTime);
-        READWRITE(nBits);
-        READWRITE(nNonce);
+        READWRITE(obj.nVersion);
+        READWRITE(obj.hashPrev);
+        READWRITE(obj.hashMerkleRoot);
+        READWRITE(obj.nTime);
+        READWRITE(obj.nBits);
+        READWRITE(obj.nNonce);
     }
 
     BlockHash GetBlockHash() const {

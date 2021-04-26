@@ -8,7 +8,9 @@
 #define BITCOIN_LOGGING_H
 
 #include <fs.h>
+#include <threadsafety.h>
 #include <tinyformat.h>
+#include <util/string.h>
 
 #include <atomic>
 #include <cstdint>
@@ -24,7 +26,7 @@ static const bool DEFAULT_LOGTHREADNAMES = false;
 extern bool fLogIPs;
 extern const char *const DEFAULT_DEBUGLOGFILE;
 
-struct CLogCategoryActive {
+struct LogCategory {
     std::string category;
     bool active;
 };
@@ -39,7 +41,7 @@ enum LogFlags : uint32_t {
     HTTP = (1 << 3),
     BENCH = (1 << 4),
     ZMQ = (1 << 5),
-    DB = (1 << 6),
+    WALLETDB = (1 << 6),
     RPC = (1 << 7),
     ESTIMATEFEE = (1 << 8),
     ADDRMAN = (1 << 9),
@@ -62,13 +64,12 @@ class Logger {
 private:
     // Can not use Mutex from sync.h because in debug mode it would cause a
     // deadlock when a potential deadlock was detected
-    mutable std::mutex m_cs;
-    // GUARDED_BY(m_cs)
-    FILE *m_fileout = nullptr;
-    // GUARDED_BY(m_cs)
-    std::list<std::string> m_msgs_before_open;
-    //! Buffer messages before logging can be started. GUARDED_BY(m_cs)
-    bool m_buffering{true};
+    mutable StdMutex m_cs;
+
+    FILE *m_fileout GUARDED_BY(m_cs) = nullptr;
+    std::list<std::string> m_msgs_before_open GUARDED_BY(m_cs);
+    //! Buffer messages before logging can be started.
+    bool m_buffering GUARDED_BY(m_cs) = true;
 
     /**
      * m_started_new_line is a state variable that will suppress printing of the
@@ -85,7 +86,7 @@ private:
 
     /** Slots that connect to the print signal */
     std::list<std::function<void(const std::string &)>>
-        m_print_callbacks /* GUARDED_BY(m_cs) */ {};
+        m_print_callbacks GUARDED_BY(m_cs){};
 
 public:
     bool m_print_to_console = false;
@@ -105,7 +106,7 @@ public:
 
     /** Returns whether logs will be written to any output */
     bool Enabled() const {
-        std::lock_guard<std::mutex> scoped_lock(m_cs);
+        StdLockGuard scoped_lock(m_cs);
         return m_buffering || m_print_to_console || m_print_to_file ||
                !m_print_callbacks.empty();
     }
@@ -113,7 +114,7 @@ public:
     /** Connect a slot to the print signal and return the connection */
     std::list<std::function<void(const std::string &)>>::iterator
     PushBackCallback(std::function<void(const std::string &)> fun) {
-        std::lock_guard<std::mutex> scoped_lock(m_cs);
+        StdLockGuard scoped_lock(m_cs);
         m_print_callbacks.push_back(std::move(fun));
         return --m_print_callbacks.end();
     }
@@ -121,7 +122,7 @@ public:
     /** Delete a connection */
     void DeleteCallback(
         std::list<std::function<void(const std::string &)>>::iterator it) {
-        std::lock_guard<std::mutex> scoped_lock(m_cs);
+        StdLockGuard scoped_lock(m_cs);
         m_print_callbacks.erase(it);
     }
 
@@ -142,6 +143,14 @@ public:
     /** Return true if log accepts specified category */
     bool WillLogCategory(LogFlags category) const;
 
+    /** Returns a vector of the log categories */
+    std::vector<LogCategory> LogCategoriesList();
+    /** Returns a string with the log categories */
+    std::string LogCategoriesString() {
+        return Join(LogCategoriesList(), ", ",
+                    [&](const LogCategory &i) { return i.category; });
+    };
+
     /** Default for whether ShrinkDebugFile should be run */
     bool DefaultShrinkDebugFile() const;
 };
@@ -154,12 +163,6 @@ BCLog::Logger &LogInstance();
 static inline bool LogAcceptCategory(BCLog::LogFlags category) {
     return LogInstance().WillLogCategory(category);
 }
-
-/** Returns a string with the log categories. */
-std::string ListLogCategories();
-
-/** Returns a vector of the active log categories. */
-std::vector<CLogCategoryActive> ListActiveLogCategories();
 
 /** Return true if str parses as a log category and set the flag */
 bool GetLogCategory(BCLog::LogFlags &flag, const std::string &str);

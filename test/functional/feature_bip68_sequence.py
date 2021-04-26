@@ -39,14 +39,25 @@ SEQUENCE_LOCKTIME_GRANULARITY = 9
 SEQUENCE_LOCKTIME_MASK = 0x0000ffff
 
 # RPC error for non-BIP68 final transactions
-NOT_FINAL_ERROR = "non-BIP68-final (code 64)"
+NOT_FINAL_ERROR = "non-BIP68-final"
 
 
 class BIP68Test(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 2
-        self.extra_args = [["-noparkdeepreorg", "-maxreorgdepth=-1", "-acceptnonstdtxn=1"],
-                           ["-acceptnonstdtxn=0", "-maxreorgdepth=-1"]]
+        self.extra_args = [
+            [
+                "-noparkdeepreorg",
+                "-maxreorgdepth=-1",
+                "-acceptnonstdtxn=1",
+                # bump because mocktime might cause a disconnect otherwise
+                "-peertimeout=9999",
+            ],
+            [
+                "-acceptnonstdtxn=0",
+                "-maxreorgdepth=-1"
+            ]
+        ]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -388,7 +399,10 @@ class BIP68Test(BitcoinTestFramework):
             block.solve()
             tip = block.sha256
             height += 1
-            self.nodes[0].submitblock(ToHex(block))
+            assert_equal(
+                None if i == 1 else 'inconclusive',
+                self.nodes[0].submitblock(
+                    ToHex(block)))
             cur_time += 1
 
         mempool = self.nodes[0].getrawmempool()
@@ -457,7 +471,7 @@ class BIP68Test(BitcoinTestFramework):
         block.rehash()
         block.solve()
 
-        self.nodes[0].submitblock(ToHex(block))
+        assert_equal(None, self.nodes[0].submitblock(ToHex(block)))
         assert_equal(self.nodes[0].getbestblockhash(), block.hash)
 
     def activateCSV(self):

@@ -159,18 +159,32 @@ call methods that interact with the bitcoind nodes-under-test.
 If further introspection of the bitcoind instances themselves becomes
 necessary, this can be accomplished by first setting a pdb breakpoint
 at an appropriate location, running the test to that point, then using
-`gdb` to attach to the process and debug.
+`gdb` (or `lldb` on macOS) to attach to the process and debug.
 
-For instance, to attach to `self.node[1]` during a run:
+For instance, to attach to `self.node[1]` during a run you can get
+the pid of the node within `pdb`.
+
+```
+(pdb) self.node[1].process.pid
+```
+
+Alternatively, you can find the pid by inspecting the temp folder for the specific test
+you are running. The path to that folder is printed at the beginning of every
+test run:
 
 ```bash
 2017-06-27 14:13:56.686000 TestFramework (INFO): Initializing test directory /tmp/user/1000/testo9vsdjo3
 ```
 
-use the directory path to get the pid from the pid file:
+Use the path to find the pid file in the temp folder:
 
 ```bash
 cat /tmp/user/1000/testo9vsdjo3/node1/regtest/bitcoind.pid
+```
+
+Then you can use the pid to start `gdb`:
+
+```bash
 gdb /home/example/bitcoind <pid>
 ```
 
@@ -179,6 +193,10 @@ Note: gdb attach step may require `sudo`. To get rid of this, you can run:
 ```bash
 echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 ```
+
+Often while debugging rpc calls from functional tests, the test might reach timeout before
+process can return a response. Use `--timeout-factor 0` to disable all rpc timeouts for that particular
+functional test. Ex: `test/functional/test_runner.py wallet_hd --timeout-factor 0`.
 
 ### Benchmarking and profiling with perf
 
@@ -250,10 +268,12 @@ don't have test cases for.
   [PEP-8 guidelines](https://www.python.org/dev/peps/pep-0008/)
 - Use a python linter like flake8 before submitting PRs to catch common style
   nits (eg trailing whitespace, unused imports, etc)
+- Use [type hints](https://docs.python.org/3/library/typing.html) in your code to improve code readability
+  and to detect possible bugs earlier.
 - Avoid wildcard imports where possible
 - Use a module-level docstring to describe what the test is testing, and how it
   is testing it.
-- When subclassing the BitcoinTestFramwork, place overrides for the
+- When subclassing the BitcoinTestFramework, place overrides for the
   `set_test_params()`, `add_options()` and `setup_xxxx()` methods at the top of
   the subclass, then locally-defined helper methods, then the `run_test()` method.
 
@@ -266,8 +286,9 @@ don't have test cases for.
     - `mining` for tests for mining features, eg `mining_prioritisetransaction.py`
     - `p2p` for tests that explicitly test the p2p interface, eg `p2p_disconnect_ban.py`
     - `rpc` for tests for individual RPC methods or features, eg `rpc_listtransactions.py`
+    - `tool` for tests for tools, eg `tool_wallet.py`
     - `wallet` for tests for wallet features, eg `wallet_keypool.py`
-- use an underscore to separate words
+- Use an underscore to separate words
     - exception: for tests for specific RPCs or command line options which don't include underscores, name the test after the exact RPC or argument name, eg `rpc_decodescript.py`, not `rpc_decode_script.py`
 - Don't use the redundant word `test` in the name, eg `interface_zmq.py`, not `interface_zmq_test.py`
 
@@ -320,6 +341,16 @@ P2PInterface object and override the callback methods.
 - Can be used to write tests where specific P2P protocol behavior is tested.
 Examples tests are `p2p-acceptblock.py`, `p2p-compactblocks.py`.
 
+#### Prototyping tests
+
+The [`TestShell`](test-shell.md) class exposes the BitcoinTestFramework
+functionality to interactive Python3 environments and can be used to prototype
+tests. This may be especially useful in a REPL environment with session logging
+utilities, such as
+[IPython](https://ipython.readthedocs.io/en/stable/interactive/reference.html#session-logging-and-restoring).
+The logs of such interactive sessions can later be adapted into permanent test
+cases.
+
 ### test-framework modules
 
 #### [test_framework/authproxy.py](/test/functional/test_framework/authproxy.py)
@@ -338,10 +369,7 @@ Basic code to support P2P connectivity to a bitcoind.
 Utilities for manipulating transaction scripts (originally from python-bitcoinlib)
 
 #### [test_framework/key.py](/test/functional/test_framework/key.py)
-Wrapper around OpenSSL EC_Key (originally from python-bitcoinlib)
-
-#### [test_framework/bignum.py](/test/functional/test_framework/bignum.py)
-Helpers for script.py
+Test-only secp256k1 elliptic curve implementation
 
 #### [test_framework/blocktools.py](/test/functional/test_framework/blocktools.py)
 Helper functions for creating blocks and transactions.

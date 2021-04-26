@@ -16,7 +16,7 @@ class LoggingTest(BitcoinTestFramework):
         self.setup_clean_chain = True
 
     def relative_log_path(self, name):
-        return os.path.join(self.nodes[0].datadir, "regtest", name)
+        return os.path.join(self.nodes[0].datadir, self.chain, name)
 
     def run_test(self):
         # test default log file name
@@ -69,8 +69,7 @@ class LoggingTest(BitcoinTestFramework):
         assert not os.path.isfile(default_log_path)
 
         # just sanity check no crash here
-        self.stop_node(0)
-        self.start_node(0, ["-debuglogfile={}".format(os.devnull)])
+        self.restart_node(0, ["-debuglogfile={}".format(os.devnull)])
 
 
 if __name__ == '__main__':

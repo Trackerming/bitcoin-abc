@@ -47,6 +47,12 @@ static inline void WriteLE64(uint8_t *ptr, uint64_t x) {
     memcpy(ptr, (char *)&v, 8);
 }
 
+uint16_t static inline ReadBE16(const uint8_t *ptr) {
+    uint16_t x;
+    memcpy((char *)&x, ptr, 2);
+    return be16toh(x);
+}
+
 static inline uint32_t ReadBE32(const uint8_t *ptr) {
     uint32_t x;
     memcpy((char *)&x, ptr, 4);
@@ -74,12 +80,12 @@ static inline void WriteBE64(uint8_t *ptr, uint64_t x) {
  * bit in x is set.
  */
 uint64_t static inline CountBits(uint64_t x) {
-#ifdef HAVE_DECL___BUILTIN_CLZL
+#if HAVE_DECL___BUILTIN_CLZL
     if (sizeof(unsigned long) >= sizeof(uint64_t)) {
         return x ? 8 * sizeof(unsigned long) - __builtin_clzl(x) : 0;
     }
 #endif
-#ifdef HAVE_DECL___BUILTIN_CLZLL
+#if HAVE_DECL___BUILTIN_CLZLL
     if (sizeof(unsigned long long) >= sizeof(uint64_t)) {
         return x ? 8 * sizeof(unsigned long long) - __builtin_clzll(x) : 0;
     }

@@ -10,8 +10,16 @@ from phabricator_wrapper import PhabWrapper
 
 
 class Result:
-    def __init__(self, data=[]):
+    def __init__(self, data: list):
         self.data = data
+
+    def __getitem__(self, key):
+        return self.response[key]
+
+    __getattr__ = __getitem__
+
+    def __setitem__(self, key, value):
+        self.response[key] = value
 
 
 def instance():
@@ -28,6 +36,7 @@ def instance():
     phab.differential.diff.search.return_value = Result([])
     phab.differential.revision.return_value = Result([])
     phab.differential.revision.search.return_value = Result([])
+    phab.differential.getcommitpaths.return_value = {}
 
     phab.diffusion = mock.Mock()
     phab.diffusion.commit = mock.Mock()
@@ -45,6 +54,9 @@ def instance():
 
     phab.project = mock.Mock()
     phab.project.search.return_value = Result([])
+
+    phab.token = mock.Mock()
+    phab.token.given.return_value = []
 
     phab.transaction = mock.Mock()
     phab.transaction.search.return_value = Result([])

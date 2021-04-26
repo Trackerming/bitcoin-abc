@@ -12,6 +12,7 @@
 #include <serialize.h>
 #include <streams.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <version.h>
 
 #include <univalue.h>
@@ -21,6 +22,7 @@
 #include <boost/algorithm/string/split.hpp>
 
 #include <algorithm>
+#include <string>
 
 CScript ParseScript(const std::string &s) {
     CScript result;
@@ -33,12 +35,11 @@ CScript ParseScript(const std::string &s) {
                 continue;
             }
 
-            const char *name = GetOpName(static_cast<opcodetype>(op));
-            if (strcmp(name, "OP_UNKNOWN") == 0) {
+            std::string strName = GetOpName(static_cast<opcodetype>(op));
+            if (strName == "OP_UNKNOWN") {
                 continue;
             }
 
-            std::string strName(name);
             mapOpNames[strName] = static_cast<opcodetype>(op);
             // Convenience: OP_ADD and just ADD are both recognized:
             boost::algorithm::replace_first(strName, "OP_", "");
@@ -75,6 +76,16 @@ CScript ParseScript(const std::string &s) {
              std::all_of(w.begin() + 1, w.end(), ::IsDigit))) {
             // Number
             int64_t n = atoi64(w);
+
+            // limit the range of numbers ParseScript accepts in decimal
+            // since numbers outside -0xFFFFFFFF...0xFFFFFFFF are illegal in
+            // scripts
+            if (n > int64_t{0xffffffff} || n < -1 * int64_t{0xffffffff}) {
+                throw std::runtime_error("script parse error: decimal numeric "
+                                         "value only allowed in the "
+                                         "range -0xFFFFFFFF...0xFFFFFFFF");
+            }
+
             result << n;
             goto next;
         }
@@ -122,8 +133,7 @@ CScript ParseScript(const std::string &s) {
         if (push_size != 0 && size_change != push_size) {
             throw std::runtime_error(
                 "Wrong number of bytes being pushed. Expected:" +
-                std::to_string(push_size) +
-                " Pushed:" + std::to_string(size_change));
+                ToString(push_size) + " Pushed:" + ToString(size_change));
         }
 
         // If push_size is set, and we have push_data_size set, then we have a

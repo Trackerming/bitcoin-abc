@@ -10,7 +10,7 @@ if(ENABLE_DBUS_NOTIFICATIONS)
 	list(APPEND QT_REQUIRED_COMPONENTS DBus)
 endif()
 
-find_package(Qt5 5.5.1 COMPONENTS ${QT_REQUIRED_COMPONENTS} REQUIRED HINTS "${QT5_PREFIX}")
+find_package(Qt5 5.9.5 COMPONENTS ${QT_REQUIRED_COMPONENTS} REQUIRED HINTS "${QT5_PREFIX}")
 
 # Localisation
 add_subdirectory(locale)
@@ -140,6 +140,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	target_sources(bitcoin-qt-base PRIVATE
 		macdockiconhandler.mm
 		macnotificationhandler.mm
+		macos_appnap.mm
 	)
 
 	set_property(TARGET bitcoin-qt-base PROPERTY AUTOMOC_MOC_OPTIONS "-DQ_OS_MAC")
@@ -293,6 +294,7 @@ if(BUILD_BITCOIN_WALLET)
 			openuridialog.cpp
 			overviewpage.cpp
 			paymentserver.cpp
+			qrimagewidget.cpp
 			receivecoinsdialog.cpp
 			receiverequestdialog.cpp
 			recentrequeststablemodel.cpp
@@ -330,9 +332,13 @@ endif()
 
 # The executable
 add_executable(bitcoin-qt WIN32 main.cpp)
-if(${CMAKE_SYSTEM_NAME} MATCHES "Windows")
-	target_sources(bitcoin-qt PRIVATE res/bitcoin-qt-res.rc)
-endif()
+include(WindowsVersionInfo)
+generate_windows_version_info(bitcoin-qt
+	DESCRIPTION "GUI node for Bitcoin"
+	ICONS
+		"res/icons/bitcoin.ico"
+		"res/icons/bitcoin_testnet.ico"
+)
 target_link_libraries(bitcoin-qt bitcoin-qt-base)
 
 include(BinaryTest)
@@ -422,17 +428,12 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 	find_program_or_fail(CMAKE_INSTALL_NAME_TOOL "install_name_tool")
 	find_program_or_fail(CMAKE_OTOOL "otool")
 
-	set(QT_INSTALLER_SUPPORTED_LANGUAGES
-		"da"
-		"de"
-		"es"
-		"hu"
-		"ru"
-		"uk"
-		"zh_CN"
+	set(QT_BASE_TRANSLATIONS
+		"ar" "bg" "ca" "cs" "da" "de" "es" "fa" "fi" "fr" "gd" "gl" "he" "hu"
+		"it" "ja" "ko" "lt" "lv" "pl" "pt" "ru" "sk" "sl" "sv" "uk" "zh_CN"
 		"zh_TW"
 	)
-	string(JOIN "," QT_LOCALES ${QT_INSTALLER_SUPPORTED_LANGUAGES})
+	string(JOIN "," QT_LOCALES ${QT_BASE_TRANSLATIONS})
 
 	get_target_property(QMAKE_EXECUTABLE Qt5::qmake IMPORTED_LOCATION)
 	execute_process(
@@ -466,13 +467,13 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 		set(QT_TRANSLATION_DIR ${_qt_translation_dir} PARENT_SCOPE)
 	endfunction()
 
-	get_qt_translation_dir(QT_TRANSLATION_DIR ${QT_INSTALLER_SUPPORTED_LANGUAGES})
+	get_qt_translation_dir(QT_TRANSLATION_DIR ${QT_BASE_TRANSLATIONS})
 	if(NOT QT_TRANSLATION_DIR)
 		message(FATAL_ERROR "Qt translation files are not found")
 	endif()
 
 	set(MACDEPLOY_DIR "${CMAKE_SOURCE_DIR}/contrib/macdeploy")
-	set(MACDEPLOYQTPLUS "${MACDEPLOY_DIR}/macdeployqtplus")
+	set(MACDEPLOYQTPLUS "${MACDEPLOY_DIR}/macdeployqtplus.py")
 	set(DMG_DIST "${CMAKE_BINARY_DIR}/dist")
 	add_custom_command(
 		OUTPUT

@@ -5,7 +5,12 @@
 #include <netbase.h>
 
 #include <net_permissions.h>
+#include <protocol.h>
+#include <serialize.h>
+#include <streams.h>
 #include <util/strencodings.h>
+#include <util/translation.h>
+#include <version.h>
 
 #include <test/util/setup_common.h>
 
@@ -15,19 +20,19 @@
 
 BOOST_FIXTURE_TEST_SUITE(netbase_tests, BasicTestingSetup)
 
-static CNetAddr ResolveIP(const char *ip) {
+static CNetAddr ResolveIP(const std::string &ip) {
     CNetAddr addr;
     LookupHost(ip, addr, false);
     return addr;
 }
 
-static CSubNet ResolveSubNet(const char *subnet) {
+static CSubNet ResolveSubNet(const std::string &subnet) {
     CSubNet ret;
     LookupSubNet(subnet, ret);
     return ret;
 }
 
-static CNetAddr CreateInternal(const char *host) {
+static CNetAddr CreateInternal(const std::string &host) {
     CNetAddr addr;
     addr.SetInternal(host);
     return addr;
@@ -51,6 +56,8 @@ BOOST_AUTO_TEST_CASE(netbase_properties) {
     BOOST_CHECK(ResolveIP("10.0.0.1").IsRFC1918());
     BOOST_CHECK(ResolveIP("192.168.1.1").IsRFC1918());
     BOOST_CHECK(ResolveIP("172.31.255.255").IsRFC1918());
+    BOOST_CHECK(ResolveIP("198.18.0.0").IsRFC2544());
+    BOOST_CHECK(ResolveIP("198.19.255.255").IsRFC2544());
     BOOST_CHECK(ResolveIP("2001:0DB8::").IsRFC3849());
     BOOST_CHECK(ResolveIP("169.254.1.1").IsRFC3927());
     BOOST_CHECK(ResolveIP("2002::1").IsRFC3964());
@@ -98,7 +105,7 @@ BOOST_AUTO_TEST_CASE(netbase_splithost) {
 }
 
 static bool TestParse(std::string src, std::string canon) {
-    CService addr(LookupNumeric(src.c_str(), 65535));
+    CService addr(LookupNumeric(src, 65535));
     return canon == addr.ToString();
 }
 
@@ -129,6 +136,13 @@ BOOST_AUTO_TEST_CASE(onioncat_test) {
     BOOST_CHECK(addr1.IsRoutable());
 }
 
+BOOST_AUTO_TEST_CASE(embedded_test) {
+    CNetAddr addr1(ResolveIP("1.2.3.4"));
+    CNetAddr addr2(ResolveIP("::FFFF:0102:0304"));
+    BOOST_CHECK(addr2.IsIPv4());
+    BOOST_CHECK_EQUAL(addr1.ToString(), addr2.ToString());
+}
+
 BOOST_AUTO_TEST_CASE(subnet_test) {
     BOOST_CHECK(ResolveSubNet("1.2.3.0/24") ==
                 ResolveSubNet("1.2.3.0/255.255.255.0"));
@@ -155,9 +169,14 @@ BOOST_AUTO_TEST_CASE(subnet_test) {
     BOOST_CHECK(ResolveSubNet("1.2.2.1/24").Match(ResolveIP("1.2.2.4")));
     BOOST_CHECK(ResolveSubNet("1.2.2.110/31").Match(ResolveIP("1.2.2.111")));
     BOOST_CHECK(ResolveSubNet("1.2.2.20/26").Match(ResolveIP("1.2.2.63")));
-    // All-Matching IPv6 Matches arbitrary IPv4 and IPv6
+    // All-Matching IPv6 Matches arbitrary IPv6
     BOOST_CHECK(ResolveSubNet("::/0").Match(ResolveIP("1:2:3:4:5:6:7:1234")));
-    BOOST_CHECK(ResolveSubNet("::/0").Match(ResolveIP("1.2.3.4")));
+    // But not `::` or `0.0.0.0` because they are considered invalid addresses
+    BOOST_CHECK(!ResolveSubNet("::/0").Match(ResolveIP("::")));
+    BOOST_CHECK(!ResolveSubNet("::/0").Match(ResolveIP("0.0.0.0")));
+    // Addresses from one network (IPv4) don't belong to subnets of another
+    // network (IPv6)
+    BOOST_CHECK(!ResolveSubNet("::/0").Match(ResolveIP("1.2.3.4")));
     // All-Matching IPv4 does not Match IPv6
     BOOST_CHECK(
         !ResolveSubNet("0.0.0.0/0").Match(ResolveIP("1:2:3:4:5:6:7:1234")));
@@ -171,6 +190,7 @@ BOOST_AUTO_TEST_CASE(subnet_test) {
     BOOST_CHECK(!ResolveSubNet("1.2.3.0/-1").IsValid());
     BOOST_CHECK(ResolveSubNet("1.2.3.0/32").IsValid());
     BOOST_CHECK(!ResolveSubNet("1.2.3.0/33").IsValid());
+    BOOST_CHECK(!ResolveSubNet("1.2.3.0/300").IsValid());
     BOOST_CHECK(ResolveSubNet("1:2:3:4:5:6:7:8/0").IsValid());
     BOOST_CHECK(ResolveSubNet("1:2:3:4:5:6:7:8/33").IsValid());
     BOOST_CHECK(!ResolveSubNet("1:2:3:4:5:6:7:8/-1").IsValid());
@@ -205,6 +225,13 @@ BOOST_AUTO_TEST_CASE(subnet_test) {
                      .Match(ResolveIP("1:2:3:4:5:6:7:9")));
     BOOST_CHECK(CSubNet(ResolveIP("1:2:3:4:5:6:7:8")).ToString() ==
                 "1:2:3:4:5:6:7:8/128");
+    // IPv4 address with IPv6 netmask or the other way around.
+    BOOST_CHECK(!CSubNet(ResolveIP("1.1.1.1"), ResolveIP("ffff::")).IsValid());
+    BOOST_CHECK(!CSubNet(ResolveIP("::1"), ResolveIP("255.0.0.0")).IsValid());
+    // Can't subnet TOR (or any other non-IPv4 and non-IPv6 network).
+    BOOST_CHECK(
+        !CSubNet(ResolveIP("5wyqrzbvrdsumnok.onion"), ResolveIP("255.0.0.0"))
+             .IsValid());
 
     subnet = ResolveSubNet("1.2.3.4/255.255.255.255");
     BOOST_CHECK_EQUAL(subnet.ToString(), "1.2.3.4/32");
@@ -282,57 +309,62 @@ BOOST_AUTO_TEST_CASE(subnet_test) {
     subnet = ResolveSubNet(
         "1:2:3:4:5:6:7:8/0000:0000:0000:0000:0000:0000:0000:0000");
     BOOST_CHECK_EQUAL(subnet.ToString(), "::/0");
+    // Invalid netmasks (with 1-bits after 0-bits)
     subnet = ResolveSubNet("1.2.3.4/255.255.232.0");
-    BOOST_CHECK_EQUAL(subnet.ToString(), "1.2.0.0/255.255.232.0");
+    BOOST_CHECK(!subnet.IsValid());
+    subnet = ResolveSubNet("1.2.3.4/255.0.255.255");
+    BOOST_CHECK(!subnet.IsValid());
     subnet = ResolveSubNet(
         "1:2:3:4:5:6:7:8/ffff:ffff:ffff:fffe:ffff:ffff:ffff:ff0f");
-    BOOST_CHECK_EQUAL(
-        subnet.ToString(),
-        "1:2:3:4:5:6:7:8/ffff:ffff:ffff:fffe:ffff:ffff:ffff:ff0f");
+    BOOST_CHECK(!subnet.IsValid());
 }
 
 BOOST_AUTO_TEST_CASE(netbase_getgroup) {
+    // use /16
+    std::vector<bool> asmap;
     typedef std::vector<uint8_t> Vec8;
     // Local -> !Routable()
-    BOOST_CHECK(ResolveIP("127.0.0.1").GetGroup() == Vec8{0});
+    BOOST_CHECK(ResolveIP("127.0.0.1").GetGroup(asmap) == Vec8{0});
     // !Valid -> !Routable()
-    BOOST_CHECK(ResolveIP("257.0.0.1").GetGroup() == Vec8{0});
+    BOOST_CHECK(ResolveIP("257.0.0.1").GetGroup(asmap) == Vec8{0});
     // RFC1918 -> !Routable()
-    BOOST_CHECK(ResolveIP("10.0.0.1").GetGroup() == Vec8{0});
+    BOOST_CHECK(ResolveIP("10.0.0.1").GetGroup(asmap) == Vec8{0});
     // RFC3927 -> !Routable()
-    BOOST_CHECK(ResolveIP("169.254.1.1").GetGroup() == Vec8{0});
+    BOOST_CHECK(ResolveIP("169.254.1.1").GetGroup(asmap) == Vec8{0});
     // IPv4
-    BOOST_CHECK(ResolveIP("1.2.3.4").GetGroup() == Vec8({NET_IPV4, 1, 2}));
+    BOOST_CHECK(ResolveIP("1.2.3.4").GetGroup(asmap) == Vec8({NET_IPV4, 1, 2}));
     // RFC6145
-    BOOST_CHECK(ResolveIP("::FFFF:0:102:304").GetGroup() ==
+    BOOST_CHECK(ResolveIP("::FFFF:0:102:304").GetGroup(asmap) ==
                 Vec8({NET_IPV4, 1, 2}));
     // RFC6052
-    BOOST_CHECK(ResolveIP("64:FF9B::102:304").GetGroup() ==
+    BOOST_CHECK(ResolveIP("64:FF9B::102:304").GetGroup(asmap) ==
                 Vec8({NET_IPV4, 1, 2}));
     // RFC3964
-    BOOST_CHECK(ResolveIP("2002:102:304:9999:9999:9999:9999:9999").GetGroup() ==
-                Vec8({NET_IPV4, 1, 2}));
+    BOOST_CHECK(
+        ResolveIP("2002:102:304:9999:9999:9999:9999:9999").GetGroup(asmap) ==
+        Vec8({NET_IPV4, 1, 2}));
     // RFC4380
-    BOOST_CHECK(ResolveIP("2001:0:9999:9999:9999:9999:FEFD:FCFB").GetGroup() ==
-                Vec8({NET_IPV4, 1, 2}));
+    BOOST_CHECK(
+        ResolveIP("2001:0:9999:9999:9999:9999:FEFD:FCFB").GetGroup(asmap) ==
+        Vec8({NET_IPV4, 1, 2}));
     // Tor
     BOOST_CHECK(
-        ResolveIP("FD87:D87E:EB43:edb1:8e4:3588:e546:35ca").GetGroup() ==
+        ResolveIP("FD87:D87E:EB43:edb1:8e4:3588:e546:35ca").GetGroup(asmap) ==
         Vec8({NET_ONION, 239}));
     // he.net
     BOOST_CHECK(
-        ResolveIP("2001:470:abcd:9999:9999:9999:9999:9999").GetGroup() ==
+        ResolveIP("2001:470:abcd:9999:9999:9999:9999:9999").GetGroup(asmap) ==
         Vec8({NET_IPV6, 32, 1, 4, 112, 175}));
     // IPv6
     BOOST_CHECK(
-        ResolveIP("2001:2001:9999:9999:9999:9999:9999:9999").GetGroup() ==
+        ResolveIP("2001:2001:9999:9999:9999:9999:9999:9999").GetGroup(asmap) ==
         Vec8({NET_IPV6, 32, 1, 32, 1}));
 
     // baz.net sha256 hash:
     // 12929400eb4607c4ac075f087167e75286b179c693eb059a01774b864e8fe505
     Vec8 internal_group = {NET_INTERNAL, 0x12, 0x92, 0x94, 0x00, 0xeb,
                            0x46,         0x07, 0xc4, 0xac, 0x07};
-    BOOST_CHECK(CreateInternal("baz.net").GetGroup() == internal_group);
+    BOOST_CHECK(CreateInternal("baz.net").GetGroup(asmap) == internal_group);
 }
 
 BOOST_AUTO_TEST_CASE(netbase_parsenetwork) {
@@ -353,18 +385,18 @@ BOOST_AUTO_TEST_CASE(netbase_parsenetwork) {
 }
 
 BOOST_AUTO_TEST_CASE(netpermissions_test) {
-    std::string error;
+    bilingual_str error;
     NetWhitebindPermissions whitebindPermissions;
     NetWhitelistPermissions whitelistPermissions;
 
     // Detect invalid white bind
     BOOST_CHECK(
         !NetWhitebindPermissions::TryParse("", whitebindPermissions, error));
-    BOOST_CHECK(error.find("Cannot resolve -whitebind address") !=
+    BOOST_CHECK(error.original.find("Cannot resolve -whitebind address") !=
                 std::string::npos);
     BOOST_CHECK(!NetWhitebindPermissions::TryParse(
         "127.0.0.1", whitebindPermissions, error));
-    BOOST_CHECK(error.find("Need to specify a port with -whitebind") !=
+    BOOST_CHECK(error.original.find("Need to specify a port with -whitebind") !=
                 std::string::npos);
     BOOST_CHECK(
         !NetWhitebindPermissions::TryParse("", whitebindPermissions, error));
@@ -429,13 +461,15 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
     // Detect invalid flag
     BOOST_CHECK(!NetWhitebindPermissions::TryParse(
         "bloom,forcerelay,oopsie@1.2.3.4:32", whitebindPermissions, error));
-    BOOST_CHECK(error.find("Invalid P2P permission") != std::string::npos);
+    BOOST_CHECK(error.original.find("Invalid P2P permission") !=
+                std::string::npos);
 
     // Check whitelist error
     BOOST_CHECK(!NetWhitelistPermissions::TryParse(
         "bloom,forcerelay,noban@1.2.3.4:32", whitelistPermissions, error));
-    BOOST_CHECK(error.find("Invalid netmask specified in -whitelist") !=
-                std::string::npos);
+    BOOST_CHECK(
+        error.original.find("Invalid netmask specified in -whitelist") !=
+        std::string::npos);
 
     // Happy path for whitelist parsing
     BOOST_CHECK(NetWhitelistPermissions::TryParse("noban@1.2.3.4",
@@ -453,7 +487,7 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
         error));
 
     const auto strings = NetPermissions::ToStrings(PF_ALL);
-    BOOST_CHECK_EQUAL(strings.size(), 5);
+    BOOST_CHECK_EQUAL(strings.size(), 6U);
     BOOST_CHECK(std::find(strings.begin(), strings.end(), "bloomfilter") !=
                 strings.end());
     BOOST_CHECK(std::find(strings.begin(), strings.end(), "forcerelay") !=
@@ -464,6 +498,161 @@ BOOST_AUTO_TEST_CASE(netpermissions_test) {
                 strings.end());
     BOOST_CHECK(std::find(strings.begin(), strings.end(), "mempool") !=
                 strings.end());
+    BOOST_CHECK(std::find(strings.begin(), strings.end(), "download") !=
+                strings.end());
+}
+
+BOOST_AUTO_TEST_CASE(
+    netbase_dont_resolve_strings_with_embedded_nul_characters) {
+    CNetAddr addr;
+    BOOST_CHECK(LookupHost(std::string("127.0.0.1", 9), addr, false));
+    BOOST_CHECK(!LookupHost(std::string("127.0.0.1\0", 10), addr, false));
+    BOOST_CHECK(
+        !LookupHost(std::string("127.0.0.1\0example.com", 21), addr, false));
+    BOOST_CHECK(
+        !LookupHost(std::string("127.0.0.1\0example.com\0", 22), addr, false));
+    CSubNet ret;
+    BOOST_CHECK(LookupSubNet(std::string("1.2.3.0/24", 10), ret));
+    BOOST_CHECK(!LookupSubNet(std::string("1.2.3.0/24\0", 11), ret));
+    BOOST_CHECK(!LookupSubNet(std::string("1.2.3.0/24\0example.com", 22), ret));
+    BOOST_CHECK(
+        !LookupSubNet(std::string("1.2.3.0/24\0example.com\0", 23), ret));
+    // We only do subnetting for IPv4 and IPv6
+    BOOST_CHECK(!LookupSubNet(std::string("5wyqrzbvrdsumnok.onion", 22), ret));
+    BOOST_CHECK(
+        !LookupSubNet(std::string("5wyqrzbvrdsumnok.onion\0", 23), ret));
+    BOOST_CHECK(!LookupSubNet(
+        std::string("5wyqrzbvrdsumnok.onion\0example.com", 34), ret));
+    BOOST_CHECK(!LookupSubNet(
+        std::string("5wyqrzbvrdsumnok.onion\0example.com\0", 35), ret));
+}
+
+// Since CNetAddr (un)ser is tested separately in net_tests.cpp here we only
+// try a few edge cases for port, service flags and time.
+
+static const std::vector<CAddress> fixture_addresses(
+    {CAddress(CService(CNetAddr(in6_addr(IN6ADDR_LOOPBACK_INIT)), 0 /* port */),
+              NODE_NONE, 0x4966bc61U /* Fri Jan  9 02:54:25 UTC 2009 */
+              ),
+     CAddress(CService(CNetAddr(in6_addr(IN6ADDR_LOOPBACK_INIT)),
+                       0x00f1 /* port */),
+              NODE_NETWORK, 0x83766279U /* Tue Nov 22 11:22:33 UTC 2039 */
+              ),
+     CAddress(
+         CService(CNetAddr(in6_addr(IN6ADDR_LOOPBACK_INIT)), 0xf1f2 /* port */),
+         static_cast<ServiceFlags>(NODE_COMPACT_FILTERS | NODE_NETWORK_LIMITED),
+         0xffffffffU /* Sun Feb  7 06:28:15 UTC 2106 */
+         )});
+
+// fixture_addresses should equal to this when serialized in V1 format.
+// When this is unserialized from V1 format it should equal to
+// fixture_addresses.
+static constexpr const char *stream_addrv1_hex =
+    // number of entries
+    "03"
+
+    // time, Fri Jan  9 02:54:25 UTC 2009
+    "61bc6649"
+    // service flags, NODE_NONE
+    "0000000000000000"
+    // address, fixed 16 bytes (IPv4 embedded in IPv6)
+    "00000000000000000000000000000001"
+    // port
+    "0000"
+
+    // time, Tue Nov 22 11:22:33 UTC 2039
+    "79627683"
+    // service flags, NODE_NETWORK
+    "0100000000000000"
+    // address, fixed 16 bytes (IPv6)
+    "00000000000000000000000000000001"
+    // port
+    "00f1"
+
+    // time, Sun Feb  7 06:28:15 UTC 2106
+    "ffffffff"
+    // service flags, NODE_COMPACT_FILTERS | NODE_NETWORK_LIMITED
+    "4004000000000000"
+    // address, fixed 16 bytes (IPv6)
+    "00000000000000000000000000000001"
+    // port
+    "f1f2";
+
+// fixture_addresses should equal to this when serialized in V2 format.
+// When this is unserialized from V2 format it should equal to
+// fixture_addresses.
+static constexpr const char *stream_addrv2_hex =
+    // number of entries
+    "03"
+
+    // time, Fri Jan  9 02:54:25 UTC 2009
+    "61bc6649"
+    // service flags, COMPACTSIZE(NODE_NONE)
+    "00"
+    // network id, IPv6
+    "02"
+    // address length, COMPACTSIZE(16)
+    "10"
+    // address
+    "00000000000000000000000000000001"
+    // port
+    "0000"
+
+    // time, Tue Nov 22 11:22:33 UTC 2039
+    "79627683"
+    // service flags, COMPACTSIZE(NODE_NETWORK)
+    "01"
+    // network id, IPv6
+    "02"
+    // address length, COMPACTSIZE(16)
+    "10"
+    // address
+    "00000000000000000000000000000001"
+    // port
+    "00f1"
+
+    // time, Sun Feb  7 06:28:15 UTC 2106
+    "ffffffff"
+    // service flags, COMPACTSIZE(NODE_COMPACT_FILTERS | NODE_NETWORK_LIMITED)
+    "fd4004"
+    // network id, IPv6
+    "02"
+    // address length, COMPACTSIZE(16)
+    "10"
+    // address
+    "00000000000000000000000000000001"
+    // port
+    "f1f2";
+
+BOOST_AUTO_TEST_CASE(caddress_serialize_v1) {
+    CDataStream s(SER_NETWORK, PROTOCOL_VERSION);
+
+    s << fixture_addresses;
+    BOOST_CHECK_EQUAL(HexStr(s), stream_addrv1_hex);
+}
+
+BOOST_AUTO_TEST_CASE(caddress_unserialize_v1) {
+    CDataStream s(ParseHex(stream_addrv1_hex), SER_NETWORK, PROTOCOL_VERSION);
+    std::vector<CAddress> addresses_unserialized;
+
+    s >> addresses_unserialized;
+    BOOST_CHECK(fixture_addresses == addresses_unserialized);
+}
+
+BOOST_AUTO_TEST_CASE(caddress_serialize_v2) {
+    CDataStream s(SER_NETWORK, PROTOCOL_VERSION | ADDRV2_FORMAT);
+
+    s << fixture_addresses;
+    BOOST_CHECK_EQUAL(HexStr(s), stream_addrv2_hex);
+}
+
+BOOST_AUTO_TEST_CASE(caddress_unserialize_v2) {
+    CDataStream s(ParseHex(stream_addrv2_hex), SER_NETWORK,
+                  PROTOCOL_VERSION | ADDRV2_FORMAT);
+    std::vector<CAddress> addresses_unserialized;
+
+    s >> addresses_unserialized;
+    BOOST_CHECK(fixture_addresses == addresses_unserialized);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -5,8 +5,10 @@ Developer Notes
 **Table of Contents**
 
 - [Developer Notes](#developer-notes)
-    - [Coding Style](#coding-style)
+    - [Coding Style (General)](#coding-style-general)
+    - [Coding Style (C++)](#coding-style-c)
     - [Doxygen comments](#doxygen-comments)
+    - [Coding Style (Python)](#coding-style-python)
     - [Development tips and tricks](#development-tips-and-tricks)
         - [Compiling for debugging](#compiling-for-debugging)
         - [Compiling for gprof profiling](#compiling-for-gprof-profiling)
@@ -36,12 +38,14 @@ Developer Notes
     - [Unit tests](#unit-tests)
     - [Third party libraries](#third-party-libraries)
     - [Git and GitHub tips](#git-and-github-tips)
+    - [Release notes](#release-notes)
     - [RPC interface guidelines](#rpc-interface-guidelines)
+    - [Internal interface guidelines](#internal-interface-guidelines)
 
 <!-- markdown-toc end -->
 
-Coding Style
----------------
+Coding Style (General)
+----------------------
 
 Various coding styles have been used during the history of the codebase,
 and the result is not very consistent. However, we're now trying to converge to
@@ -49,6 +53,10 @@ a single style, so please use it in new code. Old code will be converted
 gradually and a handful of linters will help you to clean up your patches before
 submitting them for review. These linters are run automatically when using
 `arc diff` but can also be explicitly called with `arc lint`.
+
+
+Coding Style (C++)
+------------------
 
 - Basic rules specified in [src/.clang-format](/src/.clang-format).
   - Braces on new lines for namespaces, classes, functions, methods.
@@ -200,10 +208,14 @@ but if possible use one of the above styles.
 
 To build doxygen locally to test changes to the Doxyfile or visualize your comments before landing changes:
 ```
-# In the build directory, call:
-doxygen doc/Doxyfile
+ninja doc-doxygen
 # output goes to doc/doxygen/html/
 ```
+
+Coding Style (Python)
+---------------------
+
+Refer to [functional-tests.md#style-guidelines](functional-tests.md#style-guidelines).
 
 Development tips and tricks
 ---------------------------
@@ -469,29 +481,52 @@ and its `cs_KeyStore` lock for example).
 Threads
 -------
 
-- ThreadScriptCheck : Verifies block scripts.
+- [Main thread (`bitcoind`)](https://www.bitcoinabc.org/doc/dev/bitcoind_8cpp.html#a0ddf1224851353fc92bfbff6f499fa97)
+  : Started from `main()` in `bitcoind.cpp`. Responsible for starting up and
+  shutting down the application.
 
-- ThreadImport : Loads blocks from blk*.dat files or bootstrap.dat.
+- [ThreadImport (`b-loadblk`)](https://www.bitcoinabc.org/doc/dev/init_8cpp.html#ae9e290a0e829ec0198518de2eda579d1)
+  : Loads blocks from `blk*.dat` files or `-loadblock=<file>` on startup.
 
-- StartNode : Starts other threads.
+- [ThreadScriptCheck (`b-scriptch.x`)](https://www.bitcoinabc.org/doc/dev/validation_8cpp.html#a925a33e7952a157922b0bbb8dab29a20)
+  : Parallel script validation threads for transactions in blocks.
 
-- ThreadDNSAddressSeed : Loads addresses of peers from the DNS.
+- [ThreadHTTP (`b-http`)](https://www.bitcoinabc.org/doc/dev/httpserver_8cpp.html#abb9f6ea8819672bd9a62d3695070709c)
+  : Libevent thread to listen for RPC and REST connections.
 
-- ThreadMapPort : Universal plug-and-play startup/shutdown
+- [HTTP worker threads(`b-httpworker.x`)](https://www.bitcoinabc.org/doc/dev/httpserver_8cpp.html#aa6a7bc27265043bc0193220c5ae3a55f)
+  : Threads to service RPC and REST requests.
 
-- ThreadSocketHandler : Sends/Receives data from peers on port 8333.
+- [Indexer threads (`b-txindex`, etc)](https://www.bitcoinabc.org/doc/dev/class_base_index.html#a96a7407421fbf877509248bbe64f8d87)
+  : One thread per indexer.
 
-- ThreadOpenAddedConnections : Opens network connections to added nodes.
+- [SchedulerThread (`b-scheduler`)](https://www.bitcoinabc.org/doc/dev/class_c_scheduler.html#a14d2800815da93577858ea078aed1fba)
+  : Does asynchronous background tasks like dumping wallet contents, dumping
+  addrman and running asynchronous validationinterface callbacks.
 
-- ThreadOpenConnections : Initiates new connections to peers.
+- [TorControlThread (`b-torcontrol`)](https://www.bitcoinabc.org/doc/dev/torcontrol_8cpp.html#a4faed3692d57a0d7bdbecf3b37f72de0)
+  : Libevent thread for tor connections.
 
-- ThreadMessageHandler : Higher-level message handling (sending and receiving).
+- Net threads:
 
-- DumpAddresses : Dumps IP addresses of nodes to peers.dat.
+  - [ThreadMessageHandler (`b-msghand`)](https://www.bitcoinabc.org/doc/dev/class_c_connman.html#aacdbb7148575a31bb33bc345e2bf22a9)
+    : Application level message handling (sending and receiving). Almost
+    all net_processing and validation logic runs on this thread.
 
-- ThreadRPCServer : Remote procedure call handler, listens on port 8332 for connections and services them.
+  - [ThreadDNSAddressSeed (`b-dnsseed`)](https://www.bitcoinabc.org/doc/dev/class_c_connman.html#aa7c6970ed98a4a7bafbc071d24897d13)
+    : Loads addresses of peers from the DNS.
 
-- Shutdown : Does an orderly shutdown of everything.
+  - [ThreadMapPort (`b-upnp`)](https://www.bitcoinabc.org/doc/dev/net_8cpp.html#a63f82a71c4169290c2db1651a9bbe249)
+    : Universal plug-and-play startup/shutdown.
+
+  - [ThreadSocketHandler (`b-net`)](https://www.bitcoinabc.org/doc/dev/class_c_connman.html#a765597cbfe99c083d8fa3d61bb464e34)
+    : Sends/Receives data from peers on port 8333.
+
+  - [ThreadOpenAddedConnections (`b-addcon`)](https://www.bitcoinabc.org/doc/dev/class_c_connman.html#a0b787caf95e52a346a2b31a580d60a62)
+    : Opens network connections to added nodes.
+
+  - [ThreadOpenConnections (`b-opencon`)](https://www.bitcoinabc.org/doc/dev/class_c_connman.html#a55e9feafc3bab78e5c9d408c207faa45)
+    : Initiates new connections to peers.
 
 Ignoring IDE/editor files
 --------------------------
@@ -590,12 +625,21 @@ C++ data structures
 
 - Vector bounds checking is only enabled in debug mode. Do not rely on it
 
-- Make sure that constructors initialize all fields. If this is skipped for a
-  good reason (i.e., optimization on the critical path), add an explicit
-  comment about this
+- Initialize all non-static class members where they are defined.
+  If this is skipped for a good reason (i.e., optimization on the critical
+  path), add an explicit comment about this
 
   - *Rationale*: Ensure determinism by avoiding accidental use of uninitialized
     values. Also, static analyzers balk about this.
+    Initializing the members in the declaration makes it easy to
+    spot uninitialized ones.
+
+```cpp
+class A
+{
+    uint32_t m_count{0};
+}
+```
 
 - By default, declare single-argument constructors `explicit`.
 
@@ -613,18 +657,6 @@ C++ data structures
 
   - *Rationale*: Easier to understand what is happening, thus easier to spot mistakes, even for those
   that are not language lawyers
-
-- Initialize all non-static class members where they are defined
-
-  - *Rationale*: Initializing the members in the declaration makes it easy to spot uninitialized ones,
-  and avoids accidentally reading uninitialized memory
-
-```cpp
-class A
-{
-    uint32_t m_count{0};
-}
-```
 
 Strings and formatting
 ------------------------
@@ -817,7 +849,7 @@ Current third party libraries include:
   - **Note**: Follow the instructions in [Upgrading LevelDB](#upgrading-leveldb)
     when merging upstream changes to Bitcoin ABC.
 
-- src/libsecp256k1
+- src/secp256k1
   - Upstream at <https://github.com/bitcoin-core/secp256k1/> ; actively maintained
     by Bitcoin Core contributors.
     Bitcoin ABC is using a modified version of libsecp256k1, some changes might
@@ -887,50 +919,21 @@ Git and GitHub tips
 - Similarly, your git remote origin should be set to: `ssh://vcs@reviews.bitcoinabc.org:2221/source/bitcoin-abc.git`
   instead of github.com. See [CONTRIBUTING](../CONTRIBUTING.md).
 
-- For resolving merge/rebase conflicts, it can be useful to enable diff3 style using
-  `git config merge.conflictstyle diff3`. Instead of
+For git and GitHub productivity tips, see [Productivity Notes](productivity.md).
 
-        <<<
-        yours
-        ===
-        theirs
-        >>>
 
-  you will see
+Release notes
+-------------
 
-        <<<
-        yours
-        |||
-        original
-        ===
-        theirs
-        >>>
+Release notes should be written for any PR that:
 
-  This may make it much clearer what caused the conflict. In this style, you can often just look
-  at what changed between *original* and *theirs*, and mechanically apply that to *yours* (or the other way around).
+- introduces a notable new feature
+- fixes a significant bug
+- changes an API or configuration model
+- makes any other visible change to the end-user experience.
 
-- When reviewing patches which change indentation in C++ files, use `git diff -w` and `git show -w`. This makes
-  the diff algorithm ignore whitespace changes. This feature is also available on github.com, by adding `?w=1`
-  at the end of any URL which shows a diff.
-
-- When reviewing patches that change symbol names in many places, use `git diff --word-diff`. This will instead
-  of showing the patch as deleted/added *lines*, show deleted/added *words*.
-
-- When reviewing patches that move code around, try using
-  `git diff --patience commit~:old/file.cpp commit:new/file/name.cpp`, and ignoring everything except the
-  moved body of code which should show up as neither `+` or `-` lines. In case it was not a pure move, this may
-  even work when combined with the `-w` or `--word-diff` options described above.
-
-- When looking at other's pull requests, it may make sense to add the following section to your `.git/config`
-  file:
-
-        [remote "upstream-pull"]
-                fetch = +refs/pull/*:refs/remotes/upstream-pull/*
-                url = git@github.com:bitcoin/bitcoin.git
-
-  This will add an `upstream-pull` remote to your git repository, which can be fetched using `git fetch --all`
-  or `git fetch upstream-pull`. Afterwards, you can use `upstream-pull/NUMBER/head` in arguments to `git show`,
-  `git checkout` and anywhere a commit id would be acceptable to see the changes from pull request NUMBER.
+Release notes should be added to the [/doc/release-notes.md](/doc/release-notes.md)
+file, which is archived and cleared after each release.
 
 RPC interface guidelines
 --------------------------
@@ -999,7 +1002,7 @@ A few guidelines for introducing and reviewing new RPC interfaces:
   introduce new methods such as `signrawtransaction` that differ in behavior
   based on presence of a wallet.
 
-  - *Rationale*: as well as complicating the implementation and interfering
+  - *Rationale*: As well as complicating the implementation and interfering
     with the introduction of multi-wallet, wallet and non-wallet code should be
     separated to avoid introducing circular dependencies between code units.
 
@@ -1026,8 +1029,134 @@ A few guidelines for introducing and reviewing new RPC interfaces:
 
   - *Rationale*: RPC methods registered with the same function pointer will be
     considered aliases and only the first method name will show up in the
-    `help` rpc command list.
+    `help` RPC command list.
 
   - *Exception*: Using RPC method aliases may be appropriate in cases where a
     new RPC is replacing a deprecated RPC, to avoid both RPCs confusingly
     showing up in the command list.
+
+- Use the `UNIX_EPOCH_TIME` constant when describing UNIX epoch time or
+  timestamps in the documentation.
+
+  - *Rationale*: User-facing consistency.
+
+Internal interface guidelines
+-----------------------------
+
+Internal interfaces between parts of the codebase that are meant to be
+independent (node, wallet, GUI), are defined in
+[`src/interfaces/`](../src/interfaces/). The main interface classes defined
+there are [`interfaces::Chain`](../src/interfaces/chain.h), used by wallet to
+access the node's latest chain state,
+[`interfaces::Node`](../src/interfaces/node.h), used by the GUI to control the
+node, and [`interfaces::Wallet`](../src/interfaces/wallet.h), used by the GUI
+to control an individual wallet. There are also more specialized interface
+types like [`interfaces::Handler`](../src/interfaces/handler.h)
+[`interfaces::ChainClient`](../src/interfaces/chain.h) passed to and from
+various interface methods.
+
+Interface classes are written in a particular style so node, wallet, and GUI
+code doesn't need to run in the same process, and so the class declarations
+work more easily with tools and libraries supporting interprocess
+communication:
+
+- Interface classes should be abstract and have methods that are [pure
+  virtual](https://en.cppreference.com/w/cpp/language/abstract_class). This
+  allows multiple implementations to inherit from the same interface class,
+  particularly so one implementation can execute functionality in the local
+  process, and other implementations can forward calls to remote processes.
+
+- Interface method definitions should wrap existing functionality instead of
+  implementing new functionality. Any substantial new node or wallet
+  functionality should be implemented in [`src/node/`](../src/node/) or
+  [`src/wallet/`](../src/wallet/) and just exposed in
+  [`src/interfaces/`](../src/interfaces/) instead of being implemented there,
+  so it can be more modular and accessible to unit tests.
+
+- Interface method parameter and return types should either be serializable or
+  be other interface classes. Interface methods shouldn't pass references to
+  objects that can't be serialized or accessed from another process.
+
+  Examples:
+
+  ```c++
+  // Good: takes string argument and returns interface class pointer
+  virtual unique_ptr<interfaces::Wallet> loadWallet(std::string filename) = 0;
+
+  // Bad: returns CWallet reference that can't be used from another process
+  virtual CWallet& loadWallet(std::string filename) = 0;
+  ```
+
+  ```c++
+  // Good: accepts and returns primitive types
+  virtual bool findBlock(const uint256& hash, int& out_height, int64_t& out_time) = 0;
+
+  // Bad: returns pointer to internal node in a linked list inaccessible to
+  // other processes
+  virtual const CBlockIndex* findBlock(const uint256& hash) = 0;
+  ```
+
+  ```c++
+  // Good: takes plain callback type and returns interface pointer
+  using TipChangedFn = std::function<void(int block_height, int64_t block_time)>;
+  virtual std::unique_ptr<interfaces::Handler> handleTipChanged(TipChangedFn fn) = 0;
+
+  // Bad: returns boost connection specific to local process
+  using TipChangedFn = std::function<void(int block_height, int64_t block_time)>;
+  virtual boost::signals2::scoped_connection connectTipChanged(TipChangedFn fn) = 0;
+  ```
+
+- For consistency and friendliness to code generation tools, interface method
+  input and inout parameters should be ordered first and output parameters
+  should come last.
+
+  Example:
+
+  ```c++
+  // Good: error output param is last
+  virtual bool broadcastTransaction(const CTransactionRef& tx, CAmount max_fee, std::string& error) = 0;
+
+  // Bad: error output param is between input params
+  virtual bool broadcastTransaction(const CTransactionRef& tx, std::string& error, CAmount max_fee) = 0;
+  ```
+
+- For friendliness to code generation tools, interface methods should not be
+  overloaded:
+
+  Example:
+
+  ```c++
+  // Good: method names are unique
+  virtual bool disconnectByAddress(const CNetAddr& net_addr) = 0;
+  virtual bool disconnectById(NodeId id) = 0;
+
+  // Bad: methods are overloaded by type
+  virtual bool disconnect(const CNetAddr& net_addr) = 0;
+  virtual bool disconnect(NodeId id) = 0;
+  ```
+
+- For consistency and friendliness to code generation tools, interface method
+  names should be `lowerCamelCase` and standalone function names should be
+  `UpperCamelCase`.
+
+  Examples:
+
+  ```c++
+  // Good: lowerCamelCase method name
+  virtual void blockConnected(const CBlock& block, int height) = 0;
+
+  // Bad: uppercase class method
+  virtual void BlockConnected(const CBlock& block, int height) = 0;
+  ```
+
+  ```c++
+  // Good: UpperCamelCase standalone function name
+  std::unique_ptr<Node> MakeNode(LocalInit& init);
+
+  // Bad: lowercase standalone function
+  std::unique_ptr<Node> makeNode(LocalInit& init);
+  ```
+
+  Note: This last convention isn't generally followed outside of
+  [`src/interfaces/`](../src/interfaces/), though it did come up for discussion
+  before in [#14635](https://github.com/bitcoin/bitcoin/pull/14635).

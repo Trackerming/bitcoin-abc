@@ -19,7 +19,6 @@
 #include <compat/assumptions.h>
 #include <fs.h>
 #include <logging.h>
-#include <optional.h>
 #include <sync.h>
 #include <tinyformat.h>
 #include <util/settings.h>
@@ -40,6 +39,7 @@
 int64_t GetStartupTime();
 
 extern const char *const BITCOIN_CONF_FILENAME;
+extern const char *const BITCOIN_SETTINGS_FILENAME;
 
 void SetupEnvironment();
 bool SetupNetworking();
@@ -63,6 +63,17 @@ bool DirIsWritable(const fs::path &directory);
 bool CheckDiskSpace(const fs::path &dir, uint64_t additional_bytes = 0);
 
 /**
+ * Get the size of a file by scanning it.
+ *
+ * @param[in] path The file path
+ * @param[in] max Stop seeking beyond this limit
+ * @return The file size or max
+ */
+std::streampos
+GetFileSize(const char *path,
+            std::streamsize max = std::numeric_limits<std::streamsize>::max());
+
+/**
  * Release all directory locks. This is used for unit testing only, at runtime
  * the global destructor will take care of the locks.
  */
@@ -81,6 +92,9 @@ void ClearDatadirCache();
 fs::path GetConfigFile(const std::string &confPath);
 #ifdef WIN32
 fs::path GetSpecialFolderPath(int nFolder, bool fCreate = true);
+#endif
+#ifndef WIN32
+std::string ShellEscape(const std::string &arg);
 #endif
 #if defined(HAVE_SYSTEM)
 void runCommand(const std::string &strCommand);
@@ -198,6 +212,7 @@ protected:
 
 public:
     ArgsManager();
+    ~ArgsManager();
 
     /**
      * Select the network in use
@@ -250,7 +265,7 @@ public:
      * Return string argument or default value.
      *
      * @param strArg Argument to get (e.g. "-foo")
-     * @param default (e.g. "1")
+     * @param strDefault (e.g. "1")
      * @return command-line argument or default value
      */
     std::string GetArg(const std::string &strArg,
@@ -260,7 +275,7 @@ public:
      * Return integer argument or default value.
      *
      * @param strArg Argument to get (e.g. "-foo")
-     * @param default (e.g. 1)
+     * @param nDefault (e.g. 1)
      * @return command-line argument (0 if invalid number) or default value
      */
     int64_t GetArg(const std::string &strArg, int64_t nDefault) const;
@@ -269,7 +284,7 @@ public:
      * Return boolean argument or default value.
      *
      * @param strArg Argument to get (e.g. "-foo")
-     * @param default (true or false)
+     * @param fDefault (true or false)
      * @return command-line argument or default value
      */
     bool GetBoolArg(const std::string &strArg, bool fDefault) const;
@@ -340,9 +355,40 @@ public:
 
     /**
      * Return Flags for known arg.
-     * Return nullopt for unknown arg.
+     * Return std::nullopt for unknown arg.
      */
-    Optional<unsigned int> GetArgFlags(const std::string &name) const;
+    std::optional<unsigned int> GetArgFlags(const std::string &name) const;
+
+    /**
+     * Read and update settings file with saved settings. This needs to be
+     * called after SelectParams() because the settings file location is
+     * network-specific.
+     */
+    bool InitSettings(std::string &error);
+
+    /**
+     * Get settings file path, or return false if read-write settings were
+     * disabled with -nosettings.
+     */
+    bool GetSettingsPath(fs::path *filepath = nullptr, bool temp = false) const;
+
+    /**
+     * Read settings file. Push errors to vector, or log them if null.
+     */
+    bool ReadSettingsFile(std::vector<std::string> *errors = nullptr);
+
+    /**
+     * Write settings file. Push errors to vector, or log them if null.
+     */
+    bool WriteSettingsFile(std::vector<std::string> *errors = nullptr) const;
+
+    /**
+     * Access settings with lock held.
+     */
+    template <typename Fn> void LockSettings(Fn &&fn) {
+        LOCK(cs_args);
+        fn(m_settings);
+    }
 
     /**
      * Log the config file options and the command line arguments,
@@ -364,6 +410,9 @@ extern ArgsManager gArgs;
  * @return true if help has been requested via a command-line arg
  */
 bool HelpRequested(const ArgsManager &args);
+
+/** Add help options to the args manager */
+void SetupHelpOptions(ArgsManager &args);
 
 /**
  * Format a string to be used as group of options in help messages.

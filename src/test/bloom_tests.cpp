@@ -29,6 +29,9 @@ BOOST_FIXTURE_TEST_SUITE(bloom_tests, BasicTestingSetup)
 BOOST_AUTO_TEST_CASE(bloom_create_insert_serialize) {
     CBloomFilter filter(3, 0.01, 0, BLOOM_UPDATE_ALL);
 
+    BOOST_CHECK_MESSAGE(
+        !filter.contains(ParseHex("99108ad8ed9bb6274d3980bab5a85c048f0950c8")),
+        "Bloom filter should be empty!");
     filter.insert(ParseHex("99108ad8ed9bb6274d3980bab5a85c048f0950c8"));
     BOOST_CHECK_MESSAGE(
         filter.contains(ParseHex("99108ad8ed9bb6274d3980bab5a85c048f0950c8")),
@@ -64,10 +67,6 @@ BOOST_AUTO_TEST_CASE(bloom_create_insert_serialize) {
     BOOST_CHECK_MESSAGE(
         filter.contains(ParseHex("99108ad8ed9bb6274d3980bab5a85c048f0950c8")),
         "Bloom filter doesn't contain just-inserted object!");
-    filter.clear();
-    BOOST_CHECK_MESSAGE(
-        !filter.contains(ParseHex("99108ad8ed9bb6274d3980bab5a85c048f0950c8")),
-        "Bloom filter should be empty!");
 }
 
 BOOST_AUTO_TEST_CASE(bloom_create_insert_serialize_with_tweak) {
@@ -1096,7 +1095,7 @@ static std::vector<uint8_t> RandomData() {
 }
 
 BOOST_AUTO_TEST_CASE(rolling_bloom) {
-    SeedInsecureRand(/* deterministic */ true);
+    SeedInsecureRand(SeedRand::ZEROS);
     g_mock_deterministic_tests = true;
 
     // last-100-entry, 1% false positive:
@@ -1125,7 +1124,7 @@ BOOST_AUTO_TEST_CASE(rolling_bloom) {
         }
     }
     // Expect about 100 hits
-    BOOST_CHECK_EQUAL(nHits, 75);
+    BOOST_CHECK_EQUAL(nHits, 75U);
 
     BOOST_CHECK(rb1.contains(data[DATASIZE - 1]));
     rb1.reset();
@@ -1155,7 +1154,7 @@ BOOST_AUTO_TEST_CASE(rolling_bloom) {
         }
     }
     // Expect about 5 false positives
-    BOOST_CHECK_EQUAL(nHits, 6);
+    BOOST_CHECK_EQUAL(nHits, 6U);
 
     // last-1000-entry, 0.01% false positive:
     CRollingBloomFilter rb2(1000, 0.001);

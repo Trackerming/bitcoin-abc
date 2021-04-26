@@ -5,8 +5,8 @@
 
 #include <noui.h>
 
-#include <ui_interface.h>
-#include <util/system.h>
+#include <logging.h>
+#include <node/ui_interface.h>
 #include <util/translation.h>
 
 #include <boost/signals2/connection.hpp>
@@ -17,43 +17,39 @@ boost::signals2::connection noui_ThreadSafeMessageBoxConn;
 boost::signals2::connection noui_ThreadSafeQuestionConn;
 boost::signals2::connection noui_InitMessageConn;
 
-bool noui_ThreadSafeMessageBox(const std::string &message,
+bool noui_ThreadSafeMessageBox(const bilingual_str &message,
                                const std::string &caption, unsigned int style) {
     bool fSecure = style & CClientUIInterface::SECURE;
     style &= ~CClientUIInterface::SECURE;
-    bool prefix = !(style & CClientUIInterface::MSG_NOPREFIX);
-    style &= ~CClientUIInterface::MSG_NOPREFIX;
 
     std::string strCaption;
-    if (prefix) {
-        switch (style) {
-            case CClientUIInterface::MSG_ERROR:
-                strCaption = "Error: ";
-                break;
-            case CClientUIInterface::MSG_WARNING:
-                strCaption = "Warning: ";
-                break;
-            case CClientUIInterface::MSG_INFORMATION:
-                strCaption = "Information: ";
-                break;
-            default:
-                // Use supplied caption (can be empty)
-                strCaption = caption + ": ";
-        }
+    switch (style) {
+        case CClientUIInterface::MSG_ERROR:
+            strCaption = "Error: ";
+            break;
+        case CClientUIInterface::MSG_WARNING:
+            strCaption = "Warning: ";
+            break;
+        case CClientUIInterface::MSG_INFORMATION:
+            strCaption = "Information: ";
+            break;
+        default:
+            // Use supplied caption (can be empty)
+            strCaption = caption + ": ";
     }
 
     if (!fSecure) {
-        LogPrintf("%s%s\n", strCaption, message);
+        LogPrintf("%s%s\n", strCaption, message.original);
     }
-    tfm::format(std::cerr, "%s%s\n", strCaption.c_str(), message.c_str());
+    tfm::format(std::cerr, "%s%s\n", strCaption, message.original);
     return false;
 }
 
 bool noui_ThreadSafeQuestion(
-    const std::string & /* ignored interactive message */,
+    const bilingual_str & /* ignored interactive message */,
     const std::string &message, const std::string &caption,
     unsigned int style) {
-    return noui_ThreadSafeMessageBox(message, caption, style);
+    return noui_ThreadSafeMessageBox(Untranslated(message), caption, style);
 }
 
 void noui_InitMessage(const std::string &message) {
@@ -68,15 +64,15 @@ void noui_connect() {
     noui_InitMessageConn = uiInterface.InitMessage_connect(noui_InitMessage);
 }
 
-bool noui_ThreadSafeMessageBoxRedirect(const std::string &message,
+bool noui_ThreadSafeMessageBoxRedirect(const bilingual_str &message,
                                        const std::string &caption,
                                        unsigned int style) {
-    LogPrintf("%s: %s\n", caption, message);
+    LogPrintf("%s: %s\n", caption, message.original);
     return false;
 }
 
 bool noui_ThreadSafeQuestionRedirect(
-    const std::string & /* ignored interactive message */,
+    const bilingual_str & /* ignored interactive message */,
     const std::string &message, const std::string &caption,
     unsigned int style) {
     LogPrintf("%s: %s\n", caption, message);

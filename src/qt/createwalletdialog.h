@@ -24,9 +24,10 @@ public:
     virtual ~CreateWalletDialog();
 
     QString walletName() const;
-    bool encrypt() const;
-    bool disablePrivateKeys() const;
-    bool blank() const;
+    bool isEncryptWalletChecked() const;
+    bool isDisablePrivateKeysChecked() const;
+    bool isMakeBlankWalletChecked() const;
+    bool isDescriptorWalletChecked() const;
 
 private:
     Ui::CreateWalletDialog *ui;

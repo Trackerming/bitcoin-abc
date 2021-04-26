@@ -8,7 +8,7 @@
 #include <config.h>
 #include <crypto/hmac_sha256.h>
 #include <rpc/protocol.h>
-#include <ui_interface.h>
+#include <util/ref.h>
 #include <util/strencodings.h>
 #include <util/system.h>
 #include <util/translation.h>
@@ -305,7 +305,7 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
         return false;
     }
 
-    JSONRPCRequest jreq;
+    JSONRPCRequest jreq(context);
     jreq.peerAddr = req->GetPeer().ToString();
     if (!RPCAuthorized(authHeader.second, jreq.authUser)) {
         LogPrintf("ThreadRPCServer incorrect password attempt from %s\n",
@@ -400,14 +400,8 @@ bool HTTPRPCRequestProcessor::ProcessHTTPRequest(HTTPRequest *req) {
 
 static bool InitRPCAuthentication() {
     if (gArgs.GetArg("-rpcpassword", "") == "") {
-        LogPrintf("No rpcpassword set - using random cookie authentication.\n");
+        LogPrintf("Using random cookie authentication.\n");
         if (!GenerateAuthCookie(&strRPCUserColonPass)) {
-            // Same message as AbortNode.
-            uiInterface.ThreadSafeMessageBox(
-                _("Error: A fatal internal error occurred, see debug.log for "
-                  "details")
-                    .translated,
-                "", CClientUIInterface::MSG_ERROR);
             return false;
         }
     } else {

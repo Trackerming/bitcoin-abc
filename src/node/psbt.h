@@ -31,15 +31,26 @@ struct PSBTInputAnalysis {
  */
 struct PSBTAnalysis {
     //! Estimated weight of the transaction
-    Optional<size_t> estimated_vsize;
+    std::optional<size_t> estimated_vsize;
     //! Estimated feerate (fee / weight) of the transaction
-    Optional<CFeeRate> estimated_feerate;
+    std::optional<CFeeRate> estimated_feerate;
     //! Amount of fee being paid by the transaction
-    Optional<Amount> fee;
+    std::optional<Amount> fee;
     //! More information about the individual inputs of the transaction
     std::vector<PSBTInputAnalysis> inputs;
     //! Which of the BIP 174 roles needs to handle the transaction next
     PSBTRole next;
+    //! Error message
+    std::string error;
+
+    void SetInvalid(std::string err_msg) {
+        estimated_vsize = std::nullopt;
+        estimated_feerate = std::nullopt;
+        fee = std::nullopt;
+        inputs.clear();
+        next = PSBTRole::CREATOR;
+        error = err_msg;
+    }
 };
 
 /**

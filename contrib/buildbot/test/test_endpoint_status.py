@@ -25,7 +25,7 @@ from test.mocks.teamcity import DEFAULT_BUILD_ID, TEAMCITY_CI_USER
 class statusRequestData(test.mocks.fixture.MockData):
     def __init__(self):
         self.buildName = 'build-name'
-        self.project = 'bitcoin-abc-test'
+        self.projectName = 'bitcoin-abc-test'
         self.buildId = DEFAULT_BUILD_ID
         self.buildTypeId = 'build-type-id'
         self.buildResult = 'success'
@@ -55,13 +55,15 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.configure_build_info()
         self.teamcity.get_coverage_summary = mock.Mock()
         self.teamcity.get_coverage_summary.return_value = None
+        self.teamcity.getIgnoreList = mock.Mock()
+        self.teamcity.getIgnoreList.return_value = []
 
-        self.travis.get_branch_status = mock.Mock()
-        self.travis.get_branch_status.return_value = BuildStatus.Success
+        self.cirrus.get_default_branch_status = mock.Mock()
+        self.cirrus.get_default_branch_status.return_value = BuildStatus.Success
 
     def setup_master_failureAndTaskDoesNotExist(self, latestCompletedBuildId=DEFAULT_BUILD_ID,
                                                 numRecentFailedBuilds=0, numCommits=1,
-                                                userSearchFields=None):
+                                                userSearchFields=None, buildLogFile='testlog.zip'):
         if userSearchFields is None:
             userSearchFields = {}
 
@@ -72,6 +74,8 @@ class EndpointStatusTestCase(ABCBotFixture):
             },
         }
 
+        with open(self.data_dir / buildLogFile, 'rb') as f:
+            buildLog = f.read()
         recentBuilds = [] if numRecentFailedBuilds == 0 else [
             {'status': 'FAILURE'}, {'status': 'SUCCESS'}] * numRecentFailedBuilds
         self.teamcity.session.send.side_effect = [
@@ -83,6 +87,8 @@ class EndpointStatusTestCase(ABCBotFixture):
                     'id': latestCompletedBuildId,
                 }],
             })),
+            test.mocks.teamcity.Response(status_code=requests.codes.not_found),
+            test.mocks.teamcity.Response(buildLog),
             test.mocks.teamcity.Response(json.dumps({
                 'build': recentBuilds,
             })),
@@ -131,7 +137,7 @@ class EndpointStatusTestCase(ABCBotFixture):
 
     def test_status_noData(self):
         response = self.app.post('/status', headers=self.headers)
-        assert response.status_code == 415
+        self.assertEqual(response.status_code, 415)
         self.phab.harbormaster.createartifact.assert_not_called()
 
     def test_status_unresolved(self):
@@ -139,14 +145,14 @@ class EndpointStatusTestCase(ABCBotFixture):
         data.branch = 'UNRESOLVED'
         data.buildTargetPHID = 'UNRESOLVED'
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 400
+        self.assertEqual(response.status_code, 400)
         self.phab.harbormaster.createartifact.assert_not_called()
 
     def test_status_ignoredBuild(self):
         data = statusRequestData()
         data.buildTypeId = 'build-name__BOTIGNORE'
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.harbormaster.createartifact.assert_not_called()
 
     def test_status_master(self):
@@ -160,13 +166,27 @@ class EndpointStatusTestCase(ABCBotFixture):
             })),
         ]
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_not_called()
         self.slackbot.client.chat_postMessage.assert_not_called()
 
     def test_status_master_resolveBrokenBuildTask_masterGreen(self):
-        def setupMockResponses():
+        def setupMockResponses(data):
+            afterLatestBuild = [
+                test.mocks.teamcity.Response(),
+                test.mocks.teamcity.Response(),
+            ]
+            if data.buildResult == 'failure':
+                with open(self.data_dir / 'testlog.zip', 'rb') as f:
+                    buildLog = f.read()
+                afterLatestBuild = [
+                    test.mocks.teamcity.Response(
+                        status_code=requests.codes.not_found),
+                    test.mocks.teamcity.Response(buildLog),
+                    test.mocks.teamcity.Response(),
+                ]
+
             self.teamcity.session.send.side_effect = [
                 test.mocks.teamcity.buildInfo_automatedBuild(),
                 test.mocks.teamcity.Response(json.dumps({
@@ -174,9 +194,7 @@ class EndpointStatusTestCase(ABCBotFixture):
                         'id': DEFAULT_BUILD_ID,
                     }],
                 })),
-                test.mocks.teamcity.Response(),
-                test.mocks.teamcity.Response(),
-            ]
+            ] + afterLatestBuild
             self.phab.maniphest.search.return_value = test.mocks.phabricator.Result([{
                 'id': '123',
                 'phid': 'PHID-TASK-123',
@@ -190,15 +208,15 @@ class EndpointStatusTestCase(ABCBotFixture):
 
         data = statusRequestData()
         data.buildResult = 'failure'
-        setupMockResponses()
+        setupMockResponses(data)
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         # Master should be marked red
 
         data = statusRequestData()
-        setupMockResponses()
+        setupMockResponses(data)
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_called_with(transactions=[{
             'type': 'status',
@@ -243,7 +261,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             },
         }
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_called_with(transactions=[{
             'type': 'status',
@@ -268,7 +286,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             })),
         ]
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_called_with(transactions=[{
             'type': 'status',
@@ -291,7 +309,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             })),
         ]
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_not_called()
         self.slackbot.client.chat_postMessage.assert_not_called()
@@ -333,7 +351,7 @@ class EndpointStatusTestCase(ABCBotFixture):
 
         setupTeamcity()
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_not_called()
 
@@ -364,7 +382,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         }])
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_called_with(transactions=[{
             "type": "comment",
             "value": "(IMPORTANT) The build failed due to an unexpected infrastructure outage. "
@@ -384,10 +402,33 @@ class EndpointStatusTestCase(ABCBotFixture):
             latestCompletedBuildId=234567)
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_not_called()
         self.slackbot.client.chat_postMessage.assert_not_called()
+
+    def test_status_master_failureAndTaskDoesNotExist_doNotIgnoreComments(
+            self):
+        data = statusRequestData()
+        data.buildResult = 'failure'
+
+        self.setup_master_failureAndTaskDoesNotExist(userSearchFields={
+            'username': 'author-phab-username',
+            'custom.abc:slack-username': '',
+        })
+        self.slackbot.client.users_list.return_value = test.mocks.slackbot.users_list(
+            total=2)
+        # Make sure comment patterns do not give false positives
+        self.teamcity.getIgnoreList.return_value = [b'# TOTAL', b' # TOTAL']
+
+        response = self.app.post('/status', headers=self.headers, json=data)
+        assert response.status_code == 200
+        self.phab.differential.revision.edit.assert_not_called()
+
+        # Despite '# TOTAL' being in the build log, the failure was NOT ignored
+        # since the ignore pattern is a comment.
+        self.phab.maniphest.edit.assert_called()
+        self.slackbot.client.chat_postMessage.assert_called()
 
     def test_status_master_failureAndTaskDoesNotExist_authorDefaultName(self):
         data = statusRequestData()
@@ -401,7 +442,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             total=2)
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         maniphestEditCalls = [mock.call(transactions=[{
             "type": "title",
@@ -465,7 +506,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             total=2, initialUsers=[slackUser])
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         maniphestEditCalls = [mock.call(transactions=[{
             "type": "title",
@@ -523,7 +564,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.setup_master_failureAndTaskDoesNotExist()
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         maniphestEditCalls = [mock.call(transactions=[{
             "type": "title",
@@ -579,7 +620,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             total=2)
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         maniphestEditCalls = [mock.call(transactions=[{
             "type": "title",
@@ -634,7 +675,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.setup_master_failureAndTaskDoesNotExist(numRecentFailedBuilds=2)
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
 
         self.teamcity.session.send.assert_called_with(AnyWith(requests.PreparedRequest, {
@@ -669,7 +710,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.setup_master_failureAndTaskDoesNotExist(numRecentFailedBuilds=3)
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
 
         self.teamcity.session.send.assert_called_with(AnyWith(requests.PreparedRequest, {
@@ -686,10 +727,53 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.phab.maniphest.edit.assert_not_called()
         self.slackbot.client.chat_postMessage.assert_not_called()
 
+    def test_status_master_failureAndTaskDoesNotExist_ignoreFailure(self):
+        testPatterns = [
+            # Simple match
+            b'err:ntdll:RtlpWaitForCriticalSection',
+            # Greedy match with some escaped characters
+            br'\d*:err:ntdll:RtlpWaitForCriticalSection section .* retrying \(60 sec\)',
+            # Less greedy match
+            br'err:ntdll:RtlpWaitForCriticalSection section \w* "\?" wait timed out in thread \w*, blocked by \w*, retrying',
+        ]
+        for pattern in testPatterns:
+            self.teamcity.getIgnoreList.return_value = [
+                b'# Some comment',
+                b'  # Another comment followed by an empty line',
+                b'',
+                pattern,
+            ]
+            data = statusRequestData()
+            data.buildResult = 'failure'
+
+            self.setup_master_failureAndTaskDoesNotExist(
+                buildLogFile='testlog_ignore.zip')
+
+            response = self.app.post(
+                '/status', headers=self.headers, json=data)
+            self.assertEqual(response.status_code, 200)
+            self.phab.differential.revision.edit.assert_not_called()
+
+            self.teamcity.session.send.assert_called_with(AnyWith(requests.PreparedRequest, {
+                'url': self.teamcity.build_url(
+                    "downloadBuildLog.html",
+                    {
+                        "buildId": DEFAULT_BUILD_ID,
+                        "archived": "true",
+                        "guest": 1,
+                    }
+                )
+            }))
+
+            self.phab.maniphest.edit.assert_not_called()
+            self.slackbot.client.chat_postMessage.assert_not_called()
+
     def test_status_master_failureAndTaskExists(self):
         data = statusRequestData()
         data.buildResult = 'failure'
 
+        with open(self.data_dir / 'testlog.zip', 'rb') as f:
+            buildLog = f.read()
         self.teamcity.session.send.side_effect = [
             test.mocks.teamcity.buildInfo_automatedBuild(),
             test.mocks.teamcity.Response(json.dumps({
@@ -697,6 +781,8 @@ class EndpointStatusTestCase(ABCBotFixture):
                     'id': DEFAULT_BUILD_ID,
                 }],
             })),
+            test.mocks.teamcity.Response(status_code=requests.codes.not_found),
+            test.mocks.teamcity.Response(buildLog),
             test.mocks.teamcity.Response(),
         ]
 
@@ -705,7 +791,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         }])
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_not_called()
         self.phab.maniphest.edit.assert_not_called()
 
@@ -730,12 +816,15 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.phab.differential.revision.search.return_value = test.mocks.phabricator.differential_revision_search_result()
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
 
-    def test_status_revision_buildFailedWithoutDetails_OS_NAME(self):
+    def test_status_revision_buildFailed(self):
         data = statusRequestData()
         data.buildResult = 'failure'
         data.branch = 'phabricator/diff/456'
+
+        self.teamcity.getBuildLog = mock.Mock()
+        self.teamcity.getBuildLog.return_value = "dummy log"
 
         self.configure_build_info(
             properties=test.mocks.teamcity.buildInfo_properties(propsList=[{
@@ -760,10 +849,10 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.phab.differential.revision.search.return_value = test.mocks.phabricator.differential_revision_search_result()
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.phab.differential.revision.edit.assert_called_with(transactions=[{
             "type": "comment",
-            "value": "(IMPORTANT) Build [[{} | build-name (linux)]] failed.".format(
+            "value": "(IMPORTANT) Build [[{} | build-name (linux)]] failed.\n\nTail of the build log:\n```lines=16,COUNTEREXAMPLE\ndummy log```".format(
                 self.teamcity.build_url(
                     "viewLog.html",
                     {
@@ -774,178 +863,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             ),
         }], objectIdentifier='789')
 
-    def test_status_revision_buildFailedWithoutDetails(self):
-        data = statusRequestData()
-        data.buildResult = 'failure'
-        data.branch = 'phabricator/diff/789'
-
-        self.phab.differential.revision.edit = mock.Mock()
-        self.phab.differential.diff.search.return_value = test.mocks.phabricator.Result([{
-            'id': '789',
-            'fields': {
-                'revisionPHID': '123'
-            },
-        }])
-        self.phab.differential.revision.search.return_value = test.mocks.phabricator.differential_revision_search_result()
-
-        self.configure_build_info(
-            properties=test.mocks.teamcity.buildInfo_properties(propsList=[{
-                'name': 'env.ABC_BUILD_NAME',
-                'value': 'build-diff',
-            }])
-        )
-
-        self.teamcity.session.send.side_effect = [
-            test.mocks.teamcity.Response(),
-            test.mocks.teamcity.Response(),
-            test.mocks.teamcity.Response(),
-        ]
-
-        response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
-        self.teamcity.session.send.assert_called_with(AnyWith(requests.PreparedRequest, {
-            'url': self.teamcity.build_url(
-                "app/rest/testOccurrences",
-                {
-                    "locator": "build:(id:{}),status:FAILURE".format(DEFAULT_BUILD_ID),
-                    "fields": "testOccurrence(id,details,name)",
-                }
-            )
-        }))
-        self.phab.differential.revision.edit.assert_called_with(transactions=[{
-            "type": "comment",
-            "value": "(IMPORTANT) Build [[{} | build-name (build-diff)]] failed.".format(
-                self.teamcity.build_url(
-                    "viewLog.html",
-                    {
-                        "buildTypeId": data.buildTypeId,
-                        "buildId": DEFAULT_BUILD_ID,
-                    }
-                )
-            ),
-        }], objectIdentifier='123')
-
-    def test_status_revision_buildFailedWithDetails(self):
-        data = statusRequestData()
-        data.buildResult = 'failure'
-        data.branch = 'phabricator/diff/789'
-
-        self.phab.differential.revision.edit = mock.Mock()
-        self.phab.differential.diff.search.return_value = test.mocks.phabricator.Result([{
-            'id': '789',
-            'fields': {
-                'revisionPHID': '123'
-            },
-        }])
-        self.phab.differential.revision.search.return_value = test.mocks.phabricator.differential_revision_search_result()
-
-        with open(self.data_dir / 'testlog.zip', 'rb') as f:
-            buildLog = f.read()
-        with open(self.data_dir / 'testlog.output.txt', 'r', encoding='utf-8') as f:
-            expectedLogOutput = f.read()
-
-        self.configure_build_info(
-            properties=test.mocks.teamcity.buildInfo_properties(propsList=[{
-                'name': 'env.ABC_BUILD_NAME',
-                'value': 'build-diff',
-            }])
-        )
-
-        self.teamcity.session.send.side_effect = [
-            test.mocks.teamcity.Response(),
-            test.mocks.teamcity.Response(json.dumps({
-                'problemOccurrence': [{
-                    'id': 'id:2500,build:(id:56789)',
-                    # The first build failure:
-                    'details': 'Process exited with code 2 (Step: Command Line)',
-                }, {
-                    'id': 'id:2620,build:(id:56789)',
-                    # A line from the log that appears after the first failure:
-                    'details': 'No reports found for paths:',
-                }],
-            })),
-            test.mocks.teamcity.Response(status_code=requests.codes.not_found),
-            test.mocks.teamcity.Response(buildLog),
-            test.mocks.teamcity.Response(),
-        ]
-
-        response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
-        self.teamcity.session.send.assert_called_with(AnyWith(requests.PreparedRequest, {
-            'url': self.teamcity.build_url(
-                "app/rest/testOccurrences",
-                {
-                    "locator": "build:(id:{}),status:FAILURE".format(DEFAULT_BUILD_ID),
-                    "fields": "testOccurrence(id,details,name)",
-                }
-            )
-        }))
-        self.phab.differential.revision.edit.assert_called_with(transactions=[{
-            "type": "comment",
-            "value": "(IMPORTANT) Build [[{} | build-name (build-diff)]] failed.\n\n"
-                     "Snippet of first build failure:\n```lines=16,COUNTEREXAMPLE\n{}```".format(
-                         self.teamcity.build_url(
-                             "viewLog.html",
-                             {
-                                 "tab": "buildLog",
-                                 "logTab": "tree",
-                                 "filter": "debug",
-                                 "expand": "all",
-                                 "buildId": DEFAULT_BUILD_ID,
-                             },
-                             "footer"
-                         ),
-                         expectedLogOutput
-                     ),
-        }], objectIdentifier='123')
-
-        # Build log taken from the artifacts
-        expected_log = b'What a wonderful log !\nBut not very helpful.\nSome failure message\n'
-
-        self.teamcity.session.send.side_effect = [
-            test.mocks.teamcity.Response(),
-            test.mocks.teamcity.Response(json.dumps({
-                'problemOccurrence': [{
-                    'id': 'id:2500,build:(id:56789)',
-                    # The first build failure:
-                    'details': 'Some failure message',
-                }],
-            })),
-            test.mocks.teamcity.Response(expected_log),
-            test.mocks.teamcity.Response(),
-        ]
-
-        response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
-        self.teamcity.session.send.assert_called_with(AnyWith(requests.PreparedRequest, {
-            'url': self.teamcity.build_url(
-                "app/rest/testOccurrences",
-                {
-                    "locator": "build:(id:{}),status:FAILURE".format(DEFAULT_BUILD_ID),
-                    "fields": "testOccurrence(id,details,name)",
-                }
-            )
-        }))
-        self.phab.differential.revision.edit.assert_called_with(transactions=[{
-            "type": "comment",
-            "value": "(IMPORTANT) Build [[{} | build-name (build-diff)]] failed.\n\n"
-                     "Snippet of first build failure:\n```lines=16,COUNTEREXAMPLE\n{}```".format(
-                         self.teamcity.build_url(
-                             "viewLog.html",
-                             {
-                                 "tab": "buildLog",
-                                 "logTab": "tree",
-                                 "filter": "debug",
-                                 "expand": "all",
-                                 "buildId": DEFAULT_BUILD_ID,
-                             },
-                             "footer"
-                         ),
-                         expected_log.decode('utf-8')
-                     ),
-        }], objectIdentifier='123')
-
-    def test_status_revision_testsFailedWithDetails(self):
+    def test_status_revision_testsFailed(self):
         data = statusRequestData()
         data.branch = 'phabricator/diff/456'
         data.buildResult = 'failure'
@@ -961,7 +879,7 @@ class EndpointStatusTestCase(ABCBotFixture):
 
         failures = [{
             'id': 'id:2500,build:(id:{})'.format(DEFAULT_BUILD_ID),
-            'details': 'stacktrace',
+            'details': 'stacktrace1',
             'name': 'test name',
         }, {
             'id': 'id:2620,build:(id:{})'.format(DEFAULT_BUILD_ID),
@@ -978,14 +896,13 @@ class EndpointStatusTestCase(ABCBotFixture):
 
         self.teamcity.session.send.side_effect = [
             test.mocks.teamcity.Response(),
-            test.mocks.teamcity.Response(),
             test.mocks.teamcity.Response(json.dumps({
                 'testOccurrence': failures,
             }))
         ]
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
         self.teamcity.session.send.assert_called_with(AnyWith(requests.PreparedRequest, {
             'url': self.teamcity.build_url(
                 "app/rest/testOccurrences",
@@ -998,6 +915,14 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.phab.differential.revision.edit.assert_called_with(transactions=[{
             "type": "comment",
             "value": "(IMPORTANT) Build [[{} | build-name (build-diff)]] failed.\n\n"
+                     "Failed tests logs:\n"
+                     "```lines=16,COUNTEREXAMPLE"
+                     "\n====== test name ======\n"
+                     "stacktrace1"
+                     "\n====== other test name ======\n"
+                     "stacktrace2"
+                     "```"
+                     "\n\n"
                      "Each failure log is accessible here:\n"
                      "[[{} | test name]]\n"
                      "[[{} | other test name]]".format(
@@ -1048,7 +973,7 @@ class EndpointStatusTestCase(ABCBotFixture):
                 build_name
             )
             response = self.app.post(url, headers=self.headers)
-            assert response.status_code == 200
+            self.assertEqual(response.status_code, 200)
 
         # Set the status to 'running' to prevent target removal on completion.
         data.buildResult = "running"
@@ -1062,7 +987,7 @@ class EndpointStatusTestCase(ABCBotFixture):
             ]
             response = self.app.post(
                 '/status', headers=self.headers, json=data)
-            assert response.status_code == 200
+            self.assertEqual(response.status_code, 200)
 
             self.phab.harbormaster.artifact.search.assert_called_with(
                 constraints={
@@ -1195,7 +1120,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         setupTeamcity()
         setupUserSearch(slackUsername='author-slack-username')
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
 
         self.phab.differential.revision.search.assert_called_with(constraints={
                                                                   'ids': [1234]})
@@ -1214,7 +1139,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         setupUserSearch(slackUsername='author-slack-username')
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
 
         self.phab.differential.revision.search.assert_called_with(constraints={
                                                                   'ids': [1234]})
@@ -1233,7 +1158,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         setupTeamcity()
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
 
         self.phab.differential.revision.search.assert_called_with(constraints={
                                                                   'ids': [1234]})
@@ -1256,7 +1181,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.slackbot.client.chat_postMessage = mock.Mock()
 
         response = self.app.post('/status', headers=self.headers, json=data)
-        assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
 
         self.phab.differential.revision.search.assert_not_called()
         self.phab.user.search.assert_not_called()
@@ -1298,14 +1223,14 @@ class EndpointStatusTestCase(ABCBotFixture):
 
         self.teamcity.getBuildInfo.side_effect = _get_build_info
 
-        def get_travis_panel_content(status=None):
+        def get_cirrus_panel_content(status=None):
             if not status:
                 status = BuildStatus.Success
 
             return (
                 '| secp256k1 ([[https://github.com/Bitcoin-ABC/secp256k1 | Github]]) | Status |\n'
                 '|---|---|\n'
-                '| [[https://travis-ci.org/github/bitcoin-abc/secp256k1 | master]] | {{image uri="https://raster.shields.io/static/v1?label=Travis build&message={}&color={}&logo=travis", alt="{}"}} |\n\n'
+                '| [[https://cirrus-ci.com/github/Bitcoin-ABC/secp256k1 | master]] | {{image uri="https://raster.shields.io/static/v1?label=Cirrus build&message={}&color={}&logo=cirrus-ci", alt="{}"}} |\n\n'
             ).format(
                 status.value,
                 'brightgreen' if status == BuildStatus.Success else 'red',
@@ -1352,7 +1277,8 @@ class EndpointStatusTestCase(ABCBotFixture):
 
             response = self.app.post(
                 '/status', headers=self.headers, json=data)
-            assert response.status_code == (
+            self.assertEqual(
+                response.status_code,
                 200 if not expected_status_code else expected_status_code)
 
         def assert_panel_content(content):
@@ -1402,7 +1328,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         # teamcity content
         set_config_file([], [])
         call_status('dont_care', BuildStatus.Success)
-        assert_panel_content(get_travis_panel_content())
+        assert_panel_content(get_cirrus_panel_content())
 
         # If branch is not master the panel is not updated
         self.phab.set_text_panel_content.reset_mock()
@@ -1414,23 +1340,23 @@ class EndpointStatusTestCase(ABCBotFixture):
         )
         self.phab.set_text_panel_content.assert_not_called()
 
-        # Turn travis build into failure
-        self.travis.get_branch_status.return_value = BuildStatus.Failure
+        # Turn cirrus build into failure
+        self.cirrus.get_default_branch_status.return_value = BuildStatus.Failure
         call_status('dont_care', BuildStatus.Success)
-        assert_panel_content(get_travis_panel_content(BuildStatus.Failure))
-        self.travis.get_branch_status.return_value = BuildStatus.Success
+        assert_panel_content(get_cirrus_panel_content(BuildStatus.Failure))
+        self.cirrus.get_default_branch_status.return_value = BuildStatus.Success
 
         # Some builds in config file but no associated teamcity build
         set_config_file(["show_me11"], [])
         call_status('dont_care', BuildStatus.Success)
-        assert_panel_content(get_travis_panel_content())
+        assert_panel_content(get_cirrus_panel_content())
 
         # Set one build to be shown and associate it. This is not the build that
         # just finished.
         associate_build("show_me11")
         call_status('hide_me_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name') +
             build_line('show_me11') +
@@ -1443,7 +1369,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         associate_build("show_me13")
         call_status('hide_me_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name') +
             build_line('show_me11') +
@@ -1467,7 +1393,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         for i in range(10):
             call_status('hide_me_Type', BuildStatus.Success)
             assert_panel_content(
-                get_travis_panel_content() +
+                get_cirrus_panel_content() +
 
                 header('Project Name') +
                 build_line('show_me11') +
@@ -1485,7 +1411,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         del associated_builds["show_me12"]
         call_status('hide_me_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name') +
             build_line('show_me11') +
@@ -1504,7 +1430,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         del associated_builds["show_me13"]
         call_status('hide_me_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name') +
             build_line('show_me11') +
@@ -1521,7 +1447,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         del associated_builds["show_me11"]
         call_status('hide_me_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name 2') +
             build_line('show_me21') +
@@ -1534,7 +1460,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         failing_build_type_ids = ['show_me21_Type']
         call_status('hide_me_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name 2') +
             build_line('show_me21') +
@@ -1547,7 +1473,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         # and will be fetched from Teamcity anyway.
         call_status('show_me21_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name 2') +
             build_line('show_me21', status=BuildStatus.Failure) +
@@ -1563,7 +1489,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         no_complete_build_type_ids = ['show_me23_Type']
         call_status('show_me21_Type', BuildStatus.Success)
         assert_panel_content(
-            get_travis_panel_content() +
+            get_cirrus_panel_content() +
 
             header('Project Name 2') +
             build_line('show_me21', status=BuildStatus.Failure) +
@@ -1574,6 +1500,8 @@ class EndpointStatusTestCase(ABCBotFixture):
 
     def test_update_coverage_panel(self):
         panel_id = 21
+        buildTypeId = 'DummyBuildType'
+        projectName = 'Dummy Project'
 
         self.phab.set_text_panel_content = mock.Mock()
 
@@ -1582,10 +1510,13 @@ class EndpointStatusTestCase(ABCBotFixture):
         def call_status(status, expected_status_code=None):
             data = statusRequestData()
             data.buildResult = status.value
+            data.buildTypeId = buildTypeId
+            data.projectName = projectName
 
             response = self.app.post(
                 '/status', headers=self.headers, json=data)
-            assert response.status_code == (
+            self.assertEqual(
+                response.status_code,
                 200 if not expected_status_code else expected_status_code)
 
         def assert_panel_content(content):
@@ -1616,6 +1547,7 @@ class EndpointStatusTestCase(ABCBotFixture):
         self.phab.set_text_panel_content.assert_not_called_with(
             panel_id=panel_id)
 
+        # Generate coverage report for one project
         self.teamcity.get_coverage_summary.return_value = \
             """
 Reading tracefile check-extended_combined.info
@@ -1627,13 +1559,79 @@ Summary coverage rate:
 
         call_status(BuildStatus.Success, expected_status_code=500)
         assert_panel_content(
-            """**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId=BitcoinABC_Master_BitcoinAbcMasterCoverage&tab=report__Root_Code_Coverage&guest=1 | HTML coverage report ]]**
+            """**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId=DummyBuildType&tab=report__Root_Code_Coverage&guest=1 | Dummy Project coverage report ]]**
 
 | Granularity | % hit | # hit | # total |
 | ----------- | ----- | ----- | ------- |
 | Lines | 82.3% | 91410 | 111040 |
 | Functions | 74.1% | 6686 | 9020 |
 | Branches | 45.0% | 188886 | 420030 |
+"""
+        )
+
+        # Generate coverage report for another project
+        buildTypeId = 'AnotherBuildType'
+        projectName = 'Another Project'
+
+        self.teamcity.get_coverage_summary.return_value = \
+            """
+Reading tracefile coverage/lcov.info
+Summary coverage rate:
+  lines......: 20.0% (261 of 1305 lines)
+  functions..: 16.9% (41 of 242 functions)
+  branches...: 18.2% (123 of 676 branches)
+"""
+
+        call_status(BuildStatus.Success, expected_status_code=500)
+        assert_panel_content(
+            """**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId=DummyBuildType&tab=report__Root_Code_Coverage&guest=1 | Dummy Project coverage report ]]**
+
+| Granularity | % hit | # hit | # total |
+| ----------- | ----- | ----- | ------- |
+| Lines | 82.3% | 91410 | 111040 |
+| Functions | 74.1% | 6686 | 9020 |
+| Branches | 45.0% | 188886 | 420030 |
+
+**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId=AnotherBuildType&tab=report__Root_Code_Coverage&guest=1 | Another Project coverage report ]]**
+
+| Granularity | % hit | # hit | # total |
+| ----------- | ----- | ----- | ------- |
+| Lines | 20.0% | 261 | 1305 |
+| Functions | 16.9% | 41 | 242 |
+| Branches | 18.2% | 123 | 676 |
+"""
+        )
+
+        # Update one of the existing coverage reports
+        buildTypeId = 'DummyBuildType'
+        projectName = 'Renamed Dummy Project'
+
+        self.teamcity.get_coverage_summary.return_value = \
+            """
+Reading tracefile check-extended_combined.info
+Summary coverage rate:
+  lines......: 82.4% (91411 of 111030 lines)
+  functions..: 74.2% (6687 of 9010 functions)
+  branches...: 45.1% (188887 of 420020 branches)
+"""
+
+        call_status(BuildStatus.Success, expected_status_code=500)
+        assert_panel_content(
+            """**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId=DummyBuildType&tab=report__Root_Code_Coverage&guest=1 | Renamed Dummy Project coverage report ]]**
+
+| Granularity | % hit | # hit | # total |
+| ----------- | ----- | ----- | ------- |
+| Lines | 82.4% | 91411 | 111030 |
+| Functions | 74.2% | 6687 | 9010 |
+| Branches | 45.1% | 188887 | 420020 |
+
+**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId=AnotherBuildType&tab=report__Root_Code_Coverage&guest=1 | Another Project coverage report ]]**
+
+| Granularity | % hit | # hit | # total |
+| ----------- | ----- | ----- | ------- |
+| Lines | 20.0% | 261 | 1305 |
+| Functions | 16.9% | 41 | 242 |
+| Branches | 18.2% | 123 | 676 |
 """
         )
 

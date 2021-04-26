@@ -8,7 +8,6 @@
 #define BITCOIN_KEY_H
 
 #include <pubkey.h>
-#include <serialize.h>
 #include <support/allocators/secure.h>
 #include <uint256.h>
 
@@ -18,9 +17,12 @@
 /**
  * secure_allocator is defined in allocators.h
  * CPrivKey is a serialized private key, with all parameters included
- * (PRIVATE_KEY_SIZE bytes)
+ * (SIZE bytes)
  */
 typedef std::vector<uint8_t, secure_allocator<uint8_t>> CPrivKey;
+
+//! a Schnorr signature
+using SchnorrSig = std::array<uint8_t, CPubKey::SCHNORR_SIZE>;
 
 /** An encapsulated secp256k1 private key. */
 class CKey {
@@ -28,15 +30,14 @@ public:
     /**
      * secp256k1:
      */
-    static const unsigned int PRIVATE_KEY_SIZE = 279;
-    static const unsigned int COMPRESSED_PRIVATE_KEY_SIZE = 214;
+    static const unsigned int SIZE = 279;
+    static const unsigned int COMPRESSED_SIZE = 214;
     /**
      * see www.keylength.com
      * script supports up to 75 for single byte push
      */
-    static_assert(
-        PRIVATE_KEY_SIZE >= COMPRESSED_PRIVATE_KEY_SIZE,
-        "COMPRESSED_PRIVATE_KEY_SIZE is larger than PRIVATE_KEY_SIZE");
+    static_assert(SIZE >= COMPRESSED_SIZE,
+                  "COMPRESSED_SIZE is larger than SIZE");
 
 private:
     //! Whether this private key is valid. We check for correctness when
@@ -122,6 +123,8 @@ public:
      * Create a Schnorr signature.
      * The test_case parameter tweaks the deterministic nonce.
      */
+    bool SignSchnorr(const uint256 &hash, SchnorrSig &sig,
+                     uint32_t test_case = 0) const;
     bool SignSchnorr(const uint256 &hash, std::vector<uint8_t> &vchSig,
                      uint32_t test_case = 0) const;
 
@@ -174,23 +177,6 @@ struct CExtKey {
     bool Derive(CExtKey &out, unsigned int nChild) const;
     CExtPubKey Neuter() const;
     void SetSeed(const uint8_t *seed, unsigned int nSeedLen);
-    template <typename Stream> void Serialize(Stream &s) const {
-        unsigned int len = BIP32_EXTKEY_SIZE;
-        ::WriteCompactSize(s, len);
-        uint8_t code[BIP32_EXTKEY_SIZE];
-        Encode(code);
-        s.write((const char *)&code[0], len);
-    }
-    template <typename Stream> void Unserialize(Stream &s) {
-        unsigned int len = ::ReadCompactSize(s);
-        if (len != BIP32_EXTKEY_SIZE) {
-            throw std::runtime_error("Invalid extended key size\n");
-        }
-
-        uint8_t code[BIP32_EXTKEY_SIZE];
-        s.read((char *)&code[0], len);
-        Decode(code);
-    }
 
     CExtKey() = default;
 };

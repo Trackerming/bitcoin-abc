@@ -11,7 +11,6 @@
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <scheduler.h>
-#include <util/validation.h>
 
 #include <future>
 #include <tuple>
@@ -76,7 +75,9 @@ public:
     void Clear() {
         LOCK(m_mutex);
         for (const auto &entry : m_map) {
-            if (!--entry.second->count) m_list.erase(entry.second);
+            if (!--entry.second->count) {
+                m_list.erase(entry.second);
+            }
         }
         m_map.clear();
     }
@@ -123,10 +124,10 @@ CMainSignals &GetMainSignals() {
 }
 
 void RegisterSharedValidationInterface(
-    std::shared_ptr<CValidationInterface> pwalletIn) {
-    // Each connection captures pwalletIn to ensure that each callback is
-    // executed before pwalletIn is destroyed. For more details see #18338.
-    g_signals.m_internals->Register(std::move(pwalletIn));
+    std::shared_ptr<CValidationInterface> callbacks) {
+    // Each connection captures the shared_ptr to ensure that each callback is
+    // executed before the subscriber is destroyed. For more details see #18338.
+    g_signals.m_internals->Register(std::move(callbacks));
 }
 
 void RegisterValidationInterface(CValidationInterface *callbacks) {
@@ -141,9 +142,9 @@ void UnregisterSharedValidationInterface(
     UnregisterValidationInterface(callbacks.get());
 }
 
-void UnregisterValidationInterface(CValidationInterface *pwalletIn) {
+void UnregisterValidationInterface(CValidationInterface *callbacks) {
     if (g_signals.m_internals) {
-        g_signals.m_internals->Unregister(pwalletIn);
+        g_signals.m_internals->Unregister(callbacks);
     }
 }
 
@@ -222,12 +223,11 @@ void CMainSignals::TransactionRemovedFromMempool(const CTransactionRef &ptx) {
                           ptx->GetHash().ToString());
 }
 
-void CMainSignals::BlockConnected(
-    const std::shared_ptr<const CBlock> &pblock, const CBlockIndex *pindex,
-    const std::shared_ptr<const std::vector<CTransactionRef>> &pvtxConflicted) {
-    auto event = [pblock, pindex, pvtxConflicted, this] {
+void CMainSignals::BlockConnected(const std::shared_ptr<const CBlock> &pblock,
+                                  const CBlockIndex *pindex) {
+    auto event = [pblock, pindex, this] {
         m_internals->Iterate([&](CValidationInterface &callbacks) {
-            callbacks.BlockConnected(pblock, pindex, *pvtxConflicted);
+            callbacks.BlockConnected(pblock, pindex);
         });
     };
     ENQUEUE_AND_LOG_EVENT(event, "%s: block hash=%s block height=%d", __func__,
@@ -259,7 +259,7 @@ void CMainSignals::ChainStateFlushed(const CBlockLocator &locator) {
 void CMainSignals::BlockChecked(const CBlock &block,
                                 const BlockValidationState &state) {
     LOG_EVENT("%s: block hash=%s state=%s", __func__,
-              block.GetHash().ToString(), FormatStateMessage(state));
+              block.GetHash().ToString(), state.ToString());
     m_internals->Iterate([&](CValidationInterface &callbacks) {
         callbacks.BlockChecked(block, state);
     });

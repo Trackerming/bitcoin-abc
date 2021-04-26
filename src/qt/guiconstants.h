@@ -39,12 +39,6 @@ static const bool DEFAULT_SPLASHSCREEN = true;
  */
 static const int TOOLTIP_WRAP_THRESHOLD = 80;
 
-/* Maximum allowed URI length */
-static const int MAX_URI_LENGTH = 255;
-
-/* QRCodeDialog -- size of exported QR Code image */
-#define QR_IMAGE_SIZE 350
-
 /* Number of frames in spinner animation */
 #define SPINNER_FRAMES 36
 
@@ -53,5 +47,11 @@ static const int MAX_URI_LENGTH = 255;
 #define QAPP_APP_NAME_DEFAULT "BitcoinABC-Qt"
 #define QAPP_APP_NAME_TESTNET "BitcoinABC-Qt-testnet"
 #define QAPP_APP_NAME_REGTEST "BitcoinABC-Qt-regtest"
+
+/* One gigabyte (GB) in bytes */
+static constexpr uint64_t GB_BYTES{1'000'000'000};
+
+// Default prune target displayed in GUI.
+static constexpr int DEFAULT_PRUNE_TARGET_GB{2};
 
 #endif // BITCOIN_QT_GUICONSTANTS_H

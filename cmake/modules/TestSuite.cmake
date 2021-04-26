@@ -168,7 +168,7 @@ function(add_boost_unit_tests_to_suite SUITE NAME)
 	add_executable(${NAME} EXCLUDE_FROM_ALL ${ARG_UNPARSED_ARGUMENTS})
 	add_dependencies("${SUITE_TARGET}" ${NAME})
 
-	set(HRF_LOGGER "HRF,test_suite")
+	set(HRF_LOGGER "HRF,message")
 
 	foreach(_test_source ${ARG_TESTS})
 		target_sources(${NAME} PRIVATE "${_test_source}")
@@ -191,12 +191,21 @@ function(add_boost_unit_tests_to_suite SUITE NAME)
 			JUNIT
 			"--run_test=${_test_name}"
 			"--logger=${HRF_LOGGER}${JUNIT_LOGGER}"
+			"--catch_system_errors=no"
 		)
 		set_property(
 			TARGET ${SUITE_TARGET}
 			APPEND PROPERTY UNIT_TESTS ${_test_name}
 		)
 	endforeach()
+
+	# We don't want to add a dependency to the host system boost during cross
+	# compilation. If this is a native build, we still create the executable to
+	# let cmake know the target exists but we don't add the boost dependency.
+	is_native_build(IS_NATIVE_BUILD)
+	if(IS_NATIVE_BUILD)
+		return()
+	endif()
 
 	find_package(Boost 1.59 REQUIRED unit_test_framework)
 	target_link_libraries(${NAME} Boost::unit_test_framework)

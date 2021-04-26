@@ -9,7 +9,8 @@
             "bin": ["clang-format-8", "clang-format"],
             "include": "(^src/.*\\.(h|c|cpp|mm)$)",
             "exclude": [
-                "(^src/(secp256k1|univalue|leveldb)/)"
+                "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "autopep8": {
@@ -17,7 +18,8 @@
             "version": ">=1.3.4",
             "include": "(\\.py$)",
             "exclude": [
-                "(^contrib/gitian-builder/)"
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)"
             ],
             "flags": [
                 "--aggressive",
@@ -29,7 +31,8 @@
             "version": ">=3.0",
             "include": "(\\.py$)",
             "exclude": [
-                "(^contrib/gitian-builder/)"
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)"
             ],
             "flags": [
                 "--ignore=E501,E704,W503,W504"
@@ -39,7 +42,9 @@
             "type": "lint-format-strings",
             "include": "(^src/.*\\.(h|c|cpp)$)",
             "exclude": [
-                "(^src/(secp256k1|univalue|leveldb)/)"
+                "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)",
+                "(^src/test/fuzz/strprintf.cpp$)"
             ]
         },
         "check-doc": {
@@ -55,7 +60,8 @@
             "include": "(\\.py$)",
             "exclude": [
                 "(^test/lint/lint-python-format\\.py$)",
-                "(^contrib/gitian-builder/)"
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)"
             ]
         },
         "phpcs": {
@@ -70,14 +76,16 @@
             "type": "lint-locale-dependence",
             "include": "(^src/.*\\.(h|cpp)$)",
             "exclude": [
-                "(^src/(crypto/ctaes/|leveldb/|secp256k1/|tinyformat.h|univalue/))"
+                "(^src/(crypto/ctaes/|leveldb/|secp256k1/|tinyformat.h|univalue/))",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-cheader": {
             "type": "lint-cheader",
             "include": "(^src/.*\\.(h|cpp)$)",
             "exclude": [
-                "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)"
+                "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "spelling": {
@@ -98,14 +106,16 @@
             "type": "lint-assert-with-side-effects",
             "include": "(^src/.*\\.(h|cpp)$)",
             "exclude": [
-                "(^src/(secp256k1|univalue|leveldb)/)"
+                "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-include-quotes": {
             "type": "lint-include-quotes",
             "include": "(^src/.*\\.(h|cpp)$)",
             "exclude": [
-                "(^src/(secp256k1|univalue|leveldb)/)"
+                "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-include-guard": {
@@ -113,6 +123,7 @@
             "include": "(^src/.*\\.h$)",
             "exclude": [
                 "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)",
                 "(^src/tinyformat.h$)"
             ]
         },
@@ -120,7 +131,8 @@
             "type": "lint-include-source",
             "include": "(^src/.*\\.(h|c|cpp)$)",
             "exclude": [
-                "(^src/(secp256k1|univalue|leveldb)/)"
+                "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-stdint": {
@@ -128,6 +140,7 @@
             "include": "(^src/.*\\.(h|c|cpp)$)",
             "exclude": [
                 "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)",
                 "(^src/compat/assumptions.h$)"
             ]
         },
@@ -135,7 +148,8 @@
             "type": "lint-source-filename",
             "include": "(^src/.*\\.(h|c|cpp)$)",
             "exclude": [
-                "(^src/(secp256k1|univalue|leveldb)/)"
+                "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-boost-dependencies": {
@@ -150,7 +164,8 @@
             "type": "lint-python-encoding",
             "include": "(\\.py$)",
             "exclude": [
-                "(^contrib/gitian-builder/)"
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)"
             ]
         },
         "lint-python-shebang": {
@@ -158,7 +173,8 @@
             "include": "(\\.py$)",
             "exclude": [
                 "(__init__\\.py$)",
-                "(^contrib/gitian-builder/)"
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)"
             ]
         },
         "lint-bash-shebang": {
@@ -195,6 +211,7 @@
             "include": "(^src/.*\\.(h|cpp)$)",
             "exclude": [
                 "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)",
                 "(^src/compat/glibc_compat.cpp$)"
             ]
         },
@@ -213,7 +230,8 @@
             "type": "lint-doxygen",
             "include": "(^src/.*\\.(h|c|cpp)$)",
             "exclude": [
-                "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)"
+                "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-whitespace": {
@@ -221,19 +239,22 @@
             "include": "(\\.(ac|am|cmake|conf|in|include|json|m4|md|openrc|php|pl|sh|txt|yml)$)",
             "exclude": [
                 "(^contrib/gitian-builder/)",
-                "(^src/(secp256k1|univalue|leveldb)/)"
+                "(^src/(secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "lint-cppcheck": {
             "type": "lint-cppcheck",
             "include": "(^src/.*\\.(h|c|cpp)$)",
             "exclude": [
-                "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)"
+                "(^src/(crypto/ctaes|secp256k1|univalue|leveldb)/)",
+                "(^src/bench/nanobench.h$)"
             ]
         },
         "yamllint": {
             "type": "yamllint",
-            "include": "(\\.(yml|yaml)$)"
+            "include": "(\\.(yml|yaml)$)",
+            "exclude": "(^src/(secp256k1|univalue|leveldb)/)"
         },
         "lint-check-nonfatal": {
             "type": "lint-check-nonfatal",
@@ -249,6 +270,27 @@
                 "(\\.md$)"
             ],
             "exclude": "(^contrib/gitian-builder/)"
+        },
+        "lint-python-mypy": {
+            "type": "lint-python-mypy",
+            "include": "(\\.py$)",
+            "exclude": "(^contrib/)",
+            "flags": [
+                "--ignore-missing-imports"
+            ]
+        },
+        "lint-python-mutable-default": {
+            "type": "lint-python-mutable-default",
+            "include": "(\\.py$)",
+            "exclude": [
+                "(^contrib/gitian-builder/)",
+                "(^contrib/apple-sdk-tools/)"
+            ]
+        },
+        "prettier": {
+            "type": "prettier",
+            "include": "(^web/.*\\.(css|html|js|json|jsx|md|scss|ts|tsx)$)",
+            "exclude": "(^web/.*/translations/.*\\.json$)"
         }
     }
 }

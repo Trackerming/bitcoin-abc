@@ -15,7 +15,12 @@ from collections import defaultdict
 
 # Avoid wildcard * imports if possible
 from test_framework.blocktools import (create_block, create_coinbase)
-from test_framework.messages import (CInv, msg_block, msg_getdata)
+from test_framework.messages import (
+    CInv,
+    MSG_BLOCK,
+    msg_block,
+    msg_getdata
+)
 from test_framework.mininode import (
     P2PInterface,
     mininode_lock,
@@ -169,14 +174,15 @@ class ExampleTest(BitcoinTestFramework):
         self.block_time = self.nodes[0].getblock(
             self.nodes[0].getbestblockhash())['time'] + 1
 
-        height = 1
+        height = self.nodes[0].getblockcount()
 
         for i in range(10):
             # Use the mininode and blocktools functionality to manually build a block
             # Calling the generate() rpc is easier, but this allows us to exactly
             # control the blocks and transactions.
             block = create_block(
-                self.tip, create_coinbase(height), self.block_time)
+                self.tip, create_coinbase(
+                    height + 1), self.block_time)
             block.solve()
             block_message = msg_block(block)
             # Send message is used to send a P2P message to the node over our
@@ -194,17 +200,19 @@ class ExampleTest(BitcoinTestFramework):
         self.log.info("Connect node2 and node1")
         connect_nodes(self.nodes[1], self.nodes[2])
 
+        self.log.info("Wait for node2 to receive all the blocks from node1")
+        self.sync_all()
+
         self.log.info("Add P2P connection to node2")
         self.nodes[0].disconnect_p2ps()
 
         self.nodes[2].add_p2p_connection(BaseNode())
 
-        self.log.info(
-            "Wait for node2 reach current tip. Test that it has propagated all the blocks to us")
+        self.log.info("Test that node2 propagates all the blocks to us")
 
         getdata_request = msg_getdata()
         for block in blocks:
-            getdata_request.inv.append(CInv(2, block))
+            getdata_request.inv.append(CInv(MSG_BLOCK, block))
         self.nodes[2].p2p.send_message(getdata_request)
 
         # wait_until() will loop until a predicate condition is met. Use it to test properties of the

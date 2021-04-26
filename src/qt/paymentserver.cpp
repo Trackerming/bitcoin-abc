@@ -6,13 +6,14 @@
 
 #include <cashaddrenc.h>
 #include <chainparams.h>
+#include <config.h>
 #include <interfaces/node.h>
 #include <key_io.h>
+#include <node/ui_interface.h>
 #include <policy/policy.h>
 #include <qt/bitcoinunits.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
-#include <ui_interface.h>
 #include <util/system.h>
 #include <wallet/wallet.h>
 
@@ -115,8 +116,7 @@ static bool ipcCanParseLegacyURI(const QString &arg,
 // Warning: ipcSendCommandLine() is called early in init, so don't use "Q_EMIT
 // message()", but "QMessageBox::"!
 //
-void PaymentServer::ipcParseCommandLine(interfaces::Node &node, int argc,
-                                        char *argv[]) {
+void PaymentServer::ipcParseCommandLine(int argc, char *argv[]) {
     std::array<const std::string *, 3> networks = {
         {&CBaseChainParams::MAIN, &CBaseChainParams::TESTNET,
          &CBaseChainParams::REGTEST}};
@@ -183,7 +183,7 @@ void PaymentServer::ipcParseCommandLine(interfaces::Node &node, int argc,
     }
 
     if (chosenNetwork) {
-        node.selectParams(*chosenNetwork);
+        SelectParams(*chosenNetwork);
     }
 }
 
@@ -521,8 +521,8 @@ void PaymentServer::LoadRootCAs(X509_STORE *_store) {
             continue;
         }
     }
-    qWarning() << "PaymentServer::LoadRootCAs: Loaded " << nRootCerts
-               << " root certificates";
+    qInfo() << "PaymentServer::LoadRootCAs: Loaded " << nRootCerts
+            << " root certificates";
 
     // Project for another day:
     // Fetch certificate revocation lists, and add them to certStore.
@@ -710,7 +710,7 @@ void PaymentServer::fetchRequest(const QUrl &url) {
     netManager->get(netRequest);
 }
 
-void PaymentServer::fetchPaymentACK(WalletModel *walletModel,
+void PaymentServer::fetchPaymentACK(interfaces::Wallet &wallet,
                                     const SendCoinsRecipient &recipient,
                                     QByteArray transaction) {
     const payments::PaymentDetails &details =
@@ -734,10 +734,10 @@ void PaymentServer::fetchPaymentACK(WalletModel *walletModel,
     // Create a new refund address, or re-use:
     CTxDestination dest;
     const OutputType change_type =
-        walletModel->wallet().getDefaultChangeType() != OutputType::CHANGE_AUTO
-            ? walletModel->wallet().getDefaultChangeType()
-            : walletModel->wallet().getDefaultAddressType();
-    if (walletModel->wallet().getNewDestination(change_type, "", dest)) {
+        wallet.getDefaultChangeType() != OutputType::CHANGE_AUTO
+            ? wallet.getDefaultChangeType()
+            : wallet.getDefaultAddressType();
+    if (wallet.getNewDestination(change_type, "", dest)) {
         // BIP70 requests encode the scriptPubKey directly, so we are not
         // restricted to address types supported by the receiver. As a result,
         // we choose the address format we also use for change. Despite an
@@ -747,7 +747,7 @@ void PaymentServer::fetchPaymentACK(WalletModel *walletModel,
         std::string label = tr("Refund from %1")
                                 .arg(recipient.authenticatedMerchant)
                                 .toStdString();
-        walletModel->wallet().setAddressBook(dest, label, "refund");
+        wallet.setAddressBook(dest, label, "refund");
 
         CScript s = GetScriptForDestination(dest);
         payments::Output *refund_to = payment.add_refund_to();
@@ -858,13 +858,15 @@ void PaymentServer::handlePaymentACK(const QString &paymentACKMsg) {
 
 bool PaymentServer::verifyNetwork(
     interfaces::Node &node, const payments::PaymentDetails &requestDetails) {
-    bool fVerified = requestDetails.network() == node.getNetwork();
+    const std::string clientNetwork =
+        GetConfig().GetChainParams().NetworkIDString();
+    bool fVerified = requestDetails.network() == clientNetwork;
     if (!fVerified) {
         qWarning() << QString("PaymentServer::%1: Payment request network "
                               "\"%2\" doesn't match client network \"%3\".")
                           .arg(__func__)
                           .arg(QString::fromStdString(requestDetails.network()))
-                          .arg(QString::fromStdString(node.getNetwork()));
+                          .arg(QString::fromStdString(clientNetwork));
     }
     return fVerified;
 }

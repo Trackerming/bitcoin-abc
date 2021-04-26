@@ -12,6 +12,7 @@
 #include <QString>
 #include <QTimer>
 
+class CCoinControl;
 class ClientModel;
 class PlatformStyle;
 class SendCoinsEntry;
@@ -63,6 +64,8 @@ private:
     Ui::SendCoinsDialog *ui;
     ClientModel *clientModel;
     WalletModel *model;
+    std::unique_ptr<CCoinControl> m_coin_control;
+    std::unique_ptr<WalletModelTransaction> m_current_transaction;
     bool fNewRecipientAllowed;
     bool fFeeMinimized;
     const PlatformStyle *platformStyle;
@@ -74,6 +77,9 @@ private:
     processSendCoinsReturn(const WalletModel::SendCoinsReturn &sendCoinsReturn,
                            const QString &msgArg = QString());
     void minimizeFeeSection(bool fMinimize);
+    // Format confirmation message
+    bool PrepareSendText(QString &question_string, QString &informative_text,
+                         QString &detailed_text);
     void updateFeeMinimizedLabel();
     // Update the passed in CCoinControl with state from the GUI
     void updateCoinControlState(CCoinControl &ctrl);
@@ -97,9 +103,7 @@ private Q_SLOTS:
     void coinControlClipboardBytes();
     void coinControlClipboardLowOutput();
     void coinControlClipboardChange();
-    void setMinimumFee();
     void updateFeeSectionControls();
-    void updateMinFeeLabel();
     void updateSmartFeeLabel();
 
 Q_SIGNALS:
@@ -118,8 +122,9 @@ public:
                            const QString &informative_text = "",
                            const QString &detailed_text = "",
                            int secDelay = SEND_CONFIRM_DELAY,
+                           const QString &confirmText = "Send",
                            QWidget *parent = nullptr);
-    int exec();
+    int exec() override;
 
 private Q_SLOTS:
     void countDown();
@@ -129,6 +134,7 @@ private:
     QAbstractButton *yesButton;
     QTimer countDownTimer;
     int secDelay;
+    QString confirmButtonText;
 };
 
 #endif // BITCOIN_QT_SENDCOINSDIALOG_H

@@ -25,7 +25,7 @@ public:
     explicit CKeyID(const uint160 &in) : uint160(in) {}
 };
 
-typedef uint256 ChainCode;
+using ChainCode = uint256;
 
 /** An encapsulated public key. */
 class CPubKey {
@@ -33,31 +33,32 @@ public:
     /**
      * secp256k1:
      */
-    static constexpr unsigned int PUBLIC_KEY_SIZE = 65;
-    static constexpr unsigned int COMPRESSED_PUBLIC_KEY_SIZE = 33;
+    static constexpr unsigned int SIZE = 65;
+    static constexpr unsigned int COMPRESSED_SIZE = 33;
+    static constexpr unsigned int SCHNORR_SIZE = 64;
     static constexpr unsigned int SIGNATURE_SIZE = 72;
     static constexpr unsigned int COMPACT_SIGNATURE_SIZE = 65;
     /**
      * see www.keylength.com
      * script supports up to 75 for single byte push
      */
-    static_assert(PUBLIC_KEY_SIZE >= COMPRESSED_PUBLIC_KEY_SIZE,
-                  "COMPRESSED_PUBLIC_KEY_SIZE is larger than PUBLIC_KEY_SIZE");
+    static_assert(SIZE >= COMPRESSED_SIZE,
+                  "COMPRESSED_SIZE is larger than SIZE");
 
 private:
     /**
      * Just store the serialized data.
      * Its length can very cheaply be computed from the first byte.
      */
-    uint8_t vch[PUBLIC_KEY_SIZE];
+    uint8_t vch[SIZE];
 
     //! Compute the length of a pubkey with a given first byte.
     static unsigned int GetLen(uint8_t chHeader) {
         if (chHeader == 2 || chHeader == 3) {
-            return COMPRESSED_PUBLIC_KEY_SIZE;
+            return COMPRESSED_SIZE;
         }
         if (chHeader == 4 || chHeader == 6 || chHeader == 7) {
-            return PUBLIC_KEY_SIZE;
+            return SIZE;
         }
         return 0;
     }
@@ -120,7 +121,7 @@ public:
     }
     template <typename Stream> void Unserialize(Stream &s) {
         unsigned int len = ::ReadCompactSize(s);
-        if (len <= PUBLIC_KEY_SIZE) {
+        if (len <= SIZE) {
             s.read((char *)vch, len);
         } else {
             // invalid pubkey, skip available data
@@ -133,10 +134,12 @@ public:
     }
 
     //! Get the KeyID of this public key (hash of its serialization)
-    CKeyID GetID() const { return CKeyID(Hash160(vch, vch + size())); }
+    CKeyID GetID() const {
+        return CKeyID(Hash160(MakeSpan(vch).first(size())));
+    }
 
     //! Get the 256-bit hash of this public key.
-    uint256 GetHash() const { return Hash(vch, vch + size()); }
+    uint256 GetHash() const { return Hash(MakeSpan(vch).first(size())); }
 
     /*
      * Check syntactic correctness.
@@ -150,7 +153,7 @@ public:
     bool IsFullyValid() const;
 
     //! Check whether this is a compressed public key.
-    bool IsCompressed() const { return size() == COMPRESSED_PUBLIC_KEY_SIZE; }
+    bool IsCompressed() const { return size() == COMPRESSED_SIZE; }
 
     /**
      * Verify a DER-serialized ECDSA signature (~72 bytes).
@@ -163,6 +166,8 @@ public:
      * Verify a Schnorr signature (=64 bytes).
      * If this public key is not fully valid, the return value will be false.
      */
+    bool VerifySchnorr(const uint256 &hash,
+                       const std::array<uint8_t, SCHNORR_SIZE> &sig) const;
     bool VerifySchnorr(const uint256 &hash,
                        const std::vector<uint8_t> &vchSig) const;
 
@@ -202,32 +207,13 @@ struct CExtPubKey {
                a.pubkey == b.pubkey;
     }
 
+    friend bool operator!=(const CExtPubKey &a, const CExtPubKey &b) {
+        return !(a == b);
+    }
+
     void Encode(uint8_t code[BIP32_EXTKEY_SIZE]) const;
     void Decode(const uint8_t code[BIP32_EXTKEY_SIZE]);
     bool Derive(CExtPubKey &out, unsigned int nChild) const;
-
-    void Serialize(CSizeComputer &s) const {
-        // Optimized implementation for ::GetSerializeSize that avoids copying.
-        // add one byte for the size (compact int)
-        s.seek(BIP32_EXTKEY_SIZE + 1);
-    }
-    template <typename Stream> void Serialize(Stream &s) const {
-        unsigned int len = BIP32_EXTKEY_SIZE;
-        ::WriteCompactSize(s, len);
-        uint8_t code[BIP32_EXTKEY_SIZE];
-        Encode(code);
-        s.write((const char *)&code[0], len);
-    }
-    template <typename Stream> void Unserialize(Stream &s) {
-        unsigned int len = ::ReadCompactSize(s);
-        if (len != BIP32_EXTKEY_SIZE) {
-            throw std::runtime_error("Invalid extended key size\n");
-        }
-
-        uint8_t code[BIP32_EXTKEY_SIZE];
-        s.read((char *)&code[0], len);
-        Decode(code);
-    }
 
     CExtPubKey() = default;
 };

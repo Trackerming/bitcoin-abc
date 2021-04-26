@@ -14,10 +14,9 @@ enum class BlockValidity : uint32_t {
     UNKNOWN = 0,
 
     /**
-     * Parsed, version ok, hash satisfies claimed PoW, 1 <= vtx count <= max,
-     * timestamp not in future.
+     * Reserved (was HEADER).
      */
-    HEADER = 1,
+    RESERVED = 1,
 
     /**
      * All parent headers found, difficulty matches, timestamp >= median
@@ -29,8 +28,8 @@ enum class BlockValidity : uint32_t {
      * Only first tx is coinbase, 2 <= coinbase input script length <= 100,
      * transactions valid, no duplicate txids, sigops, size, merkle root.
      * Implies all parents are at least TREE but not necessarily TRANSACTIONS.
-     * When all parent blocks also have TRANSACTIONS, CBlockIndex::nChainTx will
-     * be set.
+     * When all parent blocks also have TRANSACTIONS, CBlockIndex::nChainTx and
+     * CBlockIndex::nChainSize will be set.
      */
     TRANSACTIONS = 3,
 

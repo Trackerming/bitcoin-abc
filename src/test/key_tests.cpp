@@ -8,6 +8,7 @@
 #include <key_io.h>
 #include <uint256.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <util/system.h>
 
 #include <test/util/setup_common.h>
@@ -23,6 +24,8 @@ static const std::string strSecret2 =
     "5KC4ejrDjv152FGwP386VD1i2NYc5KkfSMyv1nGy1VGDxGHqVY3";
 static const std::string strSecret1C =
     "Kwr371tjA9u2rFSMZjTNun2PXXP3WPZu2afRHTcta6KxEUdm1vEw";
+static const std::string strTestSecret1C =
+    "cND2ZvtabDbJ1gucx9GWH6XT9kgTAqfb6cotPt5Q5CyxVDhid2EN";
 static const std::string strSecret2C =
     "L3Hq7a8FEQwJkW1M2GNKDW28546Vp5miewcCzSqUD9kCAXrJdS3g";
 static const std::string addr1 = "1QFqqMUD55ZV3PJEJZtaKCsQmjLT6JkjvJ";
@@ -81,6 +84,47 @@ BOOST_AUTO_TEST_CASE(internal_test) {
                          "24c22e00b7bc7944a1f78"));
 }
 
+BOOST_AUTO_TEST_CASE(encode_decode_secret_test) {
+    const auto mainParams = CreateChainParams(CBaseChainParams::MAIN);
+    const auto testParams = CreateChainParams(CBaseChainParams::TESTNET);
+    const auto regParams = CreateChainParams(CBaseChainParams::TESTNET);
+
+    {
+        // Check the mainnet base58 key
+        CKey mainKey = DecodeSecret(strSecret1C, *mainParams);
+        BOOST_CHECK(mainKey.IsValid() && mainKey.IsCompressed());
+
+        CKey testKey = DecodeSecret(strSecret1C, *testParams);
+        BOOST_CHECK(!testKey.IsValid());
+
+        CKey regKey = DecodeSecret(strSecret1C, *regParams);
+        BOOST_CHECK(!regKey.IsValid());
+    }
+
+    {
+        // Check the testnet and regnet base58 key
+        CKey mainKey = DecodeSecret(strTestSecret1C, *mainParams);
+        BOOST_CHECK(!mainKey.IsValid());
+
+        CKey testKey = DecodeSecret(strTestSecret1C, *testParams);
+        BOOST_CHECK(testKey.IsValid() && testKey.IsCompressed());
+
+        CKey regKey = DecodeSecret(strTestSecret1C, *regParams);
+        BOOST_CHECK(regKey.IsValid() && regKey.IsCompressed());
+    }
+
+    CKey mainKey = DecodeSecret(strSecret1C, *mainParams);
+    CKey testKey = DecodeSecret(strTestSecret1C, *testParams);
+
+    // Check key conversion.
+    BOOST_CHECK_EQUAL(EncodeSecret(mainKey, *mainParams), strSecret1C);
+    BOOST_CHECK_EQUAL(EncodeSecret(mainKey, *testParams), strTestSecret1C);
+    BOOST_CHECK_EQUAL(EncodeSecret(mainKey, *regParams), strTestSecret1C);
+    BOOST_CHECK_EQUAL(EncodeSecret(testKey, *mainParams), strSecret1C);
+    BOOST_CHECK_EQUAL(EncodeSecret(testKey, *testParams), strTestSecret1C);
+    BOOST_CHECK_EQUAL(EncodeSecret(testKey, *regParams), strTestSecret1C);
+}
+
 BOOST_AUTO_TEST_CASE(key_test1) {
     CKey key1 = DecodeSecret(strSecret1);
     BOOST_CHECK(key1.IsValid() && !key1.IsCompressed());
@@ -130,7 +174,7 @@ BOOST_AUTO_TEST_CASE(key_test1) {
 
     for (int n = 0; n < 16; n++) {
         std::string strMsg = strprintf("Very secret message %i: 11", n);
-        uint256 hashMsg = Hash(strMsg.begin(), strMsg.end());
+        uint256 hashMsg = Hash(strMsg);
 
         // normal ECDSA signatures
 
@@ -238,7 +282,7 @@ BOOST_AUTO_TEST_CASE(key_test1) {
 
     std::vector<uint8_t> detsig, detsigc;
     std::string strMsg = "Very deterministic message";
-    uint256 hashMsg = Hash(strMsg.begin(), strMsg.end());
+    uint256 hashMsg = Hash(strMsg);
     // ECDSA
     BOOST_CHECK(key1.SignECDSA(hashMsg, detsig));
     BOOST_CHECK(key1C.SignECDSA(hashMsg, detsigc));
@@ -297,7 +341,7 @@ BOOST_AUTO_TEST_CASE(key_signature_tests) {
     // within 20 signatures
     CKey key = DecodeSecret(strSecret1);
     std::string msg = "A message to be signed";
-    uint256 msg_hash = Hash(msg.begin(), msg.end());
+    uint256 msg_hash = Hash(msg);
     std::vector<uint8_t> sig;
     bool found = false;
 
@@ -318,8 +362,8 @@ BOOST_AUTO_TEST_CASE(key_signature_tests) {
     bool found_small = false;
     for (int i = 0; i < 256; ++i) {
         sig.clear();
-        msg = "A message to be signed" + std::to_string(i);
-        msg_hash = Hash(msg.begin(), msg.end());
+        msg = "A message to be signed" + ToString(i);
+        msg_hash = Hash(msg);
         BOOST_CHECK(key.SignECDSA(msg_hash, sig));
         found = sig[3] == 0x20;
         BOOST_CHECK(sig.size() <= 70);
@@ -335,10 +379,7 @@ BOOST_AUTO_TEST_CASE(key_key_negation) {
     std::string str = "Bitcoin key verification\n";
     GetRandBytes(rnd, sizeof(rnd));
     uint256 hash;
-    CHash256()
-        .Write((uint8_t *)str.data(), str.size())
-        .Write(rnd, sizeof(rnd))
-        .Finalize(hash.begin());
+    CHash256().Write(MakeUCharSpan(str)).Write(rnd).Finalize(hash);
 
     // import the static test key
     CKey key = DecodeSecret(strSecret1C);

@@ -20,9 +20,9 @@ The macOS configuration assumes bitcoind will be set up for the current user.
 Configuration
 ---------------------------------
 
-At a bare minimum, bitcoind requires that the rpcpassword setting be set
-when running as a daemon.  If the configuration file does not exist or this
-setting is not set, bitcoind will shutdown promptly after startup.
+Running bitcoind as a daemon does not require any manual configuration. You may
+set the `rpcauth` setting in the `bitcoin.conf` configuration file to override
+the default behaviour of using a special cookie for authentication.
 
 This password does not have to be remembered or typed as it is mostly used
 as a fixed token that bitcoind and client programs read from the configuration
@@ -84,6 +84,8 @@ Installing this .service file consists of just copying it to
 To test, run `systemctl start bitcoind` and to enable for system startup run
 `systemctl enable bitcoind`
 
+NOTE: When installing for systemd in Debian/Ubuntu the .service file needs to be copied to the /lib/systemd/system directory instead.
+
 ### OpenRC
 
 Rename bitcoind.openrc to bitcoind and drop it in /etc/init.d.  Double
@@ -92,6 +94,8 @@ check ownership and permissions and make it executable.  Test it with
 `rc-update add bitcoind`
 
 ### Upstart (for Debian/Ubuntu based distributions)
+
+Upstart is the default init system for Debian/Ubuntu versions older than 15.04. If you are using version 15.04 or newer and haven't manually configured upstart you should follow the systemd instructions instead.
 
 Drop bitcoind.conf in /etc/init.  Test by running `service bitcoind start`
 it will automatically start on reboot.

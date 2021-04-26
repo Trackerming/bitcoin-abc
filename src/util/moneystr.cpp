@@ -7,6 +7,7 @@
 
 #include <tinyformat.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 
 std::string FormatMoney(const Amount amt) {
     // Note: not using straight sprintf here because we do NOT want localized
@@ -30,17 +31,18 @@ std::string FormatMoney(const Amount amt) {
     return str;
 }
 
-bool ParseMoney(const std::string &str, Amount &nRet) {
-    return ParseMoney(str.c_str(), nRet);
-}
+bool ParseMoney(const std::string &money_string, Amount &nRet) {
+    if (!ValidAsCString(money_string)) {
+        return false;
+    }
+    const std::string str = TrimString(money_string);
+    if (str.empty()) {
+        return false;
+    }
 
-bool ParseMoney(const char *pszIn, Amount &nRet) {
     std::string strWhole;
     Amount nUnits = Amount::zero();
-    const char *p = pszIn;
-    while (IsSpace(*p)) {
-        p++;
-    }
+    const char *p = str.c_str();
     for (; *p; p++) {
         if (*p == '.') {
             p++;
@@ -52,17 +54,15 @@ bool ParseMoney(const char *pszIn, Amount &nRet) {
             break;
         }
         if (IsSpace(*p)) {
-            break;
+            return false;
         }
         if (!IsDigit(*p)) {
             return false;
         }
         strWhole.insert(strWhole.end(), *p);
     }
-    for (; *p; p++) {
-        if (!IsSpace(*p)) {
-            return false;
-        }
+    if (*p) {
+        return false;
     }
     // guard against 63 bit overflow
     if (strWhole.size() > 10) {

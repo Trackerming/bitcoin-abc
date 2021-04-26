@@ -3,27 +3,13 @@
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test that the wallet resends transactions periodically."""
-from collections import defaultdict
 import time
 
 from test_framework.blocktools import create_block, create_coinbase
 from test_framework.messages import ToHex
-from test_framework.mininode import P2PInterface, mininode_lock
+from test_framework.mininode import P2PTxInvStore, mininode_lock
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, wait_until
-
-
-class P2PStoreTxInvs(P2PInterface):
-    def __init__(self):
-        super().__init__()
-        self.tx_invs_received = defaultdict(int)
-
-    def on_inv(self, message):
-        # Store how many times invs have been received for each tx.
-        for i in message.inv:
-            if i.type == 1:
-                # save txid
-                self.tx_invs_received[i.hash] += 1
 
 
 class ResendWalletTransactionsTest(BitcoinTestFramework):
@@ -36,7 +22,7 @@ class ResendWalletTransactionsTest(BitcoinTestFramework):
     def run_test(self):
         node = self.nodes[0]  # alias
 
-        node.add_p2p_connection(P2PStoreTxInvs())
+        node.add_p2p_connection(P2PTxInvStore())
 
         self.log.info("Create a new transaction and wait until it's broadcast")
         txid = int(node.sendtoaddress(node.getnewaddress(), 1), 16)
@@ -54,7 +40,7 @@ class ResendWalletTransactionsTest(BitcoinTestFramework):
 
         # Add a second peer since txs aren't rebroadcast to the same peer (see
         # filterInventoryKnown)
-        node.add_p2p_connection(P2PStoreTxInvs())
+        node.add_p2p_connection(P2PTxInvStore())
 
         self.log.info("Create a block")
         # Create and submit a block without the transaction.
@@ -64,20 +50,27 @@ class ResendWalletTransactionsTest(BitcoinTestFramework):
         block_time = int(time.time()) + 6 * 60
         node.setmocktime(block_time)
         block = create_block(int(node.getbestblockhash(), 16), create_coinbase(
-            node.getblockchaininfo()['blocks']), block_time)
-        block.nVersion = 3
+            node.getblockcount() + 1), block_time)
         block.rehash()
         block.solve()
         node.submitblock(ToHex(block))
 
-        # Transaction should not be rebroadcast
-        node.p2ps[1].sync_with_ping()
-        assert_equal(node.p2ps[1].tx_invs_received[txid], 0)
+        node.syncwithvalidationinterfacequeue()
+        now = int(time.time())
 
-        self.log.info("Transaction should be rebroadcast after 30 minutes")
-        # Use mocktime and give an extra 5 minutes to be sure.
-        rebroadcast_time = int(time.time()) + 41 * 60
-        node.setmocktime(rebroadcast_time)
+        # Transaction should not be rebroadcast within first 12 hours
+        # Leave 2 mins for buffer
+        twelve_hrs = 12 * 60 * 60
+        two_min = 2 * 60
+        node.setmocktime(now + twelve_hrs - two_min)
+        # ensure enough time has passed for rebroadcast attempt to occur
+        time.sleep(2)
+        assert_equal(txid in node.p2ps[1].get_invs(), False)
+
+        self.log.info("Bump time & check that transaction is rebroadcast")
+        # Transaction should be rebroadcast approximately 24 hours in the future,
+        # but can range from 12-36. So bump 36 hours to be sure.
+        node.setmocktime(now + 36 * 60 * 60)
         wait_until(
             lambda: node.p2ps[1].tx_invs_received[txid] >= 1,
             lock=mininode_lock)

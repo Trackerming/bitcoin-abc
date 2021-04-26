@@ -8,6 +8,7 @@
 #include <rpc/util.h>
 #include <sync.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 #include <validation.h>
 
 #include <univalue.h>
@@ -18,7 +19,7 @@ static UniValue getexcessiveblock(const Config &config,
         "getexcessiveblock",
         "Return the excessive block size.",
         {},
-        RPCResult{"  excessiveBlockSize (integer) block size in bytes\n"},
+        RPCResult{RPCResult::Type::NUM, "", "excessive block size in bytes"},
         RPCExamples{HelpExampleCli("getexcessiveblock", "") +
                     HelpExampleRpc("getexcessiveblock", "")},
     }
@@ -33,19 +34,29 @@ static UniValue setexcessiveblock(Config &config,
                                   const JSONRPCRequest &request) {
     RPCHelpMan{
         "setexcessiveblock",
-        "Set the excessive block size. Excessive blocks will not be used in "
-        "the active chain or relayed. This discourages the propagation of "
-        "blocks that you consider excessively large.",
+        "DEPRECATED. Set the excessive block size. Excessive blocks will not "
+        "be used in the active chain or relayed. This discourages the "
+        "propagation of blocks that you consider excessively large.",
         {
             {"blockSize", RPCArg::Type::NUM, RPCArg::Optional::NO,
              "Excessive block size in bytes.  Must be greater than " +
-                 std::to_string(LEGACY_MAX_BLOCK_SIZE) + "."},
+                 ToString(LEGACY_MAX_BLOCK_SIZE) + "."},
         },
-        RPCResult{"  blockSize (integer) excessive block size in bytes\n"},
+        RPCResult{RPCResult::Type::NUM, "", "excessive block size in bytes"},
         RPCExamples{HelpExampleCli("setexcessiveblock", "25000000") +
                     HelpExampleRpc("setexcessiveblock", "25000000")},
     }
         .Check(request);
+
+    if (!IsDeprecatedRPCEnabled(gArgs, "setexcessiveblock")) {
+        // setexcessiveblock is deprecated in v0.22.12 for removal in v0.23
+        throw JSONRPCError(
+            RPC_METHOD_DEPRECATED,
+            std::string(
+                "The setexcessiveblock RPC is deprecated and will be removed "
+                "in a future version. Use the -deprecatedrpc=setexcessiveblock "
+                "option to continue using it."));
+    }
 
     if (!request.params[0].isNum()) {
         throw JSONRPCError(
@@ -62,7 +73,7 @@ static UniValue setexcessiveblock(Config &config,
             RPC_INVALID_PARAMETER,
             std::string(
                 "Invalid parameter, excessiveblock must be larger than ") +
-                std::to_string(LEGACY_MAX_BLOCK_SIZE));
+                ToString(LEGACY_MAX_BLOCK_SIZE));
     }
 
     // Set the new max block size.
@@ -79,16 +90,16 @@ static UniValue setexcessiveblock(Config &config,
     return UniValue(ret.str());
 }
 
-// clang-format off
-static const CRPCCommand commands[] = {
-    //  category            name                      actor (function)        argNames
-    //  ------------------- ------------------------  ----------------------  ----------
-    { "network",            "getexcessiveblock",      getexcessiveblock,      {}},
-    { "network",            "setexcessiveblock",      setexcessiveblock,      {"maxBlockSize"}},
-};
-// clang-format on
-
 void RegisterABCRPCCommands(CRPCTable &t) {
+    // clang-format off
+    static const CRPCCommand commands[] = {
+        //  category            name                      actor (function)        argNames
+        //  ------------------- ------------------------  ----------------------  ----------
+        { "network",            "getexcessiveblock",      getexcessiveblock,      {}},
+        { "network",            "setexcessiveblock",      setexcessiveblock,      {"maxBlockSize"}},
+    };
+    // clang-format on
+
     for (unsigned int vcidx = 0; vcidx < ARRAYLEN(commands); vcidx++) {
         t.appendCommand(commands[vcidx].name, &commands[vcidx]);
     }

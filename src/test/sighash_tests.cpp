@@ -26,10 +26,8 @@
 // Old script.cpp SignatureHash function
 static uint256 SignatureHashOld(CScript scriptCode, const CTransaction &txTo,
                                 unsigned int nIn, uint32_t nHashType) {
-    static const uint256 one(uint256S(
-        "0000000000000000000000000000000000000000000000000000000000000001"));
     if (nIn >= txTo.vin.size()) {
-        return one;
+        return UINT256_ONE();
     }
     CMutableTransaction txTmp(txTo);
 
@@ -58,7 +56,7 @@ static uint256 SignatureHashOld(CScript scriptCode, const CTransaction &txTo,
         // Only lock-in the txout payee at same index as txin
         unsigned int nOut = nIn;
         if (nOut >= txTmp.vout.size()) {
-            return one;
+            return UINT256_ONE();
         }
         txTmp.vout.resize(nOut + 1);
         for (size_t i = 0; i < nOut; i++) {
@@ -124,8 +122,6 @@ static void RandomTransaction(CMutableTransaction &tx, bool fSingle) {
 BOOST_FIXTURE_TEST_SUITE(sighash_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(sighash_test) {
-    SeedInsecureRand(false);
-
 #if defined(PRINT_SIGHASH_JSON)
     std::cout << "[\n";
     std::cout << "\t[\"raw_transaction, script, input_index, hashType, "
@@ -166,20 +162,20 @@ BOOST_AUTO_TEST_CASE(sighash_test) {
                                       sigHashType, Amount::zero(), nullptr,
                                       SCRIPT_ENABLE_SIGHASH_FORKID |
                                           SCRIPT_ENABLE_REPLAY_PROTECTION);
-        uint32_t newForValue = 0xff0000 | ((nHashType >> 8) ^ 0xdead);
+        uint32_t newForkValue = 0xff0000 | ((nHashType >> 8) ^ 0xdead);
         uint256 manualshrep = SignatureHash(
             scriptCode, CTransaction(txTo), nIn,
-            sigHashType.withForkValue(newForValue), Amount::zero());
+            sigHashType.withForkValue(newForkValue), Amount::zero());
         BOOST_CHECK(shrep == manualshrep);
 
         // Replay protection works even if the hash is of the form 0xffxxxx
         uint256 shrepff = SignatureHash(
             scriptCode, CTransaction(txTo), nIn,
-            sigHashType.withForkValue(newForValue), Amount::zero(), nullptr,
+            sigHashType.withForkValue(newForkValue), Amount::zero(), nullptr,
             SCRIPT_ENABLE_SIGHASH_FORKID | SCRIPT_ENABLE_REPLAY_PROTECTION);
         uint256 manualshrepff = SignatureHash(
             scriptCode, CTransaction(txTo), nIn,
-            sigHashType.withForkValue(newForValue ^ 0xdead), Amount::zero());
+            sigHashType.withForkValue(newForkValue ^ 0xdead), Amount::zero());
         BOOST_CHECK(shrepff == manualshrepff);
 
         uint256 shrepabcdef = SignatureHash(
@@ -196,7 +192,7 @@ BOOST_AUTO_TEST_CASE(sighash_test) {
         ss << txTo;
 
         std::cout << "\t[\"";
-        std::cout << HexStr(ss.begin(), ss.end()) << "\", \"";
+        std::cout << HexStr(ss) << "\", \"";
         std::cout << HexStr(scriptCode) << "\", ";
         std::cout << nIn << ", ";
         std::cout << int(nHashType) << ", ";

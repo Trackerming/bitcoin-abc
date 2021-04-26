@@ -17,36 +17,35 @@
 
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
-static void SetupWalletToolArgs() {
-    SetupChainParamsBaseOptions();
+static void SetupWalletToolArgs(ArgsManager &argsman) {
+    SetupHelpOptions(argsman);
+    SetupChainParamsBaseOptions(argsman);
 
-    gArgs.AddArg("-?", "This help message", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-datadir=<dir>", "Specify data directory",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
-    gArgs.AddArg("-wallet=<wallet-name>", "Specify wallet name",
-                 ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
-                 OptionsCategory::OPTIONS);
-    gArgs.AddArg("-debug=<category>",
-                 "Output debugging information (default: 0).",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
-    gArgs.AddArg("-printtoconsole",
-                 "Send trace/debug info to console (default: 1 when no -debug "
-                 "is true, 0 otherwise.",
-                 ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg("-datadir=<dir>", "Specify data directory",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-wallet=<wallet-name>", "Specify wallet name",
+                   ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY,
+                   OptionsCategory::OPTIONS);
+    argsman.AddArg("-debug=<category>",
+                   "Output debugging information (default: 0).",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
+    argsman.AddArg(
+        "-printtoconsole",
+        "Send trace/debug info to console (default: 1 when no -debug "
+        "is true, 0 otherwise).",
+        ArgsManager::ALLOW_ANY, OptionsCategory::DEBUG_TEST);
 
-    gArgs.AddArg("info", "Get wallet info", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::COMMANDS);
-    gArgs.AddArg("create", "Create new wallet file", ArgsManager::ALLOW_ANY,
-                 OptionsCategory::COMMANDS);
-
-    // Hidden
-    gArgs.AddArg("-h", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
-    gArgs.AddArg("-help", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
+    argsman.AddArg("info", "Get wallet info", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::COMMANDS);
+    argsman.AddArg("create", "Create new wallet file", ArgsManager::ALLOW_ANY,
+                   OptionsCategory::COMMANDS);
+    argsman.AddArg("salvage",
+                   "Attempt to recover private keys from a corrupt wallet",
+                   ArgsManager::ALLOW_ANY, OptionsCategory::COMMANDS);
 }
 
 static bool WalletAppInit(int argc, char *argv[]) {
-    SetupWalletToolArgs();
+    SetupWalletToolArgs(gArgs);
     std::string error_message;
     if (!gArgs.ParseParameters(argc, argv, error_message)) {
         tfm::format(std::cerr, "Error parsing command line arguments: %s\n",
@@ -57,10 +56,10 @@ static bool WalletAppInit(int argc, char *argv[]) {
         std::string usage =
             strprintf("%s bitcoin-wallet version", PACKAGE_NAME) + " " +
             FormatFullVersion() + "\n\n" +
-            "wallet-tool is an offline tool for creating and interacting with "
-            "Bitcoin ABC wallet files.\n" +
-            "By default wallet-tool will act on wallets in the default mainnet "
-            "wallet directory in the datadir.\n" +
+            "bitcoin-wallet is an offline tool for creating and interacting "
+            "with " PACKAGE_NAME " wallet files.\n" +
+            "By default bitcoin-wallet will act on wallets in the default "
+            "mainnet wallet directory in the datadir.\n" +
             "To change the target wallet, use the -datadir, -wallet and "
             "-testnet/-regtest arguments.\n\n" +
             "Usage:\n" + "  bitcoin-wallet [options] <command>\n\n" +

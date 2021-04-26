@@ -11,9 +11,11 @@
 #include <consensus/validation.h>
 #include <crypto/sha256.h>
 #include <init.h>
+#include <interfaces/chain.h>
 #include <logging.h>
 #include <miner.h>
 #include <net.h>
+#include <net_processing.h>
 #include <noui.h>
 #include <pow/pow.h>
 #include <rpc/blockchain.h>
@@ -28,9 +30,10 @@
 #include <util/strencodings.h>
 #include <util/time.h>
 #include <util/translation.h>
-#include <util/validation.h>
+#include <util/vector.h>
 #include <validation.h>
 #include <validationinterface.h>
+#include <walletinitinterface.h>
 
 #include <functional>
 #include <memory>
@@ -38,6 +41,38 @@
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
 
 FastRandomContext g_insecure_rand_ctx;
+/**
+ * Random context to get unique temp data dirs. Separate from
+ * g_insecure_rand_ctx, which can be seeded from a const env var
+ */
+static FastRandomContext g_insecure_rand_ctx_temp_path;
+
+/**
+ * Return the unsigned from the environment var if available,
+ * otherwise 0
+ */
+static uint256 GetUintFromEnv(const std::string &env_name) {
+    const char *num = std::getenv(env_name.c_str());
+    if (!num) {
+        return {};
+    }
+    return uint256S(num);
+}
+
+void Seed(FastRandomContext &ctx) {
+    // Should be enough to get the seed once for the process
+    static uint256 seed{};
+    static const std::string RANDOM_CTX_SEED{"RANDOM_CTX_SEED"};
+    if (seed.IsNull()) {
+        seed = GetUintFromEnv(RANDOM_CTX_SEED);
+    }
+    if (seed.IsNull()) {
+        seed = GetRandHash();
+    }
+    LogPrintf("%s: Setting random seed for current tests to %s=%s\n", __func__,
+              RANDOM_CTX_SEED, seed.GetHex());
+    ctx = FastRandomContext(seed);
+}
 
 std::ostream &operator<<(std::ostream &os, const uint256 &num) {
     os << num.ToString();
@@ -49,17 +84,40 @@ std::ostream &operator<<(std::ostream &os, const ScriptError &err) {
     return os;
 }
 
-BasicTestingSetup::BasicTestingSetup(const std::string &chainName)
-    : m_path_root(fs::temp_directory_path() / "test_common_" PACKAGE_NAME /
-                  strprintf("%lu_%i", static_cast<unsigned long>(GetTime()),
-                            int(InsecureRandRange(1 << 30)))) {
+std::vector<const char *> fixture_extra_args{};
+
+BasicTestingSetup::BasicTestingSetup(
+    const std::string &chainName, const std::vector<const char *> &extra_args)
+    : m_path_root{fs::temp_directory_path() / "test_common_" PACKAGE_NAME /
+                  g_insecure_rand_ctx_temp_path.rand256().ToString()} {
+    std::vector<const char *> arguments = Cat(
+        {
+            "dummy",
+            "-printtoconsole=0",
+            "-logtimemicros",
+            "-debug",
+            "-debugexclude=libevent",
+            "-debugexclude=leveldb",
+        },
+        extra_args);
+    arguments = Cat(arguments, fixture_extra_args);
+    auto &config = const_cast<Config &>(GetConfig());
     SetMockTime(0);
     fs::create_directories(m_path_root);
     gArgs.ForceSetArg("-datadir", m_path_root.string());
     ClearDatadirCache();
+    {
+        SetupServerArgs(m_node);
+        std::string error;
+        const bool success{m_node.args->ParseParameters(
+            arguments.size(), arguments.data(), error)};
+        assert(success);
+        assert(error.empty());
+    }
     SelectParams(chainName);
-    gArgs.ForceSetArg("-printtoconsole", "0");
-    InitLogging();
+    SeedInsecureRand();
+    InitLogging(*m_node.args);
+    AppInitParameterInteraction(config, *m_node.args);
     LogInstance().StartLogging();
     SHA256AutoDetect();
     ECC_Start();
@@ -67,6 +125,9 @@ BasicTestingSetup::BasicTestingSetup(const std::string &chainName)
     SetupNetworking();
     InitSignatureCache();
     InitScriptExecutionCache();
+
+    m_node.chain = interfaces::MakeChain(m_node, config.GetChainParams());
+    g_wallet_init_interface.Construct(m_node);
 
     fCheckBlockIndex = true;
     static bool noui_connected = false;
@@ -79,19 +140,19 @@ BasicTestingSetup::BasicTestingSetup(const std::string &chainName)
 BasicTestingSetup::~BasicTestingSetup() {
     LogInstance().DisconnectTestLogger();
     fs::remove_all(m_path_root);
+    gArgs.ClearArgs();
     ECC_Stop();
 }
 
-TestingSetup::TestingSetup(const std::string &chainName)
-    : BasicTestingSetup(chainName) {
+TestingSetup::TestingSetup(const std::string &chainName,
+                           const std::vector<const char *> &extra_args)
+    : BasicTestingSetup(chainName, extra_args) {
     const Config &config = GetConfig();
-    g_rpc_node = &m_node;
     const CChainParams &chainparams = config.GetChainParams();
 
     // Ideally we'd move all the RPC tests to the functional testing framework
     // instead of unit tests, but for now we need these here.
     RPCServer rpcServer;
-    g_rpc_node = &m_node;
     RegisterAllRPCCommands(config, rpcServer, tableRPC);
 
     /**
@@ -109,19 +170,26 @@ TestingSetup::TestingSetup(const std::string &chainName)
     // We have to run a scheduler thread to prevent ActivateBestChain
     // from blocking due to queue overrun.
     threadGroup.create_thread([&] { m_node.scheduler->serviceQueue(); });
-    GetMainSignals().RegisterBackgroundSignalScheduler(*g_rpc_node->scheduler);
+    GetMainSignals().RegisterBackgroundSignalScheduler(*m_node.scheduler);
 
     pblocktree.reset(new CBlockTreeDB(1 << 20, true));
-    pcoinsdbview.reset(new CCoinsViewDB(1 << 23, true));
-    pcoinsTip.reset(new CCoinsViewCache(pcoinsdbview.get()));
+
+    m_node.chainman = &::g_chainman;
+    m_node.chainman->InitializeChainstate();
+    ::ChainstateActive().InitCoinsDB(
+        /* cache_size_bytes */ 1 << 23, /* in_memory */ true,
+        /* should_wipe */ false);
+    assert(!::ChainstateActive().CanFlushToDisk());
+    ::ChainstateActive().InitCoinsCache(1 << 23);
+    assert(::ChainstateActive().CanFlushToDisk());
     if (!LoadGenesisBlock(chainparams)) {
         throw std::runtime_error("LoadGenesisBlock failed.");
     }
     {
         BlockValidationState state;
         if (!ActivateBestChain(config, state)) {
-            throw std::runtime_error(strprintf("ActivateBestChain failed. (%s)",
-                                               FormatStateMessage(state)));
+            throw std::runtime_error(
+                strprintf("ActivateBestChain failed. (%s)", state.ToString()));
         }
     }
     constexpr int script_check_threads = 2;
@@ -136,6 +204,14 @@ TestingSetup::TestingSetup(const std::string &chainName)
                                  nullptr, DEFAULT_MISBEHAVING_BANTIME);
     // Deterministic randomness for tests.
     m_node.connman = std::make_unique<CConnman>(config, 0x1337, 0x1337);
+    m_node.peerman = std::make_unique<PeerManager>(
+        chainparams, *m_node.connman, m_node.banman.get(), *m_node.scheduler,
+        *m_node.chainman, *m_node.mempool);
+    {
+        CConnman::Options options;
+        options.m_msgproc = m_node.peerman.get();
+        m_node.connman->Init(options);
+    }
 }
 
 TestingSetup::~TestingSetup() {
@@ -146,14 +222,14 @@ TestingSetup::~TestingSetup() {
     threadGroup.join_all();
     GetMainSignals().FlushBackgroundCallbacks();
     GetMainSignals().UnregisterBackgroundSignalScheduler();
-    g_rpc_node = nullptr;
     m_node.connman.reset();
     m_node.banman.reset();
+    m_node.args = nullptr;
     m_node.mempool = nullptr;
     m_node.scheduler.reset();
     UnloadBlockIndex();
-    pcoinsTip.reset();
-    pcoinsdbview.reset();
+    m_node.chainman->Reset();
+    m_node.chainman = nullptr;
     pblocktree.reset();
 }
 
@@ -208,7 +284,8 @@ CBlock TestChain100Setup::CreateAndProcessBlock(
 
     std::shared_ptr<const CBlock> shared_pblock =
         std::make_shared<const CBlock>(block);
-    ProcessNewBlock(config, shared_pblock, true, nullptr);
+    Assert(m_node.chainman)
+        ->ProcessNewBlock(config, shared_pblock, true, nullptr);
 
     CBlock result = block;
     return result;

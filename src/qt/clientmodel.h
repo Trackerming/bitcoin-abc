@@ -10,12 +10,16 @@
 
 #include <atomic>
 #include <memory>
+#include <primitives/blockhash.h>
+#include <sync.h>
 
 class BanTableModel;
+class CBlockIndex;
 class OptionsModel;
 class PeerTableModel;
 
 class CBlockIndex;
+enum class SynchronizationState;
 
 namespace interfaces {
 class Handler;
@@ -51,6 +55,8 @@ public:
 
     //! Return number of connections, default is in- and outbound (total)
     int getNumConnections(NumConnections flags = CONNECTIONS_ALL) const;
+    int getNumBlocks() const;
+    BlockHash getBestBlockHash();
     int getHeaderTipHeight() const;
     int64_t getHeaderTipTime() const;
 
@@ -68,9 +74,13 @@ public:
 
     bool getProxyInfo(std::string &ip_port) const;
 
-    // caches for the best header
+    // caches for the best header: hash, number of blocks and block time
     mutable std::atomic<int> cachedBestHeaderHeight;
     mutable std::atomic<int64_t> cachedBestHeaderTime;
+    mutable std::atomic<int> m_cached_num_blocks{-1};
+
+    Mutex m_cached_tip_mutex;
+    BlockHash m_cached_tip_blocks GUARDED_BY(m_cached_tip_mutex){};
 
 private:
     interfaces::Node &m_node;
@@ -87,7 +97,8 @@ private:
     PeerTableModel *peerTableModel;
     BanTableModel *banTableModel;
 
-    QTimer *pollTimer;
+    //! A thread to interact with m_node asynchronously
+    QThread *const m_thread;
 
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();
@@ -95,7 +106,8 @@ private:
 Q_SIGNALS:
     void numConnectionsChanged(int count);
     void numBlocksChanged(int count, const QDateTime &blockDate,
-                          double nVerificationProgress, bool header);
+                          double nVerificationProgress, bool header,
+                          SynchronizationState sync_state);
     void mempoolSizeChanged(long count, size_t mempoolSizeInBytes);
     void networkActiveChanged(bool networkActive);
     void alertsChanged(const QString &warnings);
@@ -109,7 +121,6 @@ Q_SIGNALS:
     void showProgress(const QString &title, int nProgress);
 
 public Q_SLOTS:
-    void updateTimer();
     void updateNumConnections(int numConnections);
     void updateNetworkActive(bool networkActive);
     void updateAlert();

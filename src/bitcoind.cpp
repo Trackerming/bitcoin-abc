@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2018 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -14,10 +14,12 @@
 #include <httprpc.h>
 #include <init.h>
 #include <interfaces/chain.h>
+#include <network.h>
 #include <node/context.h>
+#include <node/ui_interface.h>
 #include <noui.h>
 #include <shutdown.h>
-#include <ui_interface.h>
+#include <util/ref.h>
 #include <util/strencodings.h>
 #include <util/system.h>
 #include <util/threadnames.h>
@@ -26,27 +28,6 @@
 #include <functional>
 
 const std::function<std::string(const char *)> G_TRANSLATION_FUN = nullptr;
-
-/* Introduction text for doxygen: */
-
-/*! \mainpage Developer documentation
- *
- * \section intro_sec Introduction
- *
- * This is the developer documentation of Bitcoin ABC
- * (https://www.bitcoinabc.org/). Bitcoin ABC is a client for the digital
- * currency called Bitcoin Cash (https://www.bitcoincash.org/), which enables
- * instant payments to anyone, anywhere in the world. Bitcoin Cash uses
- * peer-to-peer technology to operate with no central authority: managing
- * transactions and issuing money are carried out collectively by the network.
- *
- * The software is a community-driven open source project, released under the
- * MIT license.
- *
- * \section Navigation
- * Use the buttons <code>Namespaces</code>, <code>Classes</code> or
- * <code>Files</code> at the top of the page to start navigating the code.
- */
 
 static void WaitForShutdown(NodeContext &node) {
     while (!ShutdownRequested()) {
@@ -64,38 +45,39 @@ static bool AppInit(int argc, char *argv[]) {
     // not possible as the whole application has too many global state. However,
     // this is a first step.
     auto &config = const_cast<Config &>(GetConfig());
+
     RPCServer rpcServer;
-    HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer);
 
     NodeContext node;
+    util::Ref context{node};
+
+    HTTPRPCRequestProcessor httpRPCRequestProcessor(config, rpcServer, context);
+
     bool fRet = false;
 
     util::ThreadSetInternalName("init");
 
-    //
-    // Parameters
-    //
     // If Qt is used, parameters/bitcoin.conf are parsed in qt/bitcoin.cpp's
     // main()
-    SetupServerArgs();
+    SetupServerArgs(node);
+    ArgsManager &args = *Assert(node.args);
     std::string error;
-    if (!gArgs.ParseParameters(argc, argv, error)) {
-        return InitError(
-            strprintf("Error parsing command line arguments: %s\n", error));
+    if (!args.ParseParameters(argc, argv, error)) {
+        return InitError(Untranslated(
+            strprintf("Error parsing command line arguments: %s\n", error)));
     }
 
     // Process help and version before taking care about datadir
-    if (HelpRequested(gArgs) || gArgs.IsArgSet("-version")) {
+    if (HelpRequested(args) || args.IsArgSet("-version")) {
         std::string strUsage =
-            PACKAGE_NAME " Daemon version " + FormatFullVersion() + "\n";
+            PACKAGE_NAME " version " + FormatFullVersion() + "\n";
 
-        if (gArgs.IsArgSet("-version")) {
-            strUsage += FormatParagraph(LicenseInfo());
+        if (args.IsArgSet("-version")) {
+            strUsage += FormatParagraph(LicenseInfo()) + "\n";
         } else {
             strUsage += "\nUsage:  bitcoind [options]                     "
-                        "Start " PACKAGE_NAME " Daemon\n";
-
-            strUsage += "\n" + gArgs.GetHelpMessage();
+                        "Start " PACKAGE_NAME "\n";
+            strUsage += "\n" + args.GetHelpMessage();
         }
 
         tfm::format(std::cout, "%s", strUsage);
@@ -104,21 +86,21 @@ static bool AppInit(int argc, char *argv[]) {
 
     try {
         if (!CheckDataDirOption()) {
-            return InitError(
+            return InitError(Untranslated(
                 strprintf("Specified data directory \"%s\" does not exist.\n",
-                          gArgs.GetArg("-datadir", "")));
+                          args.GetArg("-datadir", ""))));
         }
-        if (!gArgs.ReadConfigFiles(error, true)) {
-            return InitError(
-                strprintf("Error reading configuration file: %s\n", error));
+        if (!args.ReadConfigFiles(error, true)) {
+            return InitError(Untranslated(
+                strprintf("Error reading configuration file: %s\n", error)));
         }
         // Check for -chain, -testnet or -regtest parameter (Params() calls are
         // only valid after this clause)
         try {
-            SelectParams(gArgs.GetChainName());
+            SelectParams(args.GetChainName());
             node.chain = interfaces::MakeChain(node, config.GetChainParams());
         } catch (const std::exception &e) {
-            return InitError(strprintf("%s\n", e.what()));
+            return InitError(Untranslated(strprintf("%s\n", e.what())));
         }
 
         // Make sure we create the net-specific data directory early on: if it
@@ -135,25 +117,30 @@ static bool AppInit(int argc, char *argv[]) {
         // line
         for (int i = 1; i < argc; i++) {
             if (!IsSwitchChar(argv[i][0])) {
-                return InitError(
+                return InitError(Untranslated(
                     strprintf("Command line contains unexpected token '%s', "
                               "see bitcoind -h for a list of options.\n",
-                              argv[i]));
+                              argv[i])));
             }
+        }
+
+        if (!args.InitSettings(error)) {
+            InitError(Untranslated(error));
+            return false;
         }
 
         // -server defaults to true for bitcoind but not for the GUI so do this
         // here
-        gArgs.SoftSetBoolArg("-server", true);
+        args.SoftSetBoolArg("-server", true);
         // Set this early so that parameter interactions go to console
-        InitLogging();
-        InitParameterInteraction();
-        if (!AppInitBasicSetup()) {
+        InitLogging(args);
+        InitParameterInteraction(args);
+        if (!AppInitBasicSetup(args)) {
             // InitError will have been called with detailed error, which ends
             // up on console
             return false;
         }
-        if (!AppInitParameterInteraction(config)) {
+        if (!AppInitParameterInteraction(config, args)) {
             // InitError will have been called with detailed error, which ends
             // up on console
             return false;
@@ -163,26 +150,26 @@ static bool AppInit(int argc, char *argv[]) {
             // up on console
             return false;
         }
-        if (gArgs.GetBoolArg("-daemon", false)) {
+        if (args.GetBoolArg("-daemon", false)) {
 #if HAVE_DECL_DAEMON
 #if defined(MAC_OSX)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
-            tfm::format(std::cout, PACKAGE_NAME " daemon starting\n");
+            tfm::format(std::cout, PACKAGE_NAME " starting\n");
 
             // Daemonize
             if (daemon(1, 0)) {
                 // don't chdir (1), do close FDs (0)
-                return InitError(
-                    strprintf("daemon() failed: %s\n", strerror(errno)));
+                return InitError(Untranslated(
+                    strprintf("daemon() failed: %s\n", strerror(errno))));
             }
 #if defined(MAC_OSX)
 #pragma GCC diagnostic pop
 #endif
 #else
-            return InitError(
-                "-daemon is not supported on this operating system\n");
+            return InitError(Untranslated(
+                "-daemon is not supported on this operating system\n"));
 #endif // HAVE_DECL_DAEMON
         }
 

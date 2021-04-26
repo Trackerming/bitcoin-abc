@@ -11,6 +11,7 @@
 #include <util/system.h>
 #include <util/translation.h>
 #include <wallet/wallet.h>
+#include <wallet/walletdb.h>
 
 bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
                    const std::vector<std::string> &wallet_files) {
@@ -21,21 +22,21 @@ bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
         // environment instances for the same directory
         fs::path canonical_wallet_dir = fs::canonical(wallet_dir, error);
         if (error || !fs::exists(wallet_dir)) {
-            chain.initError(strprintf(
-                _("Specified -walletdir \"%s\" does not exist").translated,
-                wallet_dir.string()));
+            chain.initError(
+                strprintf(_("Specified -walletdir \"%s\" does not exist"),
+                          wallet_dir.string()));
             return false;
         } else if (!fs::is_directory(wallet_dir)) {
-            chain.initError(strprintf(
-                _("Specified -walletdir \"%s\" is not a directory").translated,
-                wallet_dir.string()));
+            chain.initError(
+                strprintf(_("Specified -walletdir \"%s\" is not a directory"),
+                          wallet_dir.string()));
             return false;
             // The canonical path transforms relative paths into absolute ones,
             // so we check the non-canonical version
         } else if (!wallet_dir.is_absolute()) {
-            chain.initError(strprintf(
-                _("Specified -walletdir \"%s\" is a relative path").translated,
-                wallet_dir.string()));
+            chain.initError(
+                strprintf(_("Specified -walletdir \"%s\" is a relative path"),
+                          wallet_dir.string()));
             return false;
         }
         gArgs.ForceSetArg("-walletdir", canonical_wallet_dir.string());
@@ -45,12 +46,6 @@ bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
 
     chain.initMessage(_("Verifying wallet(s)...").translated);
 
-    // Parameter interaction code should have thrown an error if -salvagewallet
-    // was enabled with more than wallet file, so the wallet_files size check
-    // here should have no effect.
-    bool salvage_wallet =
-        gArgs.GetBoolArg("-salvagewallet", false) && wallet_files.size() <= 1;
-
     // Keep track of each wallet absolute path to detect duplicates.
     std::set<fs::path> wallet_paths;
 
@@ -59,24 +54,20 @@ bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
 
         if (!wallet_paths.insert(location.GetPath()).second) {
             chain.initError(strprintf(_("Error loading wallet %s. Duplicate "
-                                        "-wallet filename specified.")
-                                          .translated,
+                                        "-wallet filename specified."),
                                       wallet_file));
             return false;
         }
 
-        std::string error_string;
-        std::vector<std::string> warnings;
-        bool verify_success =
-            CWallet::Verify(chainParams, chain, location, salvage_wallet,
-                            error_string, warnings);
-        if (!error_string.empty()) {
-            chain.initError(error_string);
-        }
+        bilingual_str error_string;
+        std::vector<bilingual_str> warnings;
+        bool verify_success = CWallet::Verify(chainParams, chain, location,
+                                              error_string, warnings);
         if (!warnings.empty()) {
-            chain.initWarning(Join(warnings, "\n"));
+            chain.initWarning(Join(warnings, Untranslated("\n")));
         }
         if (!verify_success) {
+            chain.initError(error_string);
             return false;
         }
     }
@@ -86,36 +77,43 @@ bool VerifyWallets(const CChainParams &chainParams, interfaces::Chain &chain,
 
 bool LoadWallets(const CChainParams &chainParams, interfaces::Chain &chain,
                  const std::vector<std::string> &wallet_files) {
-    for (const std::string &walletFile : wallet_files) {
-        std::string error;
-        std::vector<std::string> warnings;
-        std::shared_ptr<CWallet> pwallet = CWallet::CreateWalletFromFile(
-            chainParams, chain, WalletLocation(walletFile), error, warnings);
-        if (!warnings.empty()) {
-            chain.initWarning(Join(warnings, "\n"));
+    try {
+        for (const std::string &walletFile : wallet_files) {
+            bilingual_str error;
+            std::vector<bilingual_str> warnings;
+            std::shared_ptr<CWallet> pwallet = CWallet::CreateWalletFromFile(
+                chainParams, chain, WalletLocation(walletFile), error,
+                warnings);
+            if (!warnings.empty()) {
+                chain.initWarning(Join(warnings, Untranslated("\n")));
+            }
+            if (!pwallet) {
+                chain.initError(error);
+                return false;
+            }
+            AddWallet(pwallet);
         }
-        if (!pwallet) {
-            chain.initError(error);
-            return false;
-        }
-        AddWallet(pwallet);
+        return true;
+    } catch (const std::runtime_error &e) {
+        chain.initError(Untranslated(e.what()));
+        return false;
     }
-
-    return true;
 }
 
-void StartWallets(CScheduler &scheduler) {
+void StartWallets(CScheduler &scheduler, const ArgsManager &args) {
     for (const std::shared_ptr<CWallet> &pwallet : GetWallets()) {
         pwallet->postInitProcess();
     }
 
     // Schedule periodic wallet flushes and tx rebroadcasts
-    scheduler.scheduleEvery(
-        [] {
-            MaybeCompactWalletDB();
-            return true;
-        },
-        std::chrono::milliseconds{500});
+    if (args.GetBoolArg("-flushwallet", DEFAULT_FLUSHWALLET)) {
+        scheduler.scheduleEvery(
+            [] {
+                MaybeCompactWalletDB();
+                return true;
+            },
+            std::chrono::milliseconds{500});
+    }
     scheduler.scheduleEvery(
         [] {
             MaybeResendWalletTxs();

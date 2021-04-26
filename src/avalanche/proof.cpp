@@ -5,8 +5,9 @@
 #include <avalanche/proof.h>
 
 #include <avalanche/validation.h>
-#include <coins.h> // For SaltedOutpointHasher
+#include <coins.h>
 #include <hash.h>
+#include <script/standard.h>
 
 #include <unordered_set>
 
@@ -20,9 +21,7 @@ uint256 Stake::getHash(const ProofId &proofid) const {
 }
 
 bool SignedStake::verify(const ProofId &proofid) const {
-    // Unfortunately, the verify API require a vector.
-    std::vector<uint8_t> vchSig{sig.begin(), sig.end()};
-    return stake.getPubkey().VerifySchnorr(stake.getHash(proofid), vchSig);
+    return stake.getPubkey().VerifySchnorr(stake.getHash(proofid), sig);
 }
 
 ProofId Proof::computeProofId() const {
@@ -55,6 +54,10 @@ bool Proof::verify(ProofValidationState &state) const {
         return state.Invalid(ProofValidationResult::NO_STAKE);
     }
 
+    if (stakes.size() > AVALANCHE_MAX_PROOF_STAKES) {
+        return state.Invalid(ProofValidationResult::TOO_MANY_UTXOS);
+    }
+
     std::unordered_set<COutPoint, SaltedOutpointHasher> utxos;
     for (const SignedStake &ss : stakes) {
         const Stake &s = ss.getStake();
@@ -68,6 +71,60 @@ bool Proof::verify(ProofValidationState &state) const {
 
         if (!ss.verify(proofid)) {
             return state.Invalid(ProofValidationResult::INVALID_SIGNATURE);
+        }
+    }
+
+    return true;
+}
+
+bool Proof::verify(ProofValidationState &state, const CCoinsView &view) const {
+    if (!verify(state)) {
+        // state is set by verify.
+        return false;
+    }
+
+    for (const SignedStake &ss : stakes) {
+        const Stake &s = ss.getStake();
+        const COutPoint &utxo = s.getUTXO();
+
+        Coin coin;
+        if (!view.GetCoin(utxo, coin)) {
+            // The coins are not in the UTXO set.
+            return state.Invalid(ProofValidationResult::MISSING_UTXO);
+        }
+
+        if (s.isCoinbase() != coin.IsCoinBase()) {
+            return state.Invalid(ProofValidationResult::COINBASE_MISMATCH);
+        }
+
+        if (s.getHeight() != coin.GetHeight()) {
+            return state.Invalid(ProofValidationResult::HEIGHT_MISMATCH);
+        }
+
+        const CTxOut &out = coin.GetTxOut();
+        if (s.getAmount() != out.nValue) {
+            // Wrong amount.
+            return state.Invalid(ProofValidationResult::AMOUNT_MISMATCH);
+        }
+
+        CTxDestination dest;
+        if (!ExtractDestination(out.scriptPubKey, dest)) {
+            // Can't extract destination.
+            return state.Invalid(
+                ProofValidationResult::NON_STANDARD_DESTINATION);
+        }
+
+        PKHash *pkhash = boost::get<PKHash>(&dest);
+        if (!pkhash) {
+            // Only PKHash are supported.
+            return state.Invalid(
+                ProofValidationResult::DESTINATION_NOT_SUPPORTED);
+        }
+
+        const CPubKey &pubkey = s.getPubkey();
+        if (*pkhash != PKHash(pubkey)) {
+            // Wrong pubkey.
+            return state.Invalid(ProofValidationResult::DESTINATION_MISMATCH);
         }
     }
 

@@ -20,9 +20,9 @@ ComputeMerkleRootFromBranch(const uint256 &leaf,
     for (std::vector<uint256>::const_iterator it = vMerkleBranch.begin();
          it != vMerkleBranch.end(); ++it) {
         if (nIndex & 1) {
-            hash = Hash(it->begin(), it->end(), hash.begin(), hash.end());
+            hash = Hash(*it, hash);
         } else {
-            hash = Hash(hash.begin(), hash.end(), it->begin(), it->end());
+            hash = Hash(hash, *it);
         }
         nIndex >>= 1;
     }
@@ -79,10 +79,7 @@ static void MerkleComputation(const std::vector<uint256> &leaves,
                 }
             }
             mutated |= (inner[level] == h);
-            CHash256()
-                .Write(inner[level].begin(), 32)
-                .Write(h.begin(), 32)
-                .Finalize(h.begin());
+            CHash256().Write(inner[level]).Write(h).Finalize(h);
         }
         // Store the resulting hash at inner position level.
         inner[level] = h;
@@ -108,10 +105,7 @@ static void MerkleComputation(const std::vector<uint256> &leaves,
         if (pbranch && matchh) {
             pbranch->push_back(h);
         }
-        CHash256()
-            .Write(h.begin(), 32)
-            .Write(h.begin(), 32)
-            .Finalize(h.begin());
+        CHash256().Write(h).Write(h).Finalize(h);
         // Increment count to the value it would have if two entries at this
         // level had existed.
         count += (((uint32_t)1) << level);
@@ -126,10 +120,7 @@ static void MerkleComputation(const std::vector<uint256> &leaves,
                     matchh = true;
                 }
             }
-            CHash256()
-                .Write(inner[level].begin(), 32)
-                .Write(h.begin(), 32)
-                .Finalize(h.begin());
+            CHash256().Write(inner[level]).Write(h).Finalize(h);
             level++;
         }
     }
@@ -181,8 +172,7 @@ static uint256 BlockBuildMerkleTree(const CBlock &block, bool *fMutated,
                 mutated = true;
             }
             vMerkleTree.push_back(
-                Hash(vMerkleTree[j + i].begin(), vMerkleTree[j + i].end(),
-                     vMerkleTree[j + i2].begin(), vMerkleTree[j + i2].end()));
+                Hash(vMerkleTree[j + i], vMerkleTree[j + i2]));
         }
         j += nSize;
     }
@@ -309,4 +299,79 @@ BOOST_AUTO_TEST_CASE(merkle_test) {
     }
 }
 
+BOOST_AUTO_TEST_CASE(merkle_test_empty_block) {
+    bool mutated = false;
+    CBlock block;
+    uint256 root = BlockMerkleRoot(block, &mutated);
+
+    BOOST_CHECK_EQUAL(root.IsNull(), true);
+    BOOST_CHECK_EQUAL(mutated, false);
+}
+
+BOOST_AUTO_TEST_CASE(merkle_test_oneTx_block) {
+    bool mutated = false;
+    CBlock block;
+
+    block.vtx.resize(1);
+    CMutableTransaction mtx;
+    mtx.nLockTime = 0;
+    block.vtx[0] = MakeTransactionRef(std::move(mtx));
+    uint256 root = BlockMerkleRoot(block, &mutated);
+    BOOST_CHECK_EQUAL(root, block.vtx[0]->GetHash());
+    BOOST_CHECK_EQUAL(mutated, false);
+}
+
+BOOST_AUTO_TEST_CASE(merkle_test_OddTxWithRepeatedLastTx_block) {
+    bool mutated;
+    CBlock block, blockWithRepeatedLastTx;
+
+    block.vtx.resize(3);
+
+    for (std::size_t pos = 0; pos < block.vtx.size(); pos++) {
+        CMutableTransaction mtx;
+        mtx.nLockTime = pos;
+        block.vtx[pos] = MakeTransactionRef(std::move(mtx));
+    }
+
+    blockWithRepeatedLastTx = block;
+    blockWithRepeatedLastTx.vtx.push_back(blockWithRepeatedLastTx.vtx.back());
+
+    uint256 rootofBlock = BlockMerkleRoot(block, &mutated);
+    BOOST_CHECK_EQUAL(mutated, false);
+
+    uint256 rootofBlockWithRepeatedLastTx =
+        BlockMerkleRoot(blockWithRepeatedLastTx, &mutated);
+    BOOST_CHECK_EQUAL(rootofBlock, rootofBlockWithRepeatedLastTx);
+    BOOST_CHECK_EQUAL(mutated, true);
+}
+
+BOOST_AUTO_TEST_CASE(merkle_test_LeftSubtreeRightSubtree) {
+    CBlock block, leftSubtreeBlock, rightSubtreeBlock;
+
+    block.vtx.resize(4);
+    std::size_t pos;
+    for (pos = 0; pos < block.vtx.size(); pos++) {
+        CMutableTransaction mtx;
+        mtx.nLockTime = pos;
+        block.vtx[pos] = MakeTransactionRef(std::move(mtx));
+    }
+
+    for (pos = 0; pos < block.vtx.size() / 2; pos++) {
+        leftSubtreeBlock.vtx.push_back(block.vtx[pos]);
+    }
+
+    for (pos = block.vtx.size() / 2; pos < block.vtx.size(); pos++) {
+        rightSubtreeBlock.vtx.push_back(block.vtx[pos]);
+    }
+
+    uint256 root = BlockMerkleRoot(block);
+    uint256 rootOfLeftSubtree = BlockMerkleRoot(leftSubtreeBlock);
+    uint256 rootOfRightSubtree = BlockMerkleRoot(rightSubtreeBlock);
+    std::vector<uint256> leftRight;
+    leftRight.push_back(rootOfLeftSubtree);
+    leftRight.push_back(rootOfRightSubtree);
+    uint256 rootOfLR = ComputeMerkleRoot(leftRight);
+
+    BOOST_CHECK_EQUAL(root, rootOfLR);
+}
 BOOST_AUTO_TEST_SUITE_END()

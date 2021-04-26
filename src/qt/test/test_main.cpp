@@ -31,10 +31,6 @@
 #include <QObject>
 #include <QTest>
 
-#ifdef ENABLE_BIP70
-#include <openssl/ssl.h>
-#endif
-
 #if defined(QT_STATICPLUGIN)
 #include <QtPlugin>
 #if defined(QT_QPA_PLATFORM_MINIMAL)
@@ -59,25 +55,25 @@ int main(int argc, char *argv[]) {
     // All tests must use their own testing setup (if needed).
     { BasicTestingSetup dummy{CBaseChainParams::REGTEST}; }
 
-    std::unique_ptr<interfaces::Node> node = interfaces::MakeNode();
+    NodeContext node_context;
+    std::unique_ptr<interfaces::Node> node =
+        interfaces::MakeNode(&node_context);
 
     bool fInvalid = false;
 
     // Prefer the "minimal" platform for the test instead of the normal default
     // platform ("xcb", "windows", or "cocoa") so tests can't unintentionally
     // interfere with any background GUIs and don't require extra resources.
-    setenv("QT_QPA_PLATFORM", "minimal", 0);
+    setenv("QT_QPA_PLATFORM", "minimal", /* overwrite */ 0);
 
     // Don't remove this, it's needed to access
     // QApplication:: and QCoreApplication:: in the tests
-    BitcoinApplication app(*node, argc, argv);
+    BitcoinApplication app;
+    app.setNode(*node);
     app.setApplicationName("BitcoinABC-Qt-test");
 
-#ifdef ENABLE_BIP70
-    // This is necessary to initialize openssl on the test framework
-    // (at least on Darwin).
-    SSL_library_init();
-#endif
+    // Make gArgs available in the NodeContext
+    app.node().context()->args = &gArgs;
 
     AppTests app_tests(app);
     if (QTest::qExec(&app_tests) != 0) {
@@ -93,7 +89,7 @@ int main(int argc, char *argv[]) {
         fInvalid = true;
     }
 #endif
-    RPCNestedTests test3(*node);
+    RPCNestedTests test3(app.node());
     if (QTest::qExec(&test3) != 0) {
         fInvalid = true;
     }
@@ -110,11 +106,11 @@ int main(int argc, char *argv[]) {
         fInvalid = true;
     }
 #ifdef ENABLE_WALLET
-    WalletTests test7(*node);
+    WalletTests test7(app.node());
     if (QTest::qExec(&test7) != 0) {
         fInvalid = true;
     }
-    AddressBookTests test8(*node);
+    AddressBookTests test8(app.node());
     if (QTest::qExec(&test8) != 0) {
         fInvalid = true;
     }

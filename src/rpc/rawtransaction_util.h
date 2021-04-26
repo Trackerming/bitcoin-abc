@@ -6,6 +6,7 @@
 #define BITCOIN_RPC_RAWTRANSACTION_UTIL_H
 
 #include <map>
+#include <string>
 
 class FillableSigningProvider;
 class CChainParams;
@@ -21,22 +22,24 @@ class UniValue;
  *
  * @param  mtx           The transaction to-be-signed
  * @param  keystore      Temporary keystore containing signing keys
- * @param  coins         Map of unspent outputs - coins in mempool and current
- * chain UTXO set, may be extended by previous txns outputs after call
+ * @param  coins         Map of unspent outputs
  * @param  hashType      The signature hash type
- * @returns JSON object with details of signed transaction
+ * @param result         JSON object where signed transaction results accumulate
  */
-UniValue SignTransaction(CMutableTransaction &mtx,
-                         const SigningProvider *keystore,
-                         std::map<COutPoint, Coin> &coins,
-                         const UniValue &hashType);
+void SignTransaction(CMutableTransaction &mtx, const SigningProvider *keystore,
+                     const std::map<COutPoint, Coin> &coins,
+                     const UniValue &hashType, UniValue &result);
+void SignTransactionResultToJSON(CMutableTransaction &mtx, bool complete,
+                                 const std::map<COutPoint, Coin> &coins,
+                                 std::map<int, std::string> &input_errors,
+                                 UniValue &result);
 
 /**
  * Parse a prevtxs UniValue array and get the map of coins from it
  *
- * @param  prevTxs       Array of previous txns outputs that tx depends on but
+ * @param  prevTxsUnival Array of previous txns outputs that tx depends on but
  * may not yet be in the block chain
- * @param  keystore      A pointer to the temprorary keystore if there is one
+ * @param  keystore      A pointer to the temporary keystore if there is one
  * @param  coins         Map of unspent outputs - coins in mempool and current
  * chain UTXO set, may be extended by previous txns outputs after call
  */

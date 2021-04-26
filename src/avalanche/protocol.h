@@ -5,6 +5,7 @@
 #ifndef BITCOIN_AVALANCHE_PROTOCOL_H
 #define BITCOIN_AVALANCHE_PROTOCOL_H
 
+#include <avalanche/delegation.h>
 #include <protocol.h> // for CInv
 #include <serialize.h>
 #include <uint256.h>
@@ -26,13 +27,7 @@ public:
     uint32_t GetError() const { return error; }
 
     // serialization support
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(error);
-        READWRITE(hash);
-    }
+    SERIALIZE_METHODS(Vote, obj) { READWRITE(obj.error, obj.hash); }
 };
 
 class Response {
@@ -50,13 +45,8 @@ public:
     const std::vector<Vote> &GetVotes() const { return votes; }
 
     // serialization support
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(round);
-        READWRITE(cooldown);
-        READWRITE(votes);
+    SERIALIZE_METHODS(Response, obj) {
+        READWRITE(obj.round, obj.cooldown, obj.votes);
     }
 };
 
@@ -68,16 +58,25 @@ public:
     Poll(uint64_t roundIn, std::vector<CInv> invsIn)
         : round(roundIn), invs(invsIn) {}
 
+    uint64_t GetRound() { return round; }
     const std::vector<CInv> &GetInvs() const { return invs; }
 
     // serialization support
-    ADD_SERIALIZE_METHODS;
+    SERIALIZE_METHODS(Poll, obj) { READWRITE(obj.round, obj.invs); }
+};
 
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(round);
-        READWRITE(invs);
-    }
+class Hello {
+    Delegation delegation;
+    SchnorrSig sig;
+
+public:
+    Hello(Delegation delegationIn, SchnorrSig sigIn)
+        : delegation(std::move(delegationIn)), sig(sigIn) {}
+
+    std::array<uint8_t, 64> GetSig() { return sig; }
+
+    // serialization support
+    SERIALIZE_METHODS(Hello, obj) { READWRITE(obj.delegation, obj.sig); }
 };
 
 } // namespace avalanche

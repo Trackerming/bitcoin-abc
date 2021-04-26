@@ -4,7 +4,7 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test message sending before handshake completion.
 
-A node should never send anything other than VERSION/VERACK/REJECT until it's
+A node should never send anything other than VERSION/VERACK until it's
 received a VERACK.
 
 This test connects to a node and sends it a few messages, trying to entice it
@@ -17,15 +17,20 @@ from test_framework.messages import (
     msg_getaddr,
     msg_ping,
     msg_verack,
+    msg_version,
 )
 from test_framework.mininode import (
     mininode_lock,
     P2PInterface,
 )
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import wait_until
+from test_framework.util import (
+    assert_equal,
+    assert_greater_than_or_equal,
+    wait_until,
+)
 
-banscore = 10
+DISCOURAGEMENT_THRESHOLD = 100
 
 
 class CLazyNode(P2PInterface):
@@ -37,7 +42,7 @@ class CLazyNode(P2PInterface):
     def bad_message(self, message):
         self.unexpected_msg = True
         self.log.info(
-            "should not have received message: {}".format(message.command))
+            "should not have received message: {}".format(message.msgtype))
 
     def on_open(self):
         self.ever_connected = True
@@ -45,8 +50,6 @@ class CLazyNode(P2PInterface):
     def on_version(self, message): self.bad_message(message)
 
     def on_verack(self, message): self.bad_message(message)
-
-    def on_reject(self, message): self.bad_message(message)
 
     def on_inv(self, message): self.bad_message(message)
 
@@ -88,16 +91,14 @@ class CLazyNode(P2PInterface):
 # anyway, and eventually get disconnected.
 
 
-class CNodeNoVersionBan(CLazyNode):
-    # send a bunch of veracks without sending a message. This should get us disconnected.
-    # NOTE: implementation-specific check here. Remove if bitcoind ban
-    # behavior changes
+class CNodeNoVersionMisbehavior(CLazyNode):
+    # Send enough veracks without a message to reach the peer discouragement
+    # threshold. This should get us disconnected. NOTE: implementation-specific
+    # test; update if our discouragement policy for peer misbehavior changes.
     def on_open(self):
         super().on_open()
-        for i in range(banscore):
+        for _ in range(DISCOURAGEMENT_THRESHOLD):
             self.send_message(msg_verack())
-
-    def on_reject(self, message): pass
 
 # Node that never sends a version. This one just sits idle and hopes to receive
 # any message (it shouldn't!)
@@ -115,8 +116,6 @@ class CNodeNoVerackIdle(CLazyNode):
         self.version_received = False
         super().__init__()
 
-    def on_reject(self, message): pass
-
     def on_verack(self, message): pass
     # When version is received, don't reply with a verack. Instead, see if the
     # node will give us a message that it shouldn't. This is not an exhaustive
@@ -128,14 +127,21 @@ class CNodeNoVerackIdle(CLazyNode):
         self.send_message(msg_getaddr())
 
 
+class P2PVersionStore(P2PInterface):
+    version_received = None
+
+    def on_version(self, msg):
+        super().on_version(msg)
+        self.version_received = msg
+
+
 class P2PLeakTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
-        self.extra_args = [['-banscore=' + str(banscore)]]
 
     def run_test(self):
-        no_version_bannode = self.nodes[0].add_p2p_connection(
-            CNodeNoVersionBan(), send_version=False, wait_for_verack=False)
+        no_version_disconnect_node = self.nodes[0].add_p2p_connection(
+            CNodeNoVersionMisbehavior(), send_version=False, wait_for_verack=False)
         no_version_idlenode = self.nodes[0].add_p2p_connection(
             CNodeNoVersionIdle(), send_version=False, wait_for_verack=False)
         no_verack_idlenode = self.nodes[0].add_p2p_connection(
@@ -145,8 +151,10 @@ class P2PLeakTest(BitcoinTestFramework):
         # verack, since we never sent one
         no_verack_idlenode.wait_for_verack()
 
-        wait_until(lambda: no_version_bannode.ever_connected,
-                   timeout=10, lock=mininode_lock)
+        wait_until(
+            lambda: no_version_disconnect_node.ever_connected,
+            timeout=10,
+            lock=mininode_lock)
         wait_until(lambda: no_version_idlenode.ever_connected,
                    timeout=10, lock=mininode_lock)
         wait_until(lambda: no_verack_idlenode.version_received,
@@ -159,8 +167,8 @@ class P2PLeakTest(BitcoinTestFramework):
         # Give the node enough time to possibly leak out a message
         time.sleep(5)
 
-        # This node should have been banned
-        assert not no_version_bannode.is_connected
+        # Expect this node to be disconnected for misbehavior
+        assert not no_version_disconnect_node.is_connected
 
         self.nodes[0].disconnect_p2ps()
 
@@ -168,9 +176,31 @@ class P2PLeakTest(BitcoinTestFramework):
         wait_until(lambda: len(self.nodes[0].getpeerinfo()) == 0)
 
         # Make sure no unexpected messages came in
-        assert not no_version_bannode.unexpected_msg
+        assert not no_version_disconnect_node.unexpected_msg
         assert not no_version_idlenode.unexpected_msg
         assert not no_verack_idlenode.unexpected_msg
+
+        self.log.info(
+            'Check that the version message does not leak the local address of the node')
+        p2p_version_store = self.nodes[0].add_p2p_connection(P2PVersionStore())
+        ver = p2p_version_store.version_received
+        # Check that received time is within one hour of now
+        assert_greater_than_or_equal(ver.nTime, time.time() - 3600)
+        assert_greater_than_or_equal(time.time() + 3600, ver.nTime)
+        assert_equal(ver.addrFrom.port, 0)
+        assert_equal(ver.addrFrom.ip, '0.0.0.0')
+        assert_equal(ver.nStartingHeight, 201)
+        assert_equal(ver.nRelay, 1)
+
+        self.log.info('Check that old nodes are disconnected')
+        p2p_old_node = self.nodes[0].add_p2p_connection(
+            P2PInterface(), send_version=False, wait_for_verack=False)
+        old_version_msg = msg_version()
+        old_version_msg.nVersion = 31799
+        wait_until(lambda: p2p_old_node.is_connected)
+        with self.nodes[0].assert_debug_log(['peer=4 using obsolete version 31799; disconnecting']):
+            p2p_old_node.send_message(old_version_msg)
+            p2p_old_node.wait_for_disconnect()
 
 
 if __name__ == '__main__':

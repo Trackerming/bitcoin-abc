@@ -7,10 +7,12 @@
 #include <hash.h>
 #include <uint256.h>
 #include <util/strencodings.h>
+#include <util/string.h>
 
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 /** All alphanumeric characters except for "0", "I", "O", and "l" */
 static const char *pszBase58 =
@@ -32,7 +34,7 @@ static const int8_t mapBase58[256] = {
     -1, -1, -1, -1, -1, -1, -1, -1, -1,
 };
 
-bool DecodeBase58(const char *psz, std::vector<uint8_t> &vch) {
+bool DecodeBase58(const char *psz, std::vector<uint8_t> &vch, int max_ret_len) {
     // Skip leading spaces.
     while (*psz && IsSpace(*psz)) {
         psz++;
@@ -42,6 +44,9 @@ bool DecodeBase58(const char *psz, std::vector<uint8_t> &vch) {
     int length = 0;
     while (*psz == '1') {
         zeroes++;
+        if (zeroes > max_ret_len) {
+            return false;
+        }
         psz++;
     }
     // Allocate enough space in big-endian base256 representation.
@@ -68,6 +73,9 @@ bool DecodeBase58(const char *psz, std::vector<uint8_t> &vch) {
         }
         assert(carry == 0);
         length = i;
+        if (length + zeroes > max_ret_len) {
+            return false;
+        }
         psz++;
     }
     // Skip trailing spaces.
@@ -79,9 +87,7 @@ bool DecodeBase58(const char *psz, std::vector<uint8_t> &vch) {
     }
     // Skip leading zeroes in b256.
     std::vector<uint8_t>::iterator it = b256.begin() + (size - length);
-    while (it != b256.end() && *it == 0) {
-        it++;
-    }
+
     // Copy result into output vector.
     vch.reserve(zeroes + (b256.end() - it));
     vch.assign(zeroes, 0x00);
@@ -138,25 +144,34 @@ std::string EncodeBase58(const std::vector<uint8_t> &vch) {
     return EncodeBase58(vch.data(), vch.data() + vch.size());
 }
 
-bool DecodeBase58(const std::string &str, std::vector<uint8_t> &vchRet) {
-    return DecodeBase58(str.c_str(), vchRet);
+bool DecodeBase58(const std::string &str, std::vector<uint8_t> &vchRet,
+                  int max_ret_len) {
+    if (!ValidAsCString(str)) {
+        return false;
+    }
+    return DecodeBase58(str.c_str(), vchRet, max_ret_len);
 }
 
 std::string EncodeBase58Check(const std::vector<uint8_t> &vchIn) {
     // add 4-byte hash check to the end
     std::vector<uint8_t> vch(vchIn);
-    uint256 hash = Hash(vch.begin(), vch.end());
+    uint256 hash = Hash(vch);
     vch.insert(vch.end(), (uint8_t *)&hash, (uint8_t *)&hash + 4);
     return EncodeBase58(vch);
 }
 
-bool DecodeBase58Check(const char *psz, std::vector<uint8_t> &vchRet) {
-    if (!DecodeBase58(psz, vchRet) || (vchRet.size() < 4)) {
+bool DecodeBase58Check(const char *psz, std::vector<uint8_t> &vchRet,
+                       int max_ret_len) {
+    if (!DecodeBase58(psz, vchRet,
+                      max_ret_len > std::numeric_limits<int>::max() - 4
+                          ? std::numeric_limits<int>::max()
+                          : max_ret_len + 4) ||
+        (vchRet.size() < 4)) {
         vchRet.clear();
         return false;
     }
     // re-calculate the checksum, ensure it matches the included 4-byte checksum
-    uint256 hash = Hash(vchRet.begin(), vchRet.end() - 4);
+    uint256 hash = Hash(MakeSpan(vchRet).first(vchRet.size() - 4));
     if (memcmp(&hash, &vchRet[vchRet.size() - 4], 4) != 0) {
         vchRet.clear();
         return false;
@@ -165,6 +180,10 @@ bool DecodeBase58Check(const char *psz, std::vector<uint8_t> &vchRet) {
     return true;
 }
 
-bool DecodeBase58Check(const std::string &str, std::vector<uint8_t> &vchRet) {
-    return DecodeBase58Check(str.c_str(), vchRet);
+bool DecodeBase58Check(const std::string &str, std::vector<uint8_t> &vchRet,
+                       int max_ret) {
+    if (!ValidAsCString(str)) {
+        return false;
+    }
+    return DecodeBase58Check(str.c_str(), vchRet, max_ret);
 }

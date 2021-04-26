@@ -50,7 +50,7 @@ on their own.
 - Sometimes you want to replace one subsystem by another implementation,
 in which case it is not possible to do things incrementally. In such cases,
 you keep both implementations in the codebase for a while, as described
-[here](https://www.gamasutra.com/view/news/128325/Opinion_Parallel_Implementations.php).
+[here](http://sevangelatos.com/john-carmack-on-parallel-implementations/)
 - There are no "development" branches, all Diffs apply to the master
 branch, and should always improve it (no regressions).
 - Don't break the build, it is important to keep master green as much as possible.
@@ -64,18 +64,19 @@ Here are some handy links for development practices aligned with Bitcoin ABC:
 
 - [Developer Notes](doc/developer-notes.md)
 - [Statement of Bitcoin ABC Values and Visions](https://www.yours.org/content/bitcoin-abc---our-values-and-vision-a282afaade7c)
-- [How to Do Code Reviews Like a Human - Part 1](https://mtlynch.io/human-code-reviews-1/)
-- [How to Do Code Reviews Like a Human - Part 2](https://mtlynch.io/human-code-reviews-2/)
+- [How to Make Your Code Reviewer Fall in Love with You](https://mtlynch.io/code-review-love/)
 - [Large Diffs Are Hurting Your Ability To Ship](https://medium.com/@kurtisnusbaum/large-diffs-are-hurting-your-ability-to-ship-e0b2b41e8acf)
 - [Stacked Diffs: Keeping Phabricator Diffs Small](https://medium.com/@kurtisnusbaum/stacked-diffs-keeping-phabricator-diffs-small-d9964f4dcfa6)
-- [Parallel Implementations](https://www.gamasutra.com/view/news/128325/Opinion_Parallel_Implementations.php)
+- [Parallel Implementations](http://sevangelatos.com/john-carmack-on-parallel-implementations/)
 - [The Pragmatic Programmer: From Journeyman to Master](https://www.amazon.com/Pragmatic-Programmer-Journeyman-Master/dp/020161622X)
-- [Advantages of monolithic version control](https://danluu.com/monorepo/)
+- [Monorepo: Advantages of monolithic version control](https://danluu.com/monorepo/)
+- [Monorepo: Why Google Stores Billions of Lines of Code in a Single Repository](https://www.youtube.com/watch?v=W71BTkUbdqE)
 - [The importance of fixing bugs immediately](https://youtu.be/E2MIpi8pIvY?t=16m0s)
 - [Slow Deployment Causes Meetings](https://www.facebook.com/notes/kent-beck/slow-deployment-causes-meetings/1055427371156793/)
 - [Good Work, Great Work, and Right Work](https://forum.dlang.org/post/q7u6g1$94p$1@digitalmars.com)
 - [Accelerate: The Science of Lean Software and DevOps](https://www.amazon.com/Accelerate-Software-Performing-Technology-Organizations/dp/1942788339)
 - [Facebook Engineering Process with Kent Beck](https://softwareengineeringdaily.com/2019/08/28/facebook-engineering-process-with-kent-beck/)
+- [Trunk Based Development](https://trunkbaseddevelopment.com/)
 
 Getting set up with the Bitcoin ABC Repository
 ----------------------------------------------
@@ -122,7 +123,8 @@ your remotes.
 
 Follow instructions provided by `arc install-certificate` to provide your API token.
 
-6. Code formatting tools
+Contributing to the node software
+---------------------------------
 
 During submission of patches, arcanist will automatically run `arc lint` to
 enforce Bitcoin ABC code formatting standards, and often suggests changes.
@@ -131,14 +133,14 @@ will have to install the following:
 
 On Ubuntu (>= 18.04+updates):
 ```
-sudo apt-get install clang-format-8 clang-tidy-8 clang-tools-8 cppcheck python-autopep8 flake8 php-codesniffer yamllint
+sudo apt-get install clang-format-8 clang-tidy-8 clang-tools-8 cppcheck mypy python3-autopep8 flake8 php-codesniffer yamllint
 ```
 
 On Debian (>= 10), the clang-8 family of tools is available from the `buster-backports` repository:
 ```
 echo "deb http://deb.debian.org/debian buster-backports main" | sudo tee -a /etc/apt/sources.list
 sudo apt-get update
-sudo apt-get install cppcheck python-autopep8 flake8 php-codesniffer
+sudo apt-get install cppcheck python3-autopep8 flake8 php-codesniffer mypy
 sudo apt-get -t buster-backports install clang-format-8 clang-tidy-8 clang-tools-8
 ```
 
@@ -167,6 +169,27 @@ If you are running Debian 10, it is also available in the backports repository:
 sudo apt-get -t buster-backports install shellcheck
 ```
 
+Contributing to the web projects
+--------------------------------
+
+To contribute to web projects, you will need `nodejs` > 15 and `npm` > 6.14.8.
+Follow these [installation instructions](https://github.com/nvm-sh/nvm#installing-and-updating)
+to install `nodejs` with node version manager.
+
+Then:
+
+```
+cd bitcoin-abc
+[sudo] nvm install 15
+[sudo] npm install -g npm@latest
+[sudo] npm install -g prettier
+```
+
+To work on the extension, you will need `browserify`
+
+```
+[sudo] npm install -g browserify
+```
 
 Working with The Bitcoin ABC Repository
 ---------------------------------------

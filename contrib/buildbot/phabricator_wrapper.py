@@ -366,6 +366,10 @@ class PhabWrapper(Phabricator):
 
         return commit_data[0]["fields"]["identifier"]
 
+    def get_revision_changed_files(self, revision_id):
+        return list(self.differential.getcommitpaths(
+            revision_id=int(revision_id)))
+
     def get_file_content_from_master(self, path):
         latest_commit_hash = self.get_latest_master_commit_hash()
 
@@ -385,8 +389,12 @@ class PhabWrapper(Phabricator):
         # Use a Diffusion browsequery on the parent directory because the
         # API will fail if a filename is given. If path is not set the root
         # directory is browsed.
+        # Since https://secure.phabricator.com/D21519 the browsequery endpoint
+        # will return an empty result if the trailing slash is missing from the
+        # searched path. There is an exception for the root directory for which
+        # the '/' path is invalid and will throw an error.
         browse_data = self.diffusion.browsequery(
-            path=os.path.dirname(path) or None,
+            path=os.path.join(os.path.dirname(path), '') or None,
             commit=latest_commit_hash,
             repository=BITCOIN_ABC_REPO,
             branch="master",
@@ -470,7 +478,8 @@ class PhabWrapper(Phabricator):
                 )
             )
 
-    def update_build_target_status(self, build_target, build_id, status):
+    def update_build_target_status(
+            self, build_target, build_id=None, status=None):
         harbormaster_build_status_mapping = {
             BuildStatus.Queued: "work",
             BuildStatus.Running: "work",
@@ -478,9 +487,46 @@ class PhabWrapper(Phabricator):
             BuildStatus.Failure: "fail",
         }
 
-        build_target.update_build_status(build_id, status)
+        if build_id and status:
+            build_target.update_build_status(build_id, status)
 
         self.harbormaster.sendmessage(
             buildTargetPHID=build_target.phid,
             type=harbormaster_build_status_mapping[build_target.status()]
+        )
+
+    def get_object_token(self, object_PHID):
+        """ Return the current token set by the current user on target object """
+        tokens = self.token.given(
+            authorPHIDs=[self.get_current_user_phid()],
+            objectPHIDs=[object_PHID],
+            tokenPHIDs=[],
+        )
+
+        if not tokens:
+            return ""
+
+        # There should be no more than a single token from the same user for the
+        # same object.
+        if len(tokens) > 1:
+            self.logger.info(
+                "Found {} tokens for user {} on object {}: {}".format(
+                    len(tokens),
+                    self.get_current_user_phid(),
+                    object_PHID,
+                    tokens,
+                )
+            )
+
+        return tokens[0]["tokenPHID"]
+
+    def set_object_token(self, object_PHID, token_PHID=None):
+        """ Award or rescind a token for the target object """
+        # If no token is given, rescind any previously awarded token
+        if token_PHID is None:
+            token_PHID = ""
+
+        self.token.give(
+            objectPHID=object_PHID,
+            tokenPHID=token_PHID,
         )

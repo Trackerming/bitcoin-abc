@@ -7,9 +7,10 @@
 This file is modified from python-bitcoinlib.
 """
 
-from .bignum import bn2vch
 import hashlib
 import struct
+import unittest
+from typing import List, Dict
 
 from .messages import (
     CTransaction,
@@ -23,15 +24,26 @@ from .messages import (
 
 
 MAX_SCRIPT_ELEMENT_SIZE = 520
-
-OPCODE_NAMES = {}
+OPCODE_NAMES: Dict["CScriptOp", str] = {}
 
 
 def hash160(s):
     return hashlib.new('ripemd160', sha256(s)).digest()
 
 
-_opcode_instances = []
+def bn2vch(v):
+    """Convert number to bitcoin-specific little endian format."""
+    # We need v.bit_length() bits, plus a sign bit for every nonzero number.
+    n_bits = v.bit_length() + (v != 0)
+    # The number of bytes for that is:
+    n_bytes = (n_bits + 7) // 8
+    # Convert number to absolute value + sign in top bit.
+    encoded_v = 0 if v == 0 else abs(v) | ((v < 0) << (n_bytes * 8 - 1))
+    # Serialize to bytes
+    return encoded_v.to_bytes(n_bytes, 'little')
+
+
+_opcode_instances: List["CScriptOp"] = []
 
 
 class CScriptOp(int):
@@ -48,9 +60,11 @@ class CScriptOp(int):
             # OP_PUSHDATA1
             return b'\x4c' + bytes([len(d)]) + d
         elif len(d) <= 0xffff:
-            return b'\x4d' + struct.pack(b'<H', len(d)) + d  # OP_PUSHDATA2
+            # OP_PUSHDATA2
+            return b'\x4d' + struct.pack(b'<H', len(d)) + d
         elif len(d) <= 0xffffffff:
-            return b'\x4e' + struct.pack(b'<I', len(d)) + d  # OP_PUSHDATA4
+            # OP_PUSHDATA4
+            return b'\x4e' + struct.pack(b'<I', len(d)) + d
         else:
             raise ValueError("Data too long to encode in a PUSHDATA op")
 
@@ -97,7 +111,7 @@ class CScriptOp(int):
             return _opcode_instances[n]
         except IndexError:
             assert len(_opcode_instances) == n
-            _opcode_instances.append(super(CScriptOp, cls).__new__(cls, n))
+            _opcode_instances.append(super().__new__(cls, n))
             return _opcode_instances[n]
 
 
@@ -389,7 +403,7 @@ class CScriptTruncatedPushDataError(CScriptInvalidError):
 
     def __init__(self, msg, data):
         self.data = data
-        super(CScriptTruncatedPushDataError, self).__init__(msg)
+        super().__init__(msg)
 
 
 # This is used, eg, for blockchain heights in coinbase scripts (bip34)
@@ -466,16 +480,8 @@ class CScript(bytes):
         return other
 
     def __add__(self, other):
-        # Do the coercion outside of the try block so that errors in it are
-        # noticed.
-        other = self.__coerce_instance(other)
-
-        try:
-            # bytes.__add__ always returns bytes instances unfortunately
-            return CScript(super(CScript, self).__add__(other))
-        except TypeError:
-            raise TypeError(
-                'Can not add a {!r} instance to a CScript'.format(other.__class__))
+        # add makes no sense for a CScript()
+        raise NotImplementedError
 
     def join(self, iterable):
         # join makes no sense for a CScript()
@@ -483,14 +489,14 @@ class CScript(bytes):
 
     def __new__(cls, value=b''):
         if isinstance(value, bytes) or isinstance(value, bytearray):
-            return super(CScript, cls).__new__(cls, value)
+            return super().__new__(cls, value)
         else:
             def coerce_iterable(iterable):
                 for instance in iterable:
                     yield cls.__coerce_instance(instance)
             # Annoyingly on both python2 and python3 bytes.join() always
             # returns a bytes instance even when subclassed.
-            return super(CScript, cls).__new__(
+            return super().__new__(
                 cls, b''.join(coerce_iterable(value)))
 
     def raw_iter(self):
@@ -746,3 +752,41 @@ def SignatureHashForkId(script, txTo, inIdx, hashtype, amount):
     ss += struct.pack("<I", hashtype)
 
     return hash256(ss)
+
+
+class TestFrameworkScript(unittest.TestCase):
+    def test_bn2vch(self):
+        self.assertEqual(bn2vch(0), bytes([]))
+        self.assertEqual(bn2vch(1), bytes([0x01]))
+        self.assertEqual(bn2vch(-1), bytes([0x81]))
+        self.assertEqual(bn2vch(0x7F), bytes([0x7F]))
+        self.assertEqual(bn2vch(-0x7F), bytes([0xFF]))
+        self.assertEqual(bn2vch(0x80), bytes([0x80, 0x00]))
+        self.assertEqual(bn2vch(-0x80), bytes([0x80, 0x80]))
+        self.assertEqual(bn2vch(0xFF), bytes([0xFF, 0x00]))
+        self.assertEqual(bn2vch(-0xFF), bytes([0xFF, 0x80]))
+        self.assertEqual(bn2vch(0x100), bytes([0x00, 0x01]))
+        self.assertEqual(bn2vch(-0x100), bytes([0x00, 0x81]))
+        self.assertEqual(bn2vch(0x7FFF), bytes([0xFF, 0x7F]))
+        self.assertEqual(bn2vch(-0x8000), bytes([0x00, 0x80, 0x80]))
+        self.assertEqual(bn2vch(-0x7FFFFF), bytes([0xFF, 0xFF, 0xFF]))
+        self.assertEqual(bn2vch(0x80000000),
+                         bytes([0x00, 0x00, 0x00, 0x80, 0x00]))
+        self.assertEqual(bn2vch(-0x80000000),
+                         bytes([0x00, 0x00, 0x00, 0x80, 0x80]))
+        self.assertEqual(bn2vch(0xFFFFFFFF),
+                         bytes([0xFF, 0xFF, 0xFF, 0xFF, 0x00]))
+        self.assertEqual(bn2vch(123456789),
+                         bytes([0x15, 0xCD, 0x5B, 0x07]))
+        self.assertEqual(bn2vch(-54321),
+                         bytes([0x31, 0xD4, 0x80]))
+
+    def test_cscriptnum_encoding(self):
+        # round-trip negative and multi-byte CScriptNums
+        values = [0, 1, -1, -2, 127, 128, -255, 256, (1 << 15) - 1,
+                  -(1 << 16), (1 << 24) - 1, (1 << 31), 1 - (1 << 32),
+                  1 << 40, 1500, -1500]
+        for value in values:
+            self.assertEqual(
+                CScriptNum.decode(CScriptNum.encode(CScriptNum(value))),
+                value)

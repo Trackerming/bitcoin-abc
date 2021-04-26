@@ -4,6 +4,7 @@
 
 #include <interfaces/chain.h>
 
+#include <blockdb.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <interfaces/handler.h>
@@ -13,6 +14,7 @@
 #include <node/coin.h>
 #include <node/context.h>
 #include <node/transaction.h>
+#include <node/ui_interface.h>
 #include <policy/mempool.h>
 #include <policy/policy.h>
 #include <policy/settings.h>
@@ -24,7 +26,6 @@
 #include <sync.h>
 #include <timedata.h>
 #include <txmempool.h>
-#include <ui_interface.h>
 #include <univalue.h>
 #include <util/system.h>
 #include <validation.h>
@@ -35,114 +36,35 @@
 namespace interfaces {
 namespace {
 
-    class LockImpl : public Chain::Lock, public UniqueLock<RecursiveMutex> {
-        Optional<int> getHeight() override {
-            LockAssertion lock(::cs_main);
-            int height = ::ChainActive().Height();
-            if (height >= 0) {
-                return height;
+    bool FillBlock(const CBlockIndex *index, const FoundBlock &block,
+                   UniqueLock<RecursiveMutex> &lock) {
+        if (!index) {
+            return false;
+        }
+        if (block.m_hash) {
+            *block.m_hash = index->GetBlockHash();
+        }
+        if (block.m_height) {
+            *block.m_height = index->nHeight;
+        }
+        if (block.m_time) {
+            *block.m_time = index->GetBlockTime();
+        }
+        if (block.m_max_time) {
+            *block.m_max_time = index->GetBlockTimeMax();
+        }
+        if (block.m_mtp_time) {
+            *block.m_mtp_time = index->GetMedianTimePast();
+        }
+        if (block.m_data) {
+            REVERSE_LOCK(lock);
+            if (!ReadBlockFromDisk(*block.m_data, index,
+                                   Params().GetConsensus())) {
+                block.m_data->SetNull();
             }
-            return nullopt;
         }
-        Optional<int> getBlockHeight(const BlockHash &hash) override {
-            LockAssertion lock(::cs_main);
-            CBlockIndex *block = LookupBlockIndex(hash);
-            if (block && ::ChainActive().Contains(block)) {
-                return block->nHeight;
-            }
-            return nullopt;
-        }
-        BlockHash getBlockHash(int height) override {
-            LockAssertion lock(::cs_main);
-            CBlockIndex *block = ::ChainActive()[height];
-            assert(block != nullptr);
-            return block->GetBlockHash();
-        }
-        int64_t getBlockTime(int height) override {
-            LockAssertion lock(::cs_main);
-            CBlockIndex *block = ::ChainActive()[height];
-            assert(block != nullptr);
-            return block->GetBlockTime();
-        }
-        int64_t getBlockMedianTimePast(int height) override {
-            LockAssertion lock(::cs_main);
-            CBlockIndex *block = ::ChainActive()[height];
-            assert(block != nullptr);
-            return block->GetMedianTimePast();
-        }
-        bool haveBlockOnDisk(int height) override {
-            LockAssertion lock(::cs_main);
-            CBlockIndex *block = ::ChainActive()[height];
-            return block && (block->nStatus.hasData() != 0) && block->nTx > 0;
-        }
-        Optional<int>
-        findFirstBlockWithTimeAndHeight(int64_t time, int height,
-                                        BlockHash *hash) override {
-            LockAssertion lock(::cs_main);
-            CBlockIndex *block =
-                ::ChainActive().FindEarliestAtLeast(time, height);
-            if (block) {
-                if (hash) {
-                    *hash = block->GetBlockHash();
-                }
-                return block->nHeight;
-            }
-            return nullopt;
-        }
-        Optional<int> findPruned(int start_height,
-                                 Optional<int> stop_height) override {
-            LockAssertion lock(::cs_main);
-            if (::fPruneMode) {
-                CBlockIndex *block = stop_height ? ::ChainActive()[*stop_height]
-                                                 : ::ChainActive().Tip();
-                while (block && block->nHeight >= start_height) {
-                    if (block->nStatus.hasData() == 0) {
-                        return block->nHeight;
-                    }
-                    block = block->pprev;
-                }
-            }
-            return nullopt;
-        }
-        Optional<int> findFork(const BlockHash &hash,
-                               Optional<int> *height) override {
-            LockAssertion lock(::cs_main);
-            const CBlockIndex *block = LookupBlockIndex(hash);
-            const CBlockIndex *fork =
-                block ? ::ChainActive().FindFork(block) : nullptr;
-            if (height) {
-                if (block) {
-                    *height = block->nHeight;
-                } else {
-                    height->reset();
-                }
-            }
-            if (fork) {
-                return fork->nHeight;
-            }
-            return nullopt;
-        }
-        CBlockLocator getTipLocator() override {
-            LockAssertion lock(::cs_main);
-            return ::ChainActive().GetLocator();
-        }
-        Optional<int> findLocatorFork(const CBlockLocator &locator) override {
-            LockAssertion lock(::cs_main);
-            if (CBlockIndex *fork =
-                    FindForkInGlobalIndex(::ChainActive(), locator)) {
-                return fork->nHeight;
-            }
-            return nullopt;
-        }
-        bool contextualCheckTransactionForCurrentBlock(
-            const Consensus::Params &params, const CTransaction &tx,
-            TxValidationState &state) override {
-            LockAssertion lock(::cs_main);
-            return ContextualCheckTransactionForCurrentBlock(params, tx, state);
-        }
-
-        using UniqueLock::UniqueLock;
-    }; // namespace interfaces
+        return true;
+    }
 
     class NotificationsProxy : public CValidationInterface {
     public:
@@ -151,29 +73,26 @@ namespace {
             : m_notifications(std::move(notifications)) {}
         virtual ~NotificationsProxy() = default;
         void TransactionAddedToMempool(const CTransactionRef &tx) override {
-            m_notifications->TransactionAddedToMempool(tx);
+            m_notifications->transactionAddedToMempool(tx);
         }
         void TransactionRemovedFromMempool(const CTransactionRef &tx) override {
-            m_notifications->TransactionRemovedFromMempool(tx);
+            m_notifications->transactionRemovedFromMempool(tx);
         }
-        void BlockConnected(
-            const std::shared_ptr<const CBlock> &block,
-            const CBlockIndex *index,
-            const std::vector<CTransactionRef> &tx_conflicted) override {
-            m_notifications->BlockConnected(*block, tx_conflicted,
-                                            index->nHeight);
+        void BlockConnected(const std::shared_ptr<const CBlock> &block,
+                            const CBlockIndex *index) override {
+            m_notifications->blockConnected(*block, index->nHeight);
         }
         void BlockDisconnected(const std::shared_ptr<const CBlock> &block,
                                const CBlockIndex *index) override {
-            m_notifications->BlockDisconnected(*block, index->nHeight);
+            m_notifications->blockDisconnected(*block, index->nHeight);
         }
         void UpdatedBlockTip(const CBlockIndex *index,
                              const CBlockIndex *fork_index,
                              bool is_ibd) override {
-            m_notifications->UpdatedBlockTip();
+            m_notifications->updatedBlockTip();
         }
         void ChainStateFlushed(const CBlockLocator &locator) override {
-            m_notifications->ChainStateFlushed(locator);
+            m_notifications->chainStateFlushed(locator);
         }
         std::shared_ptr<Chain::Notifications> m_notifications;
     };
@@ -227,7 +146,7 @@ namespace {
             ::tableRPC.appendCommand(m_command.name, &m_command);
         }
 
-        void disconnect() override final {
+        void disconnect() final {
             if (m_wrapped_command) {
                 m_wrapped_command = nullptr;
                 ::tableRPC.removeCommand(m_command.name, &m_command);
@@ -244,45 +163,161 @@ namespace {
     public:
         explicit ChainImpl(NodeContext &node, const CChainParams &params)
             : m_node(node), m_params(params) {}
-        std::unique_ptr<Chain::Lock> lock(bool try_lock) override {
-            auto lock = std::make_unique<LockImpl>(
-                ::cs_main, "cs_main", __FILE__, __LINE__, try_lock);
-            if (try_lock && lock && !*lock) {
-                return {};
+        std::optional<int> getHeight() override {
+            LOCK(::cs_main);
+            int height = ::ChainActive().Height();
+            if (height >= 0) {
+                return height;
             }
-            // Temporary to avoid CWG 1579
-            std::unique_ptr<Chain::Lock> result = std::move(lock);
-            return result;
+            return std::nullopt;
         }
-        bool findBlock(const BlockHash &hash, CBlock *block, int64_t *time,
-                       int64_t *time_max) override {
-            CBlockIndex *index;
-            {
-                LOCK(cs_main);
-                index = LookupBlockIndex(hash);
-                if (!index) {
-                    return false;
+        std::optional<int> getBlockHeight(const BlockHash &hash) override {
+            LOCK(::cs_main);
+            CBlockIndex *block = LookupBlockIndex(hash);
+            if (block && ::ChainActive().Contains(block)) {
+                return block->nHeight;
+            }
+            return std::nullopt;
+        }
+        BlockHash getBlockHash(int height) override {
+            LOCK(::cs_main);
+            CBlockIndex *block = ::ChainActive()[height];
+            assert(block);
+            return block->GetBlockHash();
+        }
+        bool haveBlockOnDisk(int height) override {
+            LOCK(cs_main);
+            CBlockIndex *block = ::ChainActive()[height];
+            return block && (block->nStatus.hasData() != 0) && block->nTx > 0;
+        }
+        std::optional<int>
+        findFirstBlockWithTimeAndHeight(int64_t time, int height,
+                                        BlockHash *hash) override {
+            LOCK(cs_main);
+            CBlockIndex *block =
+                ::ChainActive().FindEarliestAtLeast(time, height);
+            if (block) {
+                if (hash) {
+                    *hash = block->GetBlockHash();
                 }
-                if (time) {
-                    *time = index->GetBlockTime();
-                }
-                if (time_max) {
-                    *time_max = index->GetBlockTimeMax();
+                return block->nHeight;
+            }
+            return std::nullopt;
+        }
+        CBlockLocator getTipLocator() override {
+            LOCK(cs_main);
+            return ::ChainActive().GetLocator();
+        }
+        bool contextualCheckTransactionForCurrentBlock(
+            const CTransaction &tx, TxValidationState &state) override {
+            LOCK(cs_main);
+            return ContextualCheckTransactionForCurrentBlock(
+                m_params.GetConsensus(), tx, state);
+        }
+        std::optional<int>
+        findLocatorFork(const CBlockLocator &locator) override {
+            LOCK(cs_main);
+            if (CBlockIndex *fork =
+                    FindForkInGlobalIndex(::ChainActive(), locator)) {
+                return fork->nHeight;
+            }
+            return std::nullopt;
+        }
+        bool findBlock(const BlockHash &hash,
+                       const FoundBlock &block) override {
+            WAIT_LOCK(cs_main, lock);
+            return FillBlock(LookupBlockIndex(hash), block, lock);
+        }
+        bool findFirstBlockWithTimeAndHeight(int64_t min_time, int min_height,
+                                             const FoundBlock &block) override {
+            WAIT_LOCK(cs_main, lock);
+            return FillBlock(
+                ChainActive().FindEarliestAtLeast(min_time, min_height), block,
+                lock);
+        }
+        bool findNextBlock(const BlockHash &block_hash, int block_height,
+                           const FoundBlock &next, bool *reorg) override {
+            WAIT_LOCK(cs_main, lock);
+            CBlockIndex *block = ChainActive()[block_height];
+            if (block && block->GetBlockHash() != block_hash) {
+                block = nullptr;
+            }
+            if (reorg) {
+                *reorg = !block;
+            }
+            return FillBlock(block ? ChainActive()[block_height + 1] : nullptr,
+                             next, lock);
+        }
+        bool findAncestorByHeight(const BlockHash &block_hash,
+                                  int ancestor_height,
+                                  const FoundBlock &ancestor_out) override {
+            WAIT_LOCK(cs_main, lock);
+            if (const CBlockIndex *block = LookupBlockIndex(block_hash)) {
+                if (const CBlockIndex *ancestor =
+                        block->GetAncestor(ancestor_height)) {
+                    return FillBlock(ancestor, ancestor_out, lock);
                 }
             }
-            if (block &&
-                !ReadBlockFromDisk(*block, index, Params().GetConsensus())) {
-                block->SetNull();
+            return FillBlock(nullptr, ancestor_out, lock);
+        }
+        bool findAncestorByHash(const BlockHash &block_hash,
+                                const BlockHash &ancestor_hash,
+                                const FoundBlock &ancestor_out) override {
+            WAIT_LOCK(cs_main, lock);
+            const CBlockIndex *block = LookupBlockIndex(block_hash);
+            const CBlockIndex *ancestor = LookupBlockIndex(ancestor_hash);
+            if (block && ancestor &&
+                block->GetAncestor(ancestor->nHeight) != ancestor) {
+                ancestor = nullptr;
             }
-            return true;
+            return FillBlock(ancestor, ancestor_out, lock);
+        }
+        bool findCommonAncestor(const BlockHash &block_hash1,
+                                const BlockHash &block_hash2,
+                                const FoundBlock &ancestor_out,
+                                const FoundBlock &block1_out,
+                                const FoundBlock &block2_out) override {
+            WAIT_LOCK(cs_main, lock);
+            const CBlockIndex *block1 = LookupBlockIndex(block_hash1);
+            const CBlockIndex *block2 = LookupBlockIndex(block_hash2);
+            const CBlockIndex *ancestor =
+                block1 && block2 ? LastCommonAncestor(block1, block2) : nullptr;
+            // Using & instead of && below to avoid short circuiting and leaving
+            // output uninitialized.
+            return FillBlock(ancestor, ancestor_out, lock) &
+                   FillBlock(block1, block1_out, lock) &
+                   FillBlock(block2, block2_out, lock);
         }
         void findCoins(std::map<COutPoint, Coin> &coins) override {
-            return FindCoins(coins);
+            return FindCoins(m_node, coins);
         }
         double guessVerificationProgress(const BlockHash &block_hash) override {
             LOCK(cs_main);
             return GuessVerificationProgress(Params().TxData(),
                                              LookupBlockIndex(block_hash));
+        }
+        bool hasBlocks(const BlockHash &block_hash, int min_height,
+                       std::optional<int> max_height) override {
+            // hasBlocks returns true if all ancestors of block_hash in
+            // specified range have block data (are not pruned), false if any
+            // ancestors in specified range are missing data.
+            //
+            // For simplicity and robustness, min_height and max_height are only
+            // used to limit the range, and passing min_height that's too low or
+            // max_height that's too high will not crash or change the result.
+            LOCK(::cs_main);
+            if (CBlockIndex *block = LookupBlockIndex(block_hash)) {
+                if (max_height && block->nHeight >= *max_height) {
+                    block = block->GetAncestor(*max_height);
+                }
+                for (; block->nStatus.hasData(); block = block->pprev) {
+                    // Check pprev to not segfault if min_height is too low
+                    if (block->nHeight <= min_height || !block->pprev) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
         bool hasDescendantsInMempool(const TxId &txid) override {
             LOCK(::g_mempool.cs);
@@ -291,9 +326,8 @@ namespace {
         }
         bool broadcastTransaction(const Config &config,
                                   const CTransactionRef &tx,
-                                  std::string &err_string,
-                                  const Amount &max_tx_fee,
-                                  bool relay) override {
+                                  const Amount &max_tx_fee, bool relay,
+                                  std::string &err_string) override {
             const TransactionError err = BroadcastTransaction(
                 m_node, config, tx, err_string, max_tx_fee, relay,
                 /*wait_callback*/ false);
@@ -360,14 +394,11 @@ namespace {
         void initMessage(const std::string &message) override {
             ::uiInterface.InitMessage(message);
         }
-        void initWarning(const std::string &message) override {
+        void initWarning(const bilingual_str &message) override {
             InitWarning(message);
         }
-        void initError(const std::string &message) override {
+        void initError(const bilingual_str &message) override {
             InitError(message);
-        }
-        void loadWallet(std::unique_ptr<Wallet> wallet) override {
-            ::uiInterface.LoadWallet(wallet);
         }
         void showProgress(const std::string &title, int progress,
                           bool resume_possible) override {
@@ -404,9 +435,10 @@ namespace {
         void requestMempoolTransactions(Notifications &notifications) override {
             LOCK2(::cs_main, ::g_mempool.cs);
             for (const CTxMemPoolEntry &entry : ::g_mempool.mapTx) {
-                notifications.TransactionAddedToMempool(entry.GetSharedTx());
+                notifications.transactionAddedToMempool(entry.GetSharedTx());
             }
         }
+        const CChainParams &params() const override { return m_params; }
         NodeContext &m_node;
         const CChainParams &m_params;
     };

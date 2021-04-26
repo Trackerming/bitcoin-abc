@@ -42,9 +42,9 @@ TEST_TIME = int(time.time())
 
 # Error due to non clean stack
 CLEANSTACK_ERROR = 'non-mandatory-script-verify-flag (Extra items left on stack after execution)'
-RPC_CLEANSTACK_ERROR = CLEANSTACK_ERROR + " (code 64)"
+RPC_CLEANSTACK_ERROR = CLEANSTACK_ERROR
 EVAL_FALSE_ERROR = 'non-mandatory-script-verify-flag (Script evaluated without error but finished with a false/empty top stack elem'
-RPC_EVAL_FALSE_ERROR = EVAL_FALSE_ERROR + "ent) (code 64)"
+RPC_EVAL_FALSE_ERROR = EVAL_FALSE_ERROR + "ent)"
 
 
 class PreviousSpendableOutput(object):
@@ -77,7 +77,7 @@ class SegwitRecoveryTest(BitcoinTestFramework):
         # that segwit spending txn are not resulting in bans, node_nonstd
         # doesn't get banned when forwarding this kind of transactions to
         # node_std.
-        self.extra_args = [['-whitelist=127.0.0.1',
+        self.extra_args = [['-whitelist=noban@127.0.0.1',
                             "-acceptnonstdtxn"],
                            ["-acceptnonstdtxn=0"]]
 

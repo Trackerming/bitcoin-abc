@@ -6,7 +6,7 @@
 #include <banman.h>
 
 #include <netaddress.h>
-#include <ui_interface.h>
+#include <node/ui_interface.h>
 #include <util/system.h>
 #include <util/time.h>
 #include <util/translation.h>
@@ -199,7 +199,7 @@ void BanMan::SweepBanned() {
         while (it != m_banned.end()) {
             CSubNet sub_net = (*it).first;
             CBanEntry ban_entry = (*it).second;
-            if (now > ban_entry.nBanUntil) {
+            if (!sub_net.IsValid() || now > ban_entry.nBanUntil) {
                 m_banned.erase(it++);
                 m_is_dirty = true;
                 notify_ui = true;

@@ -124,26 +124,37 @@ class BuildConfiguration:
             "TOPLEVEL": str(self.project_root),
         }
 
+    def create_script_file(self, dest, content):
+        # Write the content to a script file using a template
+        with open(self.script_root.joinpath("bash_script.sh.in"), encoding='utf-8') as f:
+            script_template_content = f.read()
+
+        template = Template(script_template_content)
+
+        with open(dest, 'w', encoding='utf-8') as f:
+            f.write(
+                template.safe_substitute(
+                    **self.environment_variables,
+                    SCRIPT_CONTENT=content,
+                )
+            )
+        dest.chmod(dest.stat().st_mode | stat.S_IEXEC)
+
     def create_build_steps(self, artifact_dir):
         # There are 2 possibilities to define the build steps:
-        #  - By defining a script to run. If such a script is set and is
-        #    executable, it is the only thing to run.
+        #  - By manually defining a script to run.
         #  - By defining the configuration options and a list of target groups to
         #    run. The configuration step should be run once then all the targets
         #    groups. Each target group can contain 1 or more targets which
         #    should be run parallel.
         script = self.config.get("script", None)
         if script:
-            script_path = Path(self.script_root.joinpath(script))
-            if not script_path.is_file() or not os.access(script_path, os.X_OK):
-                raise FileNotFoundError(
-                    "The script file {} does not exist or does not have execution permission".format(
-                        str(script_path)
-                    )
-                )
+            script_file = self.build_directory.joinpath("script.sh")
+            self.create_script_file(script_file, script)
+
             self.build_steps = [
                 {
-                    "bin": str(script_path),
+                    "bin": str(script_file),
                     "args": [],
                 }
             ]
@@ -187,7 +198,13 @@ class BuildConfiguration:
         generator = self.config.get("generator", {})
         generator_name = generator.get("name", "Ninja")
         generator_command = generator.get("command", "ninja")
-        generator_flags = generator.get("flags", ["-k0"])
+        # If the build runs on diff or has the fail_fast flag, exit on first error.
+        # Otherwise keep running so we can gather more test result.
+        fail_fast = self.config.get(
+            "fail_fast", False) or self.config.get(
+            "runOnDiff", False)
+        generator_flags = generator.get(
+            "flags", ["-k0"] if not fail_fast else [])
 
         # Max out the jobs by default when the generator uses make
         if generator_command == "make":
@@ -247,22 +264,8 @@ class BuildConfiguration:
         # If a post build script is defined, add it as a last step
         post_build = self.config.get("post_build", None)
         if post_build:
-            # Write the content to a script file using a template
             script_file = self.build_directory.joinpath("post_build.sh")
-
-            with open(self.script_root.joinpath("bash_script.sh.in"), encoding='utf-8') as f:
-                script_template_content = f.read()
-
-            template = Template(script_template_content)
-
-            with open(script_file, 'w', encoding='utf-8') as f:
-                f.write(
-                    template.safe_substitute(
-                        **self.environment_variables,
-                        SCRIPT_CONTENT=post_build,
-                    )
-                )
-            script_file.chmod(script_file.stat().st_mode | stat.S_IEXEC)
+            self.create_script_file(script_file, post_build)
 
             self.build_steps.append(
                 {
@@ -369,9 +372,10 @@ class UserBuild():
                 )
                 continue
 
-    def run_process(self, bin, args=[]):
+    def run_process(self, binary, args=None):
+        args = args if args is not None else []
         return asyncio.create_subprocess_exec(
-            *([bin] + args),
+            *([binary] + args),
             # Buffer limit is 64KB by default, but we need a larger buffer:
             limit=1024 * 256,
             stdout=asyncio.subprocess.PIPE,
@@ -386,16 +390,26 @@ class UserBuild():
             },
         )
 
-    async def run_build(self, bin, args=[]):
-        proc = await self.run_process(bin, args)
+    async def run_build(self, binary, args=None):
+        args = args if args is not None else []
+        proc = await self.run_process(binary, args)
+        logging_task = asyncio.ensure_future(self.process_stdout(proc.stdout))
 
-        await asyncio.wait([
-            self.process_stdout(proc.stdout)
-        ])
+        # Block until the process is finished
+        result = await proc.wait()
 
-        return await proc.wait()
+        # Wait up to a few seconds for logging to flush. Normally, this will
+        # finish immediately.
+        try:
+            await asyncio.wait_for(logging_task, timeout=5)
+        except asyncio.TimeoutError:
+            self.print_line_to_logs(
+                "Warning: Timed out while waiting for logging to flush. Some log lines may be missing.")
 
-    async def wait_for_build(self, timeout, args=[]):
+        return result
+
+    async def wait_for_build(self, timeout, args=None):
+        args = args if args is not None else []
         message = "Build {} completed successfully".format(
             self.configuration.name
         )
@@ -434,7 +448,8 @@ class UserBuild():
 
             return (return_code, message)
 
-    def run(self, args=[]):
+    def run(self, args=None):
+        args = args if args is not None else []
         if self.artifact_dir.is_dir():
             shutil.rmtree(self.artifact_dir)
         self.artifact_dir.mkdir(exist_ok=True)
@@ -478,7 +493,9 @@ class TeamcityBuild(UserBuild):
         )
         self.teamcity_messages.publishArtifacts(artifact_path_pattern)
 
-    def run(self, args=[]):
+    def run(self, args=None):
+        args = args if args is not None else []
+
         # Let the user know what build is being run.
         # This makes it easier to retrieve the info from the logs.
         self.teamcity_messages.customMessage(

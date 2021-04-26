@@ -33,11 +33,6 @@ from test_framework.util import assert_equal
 
 CLTV_HEIGHT = 1351
 
-# Reject codes that we might receive in this test
-REJECT_INVALID = 16
-REJECT_OBSOLETE = 17
-REJECT_NONSTANDARD = 64
-
 
 def cltv_lock_to_height(node, tx, to_address, amount, height=-1):
     '''Modify the scriptPubKey to add an OP_CHECKLOCKTIMEVERIFY, and make
@@ -85,7 +80,7 @@ class BIP65Test(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 1
         self.extra_args = [[
-            '-whitelist=127.0.0.1',
+            '-whitelist=noban@127.0.0.1',
             '-par=1',  # Use only one script thread to get the exact reject reason for testing
             '-acceptnonstdtxn=1',  # cltv_invalidate is nonstandard
         ]]
@@ -107,7 +102,7 @@ class BIP65Test(BitcoinTestFramework):
             "Test that an invalid-according-to-CLTV transaction can still appear in a block")
 
         fundtx = create_transaction(self.nodes[0], self.coinbase_txids[0],
-                                    self.nodeaddress, 49.99)
+                                    self.nodeaddress, amount=49.99)
         fundtx, spendtx = cltv_lock_to_height(
             self.nodes[0], fundtx, self.nodeaddress, 49.98)
 
@@ -144,7 +139,7 @@ class BIP65Test(BitcoinTestFramework):
         block.nVersion = 4
 
         fundtx = create_transaction(self.nodes[0], self.coinbase_txids[1],
-                                    self.nodeaddress, 49.99)
+                                    self.nodeaddress, amount=49.99)
         fundtx, spendtx = cltv_lock_to_height(
             self.nodes[0], fundtx, self.nodeaddress, 49.98)
 
@@ -166,7 +161,7 @@ class BIP65Test(BitcoinTestFramework):
         # rejected from the mempool for exactly that reason.
         assert_equal(
             [{'txid': spendtx.hash, 'allowed': False,
-                'reject-reason': '64: non-mandatory-script-verify-flag (Negative locktime)'}],
+              'reject-reason': 'non-mandatory-script-verify-flag (Negative locktime)'}],
             self.nodes[0].testmempoolaccept(
                 rawtxs=[spendtx.serialize().hex()], maxfeerate=0)
         )
@@ -194,7 +189,7 @@ class BIP65Test(BitcoinTestFramework):
         self.log.info(
             "Test that a version 4 block with a valid-according-to-CLTV transaction is accepted")
         fundtx = create_transaction(self.nodes[0], self.coinbase_txids[2],
-                                    self.nodeaddress, 49.99)
+                                    self.nodeaddress, amount=49.99)
         fundtx, spendtx = cltv_lock_to_height(
             self.nodes[0], fundtx, self.nodeaddress, 49.98, CLTV_HEIGHT)
 

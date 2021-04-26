@@ -7,7 +7,6 @@
 
 #include <attributes.h>
 #include <node/transaction.h>
-#include <optional.h>
 #include <primitives/transaction.h>
 #include <pubkey.h>
 #include <script/sign.h>
@@ -36,6 +35,10 @@ static constexpr uint8_t PSBT_OUT_BIP32_DERIVATION = 0x02;
 // The separator has no value.
 static constexpr uint8_t PSBT_SEPARATOR = 0x00;
 
+// BIP 174 does not specify a maximum file size, but we set a limit anyway
+// to prevent reading a stream indefinitely and running out of memory.
+const std::streamsize MAX_FILE_SIZE_PSBT = 100000000; // 100 MiB
+
 /** A structure for PSBTs which contain per-input information */
 struct PSBTInput {
     CTxOut utxo;
@@ -50,7 +53,6 @@ struct PSBTInput {
     void FillSignatureData(SignatureData &sigdata) const;
     void FromSignatureData(const SignatureData &sigdata);
     void Merge(const PSBTInput &input);
-    bool IsSane() const;
     PSBTInput() {}
 
     template <typename Stream> inline void Serialize(Stream &s) const {
@@ -100,7 +102,11 @@ struct PSBTInput {
     }
 
     template <typename Stream> inline void Unserialize(Stream &s) {
+        // Used for duplicate key detection
+        std::set<std::vector<uint8_t>> key_lookup;
+
         // Read loop
+        bool found_sep = false;
         while (!s.empty()) {
             // Read
             std::vector<uint8_t> key;
@@ -110,7 +116,8 @@ struct PSBTInput {
             // This is a special case for key lengths 0 as those are not allowed
             // (except for separator)
             if (key.empty()) {
-                return;
+                found_sep = true;
+                break;
             }
 
             // First byte of key is the type
@@ -119,7 +126,7 @@ struct PSBTInput {
             // Do stuff based on type
             switch (type) {
                 case PSBT_IN_UTXO:
-                    if (!utxo.IsNull()) {
+                    if (!key_lookup.emplace(key).second) {
                         throw std::ios_base::failure(
                             "Duplicate Key, input utxo already provided");
                     } else if (key.size() != 1) {
@@ -130,8 +137,8 @@ struct PSBTInput {
                     break;
                 case PSBT_IN_PARTIAL_SIG: {
                     // Make sure that the key is the size of pubkey + 1
-                    if (key.size() != CPubKey::PUBLIC_KEY_SIZE + 1 &&
-                        key.size() != CPubKey::COMPRESSED_PUBLIC_KEY_SIZE + 1) {
+                    if (key.size() != CPubKey::SIZE + 1 &&
+                        key.size() != CPubKey::COMPRESSED_SIZE + 1) {
                         throw std::ios_base::failure(
                             "Size of key was not the expected size for the "
                             "type partial signature pubkey");
@@ -157,7 +164,7 @@ struct PSBTInput {
                     break;
                 }
                 case PSBT_IN_SIGHASH:
-                    if (sighash_type.getRawSigHashType() != 0) {
+                    if (!key_lookup.emplace(key).second) {
                         throw std::ios_base::failure(
                             "Duplicate Key, input sighash type already "
                             "provided");
@@ -168,7 +175,7 @@ struct PSBTInput {
                     UnserializeFromVector(s, sighash_type);
                     break;
                 case PSBT_IN_REDEEMSCRIPT: {
-                    if (!redeem_script.empty()) {
+                    if (!key_lookup.emplace(key).second) {
                         throw std::ios_base::failure(
                             "Duplicate Key, input redeemScript already "
                             "provided");
@@ -185,7 +192,7 @@ struct PSBTInput {
                     break;
                 }
                 case PSBT_IN_SCRIPTSIG: {
-                    if (!final_script_sig.empty()) {
+                    if (!key_lookup.emplace(key).second) {
                         throw std::ios_base::failure(
                             "Duplicate Key, input final scriptSig already "
                             "provided");
@@ -210,6 +217,10 @@ struct PSBTInput {
                     break;
             }
         }
+        if (!found_sep) {
+            throw std::ios_base::failure(
+                "Separator is missing at the end of an input map");
+        }
     }
 
     template <typename Stream> PSBTInput(deserialize_type, Stream &s) {
@@ -227,7 +238,6 @@ struct PSBTOutput {
     void FillSignatureData(SignatureData &sigdata) const;
     void FromSignatureData(const SignatureData &sigdata);
     void Merge(const PSBTOutput &output);
-    bool IsSane() const;
     PSBTOutput() {}
 
     template <typename Stream> inline void Serialize(Stream &s) const {
@@ -250,7 +260,11 @@ struct PSBTOutput {
     }
 
     template <typename Stream> inline void Unserialize(Stream &s) {
+        // Used for duplicate key detection
+        std::set<std::vector<uint8_t>> key_lookup;
+
         // Read loop
+        bool found_sep = false;
         while (!s.empty()) {
             // Read
             std::vector<uint8_t> key;
@@ -260,7 +274,8 @@ struct PSBTOutput {
             // This is a special case for key lengths 0 as those are not allowed
             // (except for separator)
             if (key.empty()) {
-                return;
+                found_sep = true;
+                break;
             }
 
             // First byte of key is the type
@@ -269,7 +284,7 @@ struct PSBTOutput {
             // Do stuff based on type
             switch (type) {
                 case PSBT_OUT_REDEEMSCRIPT: {
-                    if (!redeem_script.empty()) {
+                    if (!key_lookup.emplace(key).second) {
                         throw std::ios_base::failure(
                             "Duplicate Key, output redeemScript already "
                             "provided");
@@ -300,6 +315,11 @@ struct PSBTOutput {
                 }
             }
         }
+
+        if (!found_sep) {
+            throw std::ios_base::failure(
+                "Separator is missing at the end of an output map");
+        }
     }
 
     template <typename Stream> PSBTOutput(deserialize_type, Stream &s) {
@@ -311,7 +331,7 @@ struct PSBTOutput {
  * A version of CTransaction with the PSBT format.
  */
 struct PartiallySignedTransaction {
-    Optional<CMutableTransaction> tx;
+    std::optional<CMutableTransaction> tx;
     std::vector<PSBTInput> inputs;
     std::vector<PSBTOutput> outputs;
     std::map<std::vector<uint8_t>, std::vector<uint8_t>> unknown;
@@ -324,7 +344,6 @@ struct PartiallySignedTransaction {
      * the merge succeeded, false otherwise.
      */
     NODISCARD bool Merge(const PartiallySignedTransaction &psbt);
-    bool IsSane() const;
     bool AddInput(const CTxIn &txin, PSBTInput &psbtin);
     bool AddOutput(const CTxOut &txout, const PSBTOutput &psbtout);
     PartiallySignedTransaction() {}
@@ -379,7 +398,11 @@ struct PartiallySignedTransaction {
             throw std::ios_base::failure("Invalid PSBT magic bytes");
         }
 
+        // Used for duplicate key detection
+        std::set<std::vector<uint8_t>> key_lookup;
+
         // Read global data
+        bool found_sep = false;
         while (!s.empty()) {
             // Read
             std::vector<uint8_t> key;
@@ -389,6 +412,7 @@ struct PartiallySignedTransaction {
             // This is a special case for key lengths 0 as those are not allowed
             // (except for separator)
             if (key.empty()) {
+                found_sep = true;
                 break;
             }
 
@@ -398,7 +422,7 @@ struct PartiallySignedTransaction {
             // Do stuff based on type
             switch (type) {
                 case PSBT_GLOBAL_UNSIGNED_TX: {
-                    if (tx) {
+                    if (!key_lookup.emplace(key).second) {
                         throw std::ios_base::failure(
                             "Duplicate Key, unsigned tx already provided");
                     } else if (key.size() != 1) {
@@ -431,6 +455,11 @@ struct PartiallySignedTransaction {
                     unknown.emplace(std::move(key), std::move(val_bytes));
                 }
             }
+        }
+
+        if (!found_sep) {
+            throw std::ios_base::failure(
+                "Separator is missing at the end of the global map");
         }
 
         // Make sure that we got an unsigned tx
@@ -468,10 +497,6 @@ struct PartiallySignedTransaction {
             throw std::ios_base::failure("Outputs provided does not match the "
                                          "number of outputs in transaction.");
         }
-        // Sanity check
-        if (!IsSane()) {
-            throw std::ios_base::failure("PSBT is not sane.");
-        }
     }
 
     template <typename Stream>
@@ -481,6 +506,7 @@ struct PartiallySignedTransaction {
 };
 
 enum class PSBTRole {
+    CREATOR,
     UPDATER,
     SIGNER,
     FINALIZER,
@@ -514,7 +540,7 @@ void UpdatePSBTOutput(const SigningProvider &provider,
 /**
  * Finalizes a PSBT if possible, combining partial signatures.
  *
- * @param[in,out] &psbtx reference to PartiallySignedTransaction to finalize
+ * @param[in,out] psbtx PartiallySignedTransaction to finalize
  * return True if the PSBT is now complete, false otherwise
  */
 bool FinalizePSBT(PartiallySignedTransaction &psbtx);
@@ -523,7 +549,7 @@ bool FinalizePSBT(PartiallySignedTransaction &psbtx);
  * Finalizes a PSBT if possible, and extracts it to a CMutableTransaction if it
  * could be finalized.
  *
- * @param[in]  &psbtx reference to PartiallySignedTransaction
+ * @param[in]  psbtx PartiallySignedTransaction
  * @param[out] result CMutableTransaction representing the complete transaction,
  * if successful
  * @return True if we successfully extracted the transaction, false otherwise
@@ -535,7 +561,7 @@ bool FinalizeAndExtractPSBT(PartiallySignedTransaction &psbtx,
  * Combines PSBTs with the same underlying transaction, resulting in a single
  * PSBT with all partial signatures from each input.
  *
- * @param[out] &out   the combined PSBT, if successful
+ * @param[out] out   the combined PSBT, if successful
  * @param[in]  psbtxs the PSBTs to combine
  * @return error (OK if we successfully combined the transactions, other error
  * if they were not compatible)

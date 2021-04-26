@@ -5,7 +5,7 @@ Some notes on how to build Bitcoin ABC in Unix.
 To Build
 ---------------------
 
-Before you start building, please make sure that your compiler supports C++14.
+Before you start building, please make sure that your compiler supports C++17.
 
 It is recommended to create a build directory to build out-of-tree.
 
@@ -21,6 +21,8 @@ This will build bitcoin-qt as well.
 
 Dependencies
 ---------------------
+
+*Note: Bitcoin ABC provides a [Docker image with all the dependencies preinstalled](#build-using-a-docker-container).*
 
 These dependencies are required:
 
@@ -52,13 +54,13 @@ C++ compilers are memory-hungry. It is recommended to have at least 1.5 GB of
 memory available when compiling Bitcoin ABC. On systems with less, gcc can be
 tuned to conserve memory with additional CXXFLAGS:
 
-    cmake -GNinja .. -DCXXFLAGS="--param ggc-min-expand=1 --param ggc-min-heapsize=32768"
+    cmake -GNinja .. -DCMAKE_CXX_FLAGS="--param ggc-min-expand=1 --param ggc-min-heapsize=32768"
 
 Dependency Build Instructions: Ubuntu & Debian
 ----------------------------------------------
 Build requirements:
 
-    sudo apt-get install bsdmainutils build-essential libssl-dev libevent-dev ninja-build python3
+    sudo apt-get install bsdmainutils build-essential libssl-dev libevent-dev lld ninja-build python3
 
 **Installing cmake:**
 
@@ -95,7 +97,7 @@ Options when installing required Boost library files:
 individual boost development packages, so the following can be used to only
 install necessary parts of boost:
 
-        sudo apt-get install libboost-system-dev libboost-filesystem-dev libboost-chrono-dev libboost-test-dev libboost-thread-dev
+        sudo apt-get install libboost-system-dev libboost-filesystem-dev libboost-test-dev libboost-thread-dev
 
 2. If that doesn't work, you can install all boost development packages with:
 
@@ -165,8 +167,8 @@ symbols, which reduces the executable size by about 90%.
 miniupnpc
 ---------
 
-[miniupnpc](http://miniupnp.free.fr/) may be used for UPnP port mapping.  It can be downloaded from [here](
-http://miniupnp.tuxfamily.org/files/).  UPnP support is compiled in and
+[miniupnpc](https://miniupnp.tuxfamily.org) may be used for UPnP port mapping.  It can be downloaded from [here](
+https://miniupnp.tuxfamily.org/files/).  UPnP support is compiled in and
 turned off by default.  See the cmake options for upnp behavior desired:
 
     ENABLE_UPNP            Enable UPnP support (miniupnp required, default ON)
@@ -243,7 +245,6 @@ non-wallet distribution of the latest changes on Arch Linux:
     cmake -GNinja .. -DBUILD_BITCOIN_WALLET=OFF -DBUILD_BITCOIN_QT=OFF -DENABLE_UPNP=OFF -DBUILD_BITCOIN_ZMQ=OFF -DUSE_JEMALLOC=OFF
     ninja
 
-
 ARM Cross-compilation
 -------------------
 These steps can be performed on, for example, a Debian VM. The depends system
@@ -267,3 +268,59 @@ To build executables for ARM:
 
 
 For further documentation on the depends system see [README.md](../depends/README.md) in the depends directory.
+
+Build using a Docker container
+-------------------------------
+
+Bitcoin ABC provides a
+[Docker image](https://hub.docker.com/r/bitcoinabc/bitcoin-abc-dev) with all the
+dependencies pre-installed, based on Debian. If the dependencies cannot be
+installed on your system but it can run a Docker container, this image can be
+pulled and used for the build.
+
+*Note: The image has all the dependencies and can weight a few gigabytes.*
+
+To get the latest image (current master):
+
+```shell
+docker pull bitcoinabc/bitcoin-abc-dev
+```
+
+It is also possible to use a release version. Example for 0.22.4:
+
+```shell
+docker pull bitcoinabc/bitcoin-abc-dev:0.22.4
+```
+
+Running the container will start a `bash` shell at the project root:
+
+```shell
+# On the host
+docker run -it bitcoinabc/bitcoin-abc-dev
+
+# Start the build in the container
+mkdir build
+cd build
+cmake -GNinja ..
+ninja
+```
+
+It is possible to bind the project to a local directory on the host machine.
+First create an empty volume on the host:
+
+```shell
+# On the host
+mkdir bitcoin-abc-volume
+docker volume create \
+  --driver local \
+  --opt type=none \
+  --opt device=${PWD}/bitcoin-abc-volume \
+  --opt o=bind \
+  bitcoin-abc-volume
+```
+
+Then start the container with the volume bound to `/bitcoin-abc`:
+
+```shell
+docker run -it -v bitcoin-abc-volume:/bitcoin-abc bitcoinabc/bitcoin-abc-dev
+```

@@ -8,6 +8,22 @@
 #include <consensus/consensus.h>
 #include <hash.h>
 
+std::vector<uint8_t> BitsToBytes(const std::vector<bool> &bits) {
+    std::vector<uint8_t> ret((bits.size() + 7) / 8);
+    for (unsigned int p = 0; p < bits.size(); p++) {
+        ret[p / 8] |= bits[p] << (p % 8);
+    }
+    return ret;
+}
+
+std::vector<bool> BytesToBits(const std::vector<uint8_t> &bytes) {
+    std::vector<bool> ret(bytes.size() * 8);
+    for (unsigned int p = 0; p < ret.size(); p++) {
+        ret[p] = (bytes[p / 8] & (1 << (p % 8))) != 0;
+    }
+    return ret;
+}
+
 CMerkleBlock::CMerkleBlock(const CBlock &block, CBloomFilter *filter,
                            const std::set<TxId> *txids) {
     header = block.GetBlockHeader();
@@ -66,7 +82,7 @@ uint256 CPartialMerkleTree::CalcHash(int height, size_t pos,
     }
 
     // Combine subhashes.
-    return Hash(left.begin(), left.end(), right.begin(), right.end());
+    return Hash(left, right);
 }
 
 void CPartialMerkleTree::TraverseAndBuild(int height, size_t pos,
@@ -139,7 +155,7 @@ uint256 CPartialMerkleTree::TraverseAndExtract(int height, size_t pos,
     }
 
     // and combine them before returning.
-    return Hash(left.begin(), left.end(), right.begin(), right.end());
+    return Hash(left, right);
 }
 
 CPartialMerkleTree::CPartialMerkleTree(const std::vector<uint256> &vTxid,

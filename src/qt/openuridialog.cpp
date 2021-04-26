@@ -7,7 +7,7 @@
 
 #include <chainparams.h>
 #include <qt/guiutil.h>
-#include <qt/walletmodel.h>
+#include <qt/sendcoinsrecipient.h>
 
 #include <QUrl>
 
@@ -16,6 +16,8 @@ OpenURIDialog::OpenURIDialog(const CChainParams &params, QWidget *parent)
       uriScheme(QString::fromStdString(params.CashAddrPrefix())) {
     ui->setupUi(this);
     ui->uriEdit->setPlaceholderText(uriScheme + ":");
+
+    GUIUtil::handleCloseWindowShortcut(this);
 }
 
 OpenURIDialog::~OpenURIDialog() {

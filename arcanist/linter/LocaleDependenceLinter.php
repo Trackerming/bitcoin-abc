@@ -39,6 +39,11 @@ final class LocaleDependenceLinter extends ArcanistLinter {
       "atoi",
       "strtol",
     ],
+    "src/test/fuzz/locale.cpp" => [
+      "atoi",
+      "setlocale",
+    ],
+    "src/test/fuzz/parse_numbers.cpp" => ["atoi"],
     "src/util/system.cpp" => ["atoi"],
     "src/util/strencodings.cpp" => [
       "atoi",
@@ -120,6 +125,7 @@ final class LocaleDependenceLinter extends ArcanistLinter {
     "snprintf",
     "sprintf",
     "sscanf",
+    "std::to_string",
     "stod",
     "stof",
     "stoi",

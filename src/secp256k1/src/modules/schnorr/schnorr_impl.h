@@ -1,11 +1,11 @@
 /***********************************************************************
  * Copyright (c) 2017 Amaury SÉCHET                                    *
  * Distributed under the MIT software license, see the accompanying    *
- * file COPYING or http://www.opensource.org/licenses/mit-license.php. *
+ * file COPYING or https://www.opensource.org/licenses/mit-license.php.*
  ***********************************************************************/
 
-#ifndef _SECP256K1_SCHNORR_IMPL_H_
-#define _SECP256K1_SCHNORR_IMPL_H_
+#ifndef SECP256K1_MODULE_SCHNORR_IMPL_H
+#define SECP256K1_MODULE_SCHNORR_IMPL_H
 
 #include <string.h>
 
@@ -105,7 +105,7 @@ static int secp256k1_schnorr_compute_e(
     const unsigned char *msg32
 ) {
     int overflow = 0;
-    size_t size;
+    size_t size = 0;
     secp256k1_sha256 sha;
     unsigned char buf[33];
     secp256k1_sha256_initialize(&sha);
@@ -152,6 +152,11 @@ static int secp256k1_schnorr_sig_sign(
     secp256k1_ecmult_gen(&ctx->ecmult_gen_ctx, &Rj, &k);
     secp256k1_ge_set_gej(&R, &Rj);
 
+    /*
+     * We declassify R to allow using it as a branch point.
+     * This is fine because R is not a secret.
+     */
+    secp256k1_declassify(ctx, &R, sizeof(R));
     /** Negate the nonce if R.y is not a quadratic residue. */
     secp256k1_scalar_cond_negate(&k, !secp256k1_fe_is_quad_var(&R.y));
 

@@ -6,7 +6,6 @@
 #ifndef BITCOIN_MINER_H
 #define BITCOIN_MINER_H
 
-#include <optional.h>
 #include <primitives/block.h>
 #include <txmempool.h>
 
@@ -155,7 +154,7 @@ private:
     int64_t nMedianTimePast;
     const CChainParams &chainParams;
 
-    const CTxMemPool *mempool;
+    const CTxMemPool &m_mempool;
 
 public:
     struct Options {
@@ -165,8 +164,8 @@ public:
         CFeeRate blockMinFeeRate;
     };
 
-    BlockAssembler(const Config &config, const CTxMemPool &_mempool);
-    BlockAssembler(const CChainParams &params, const CTxMemPool &_mempool,
+    BlockAssembler(const Config &config, const CTxMemPool &mempool);
+    BlockAssembler(const CChainParams &params, const CTxMemPool &mempool,
                    const Options &options);
 
     /** Construct a new block template with coinbase to scriptPubKeyIn */
@@ -175,8 +174,8 @@ public:
 
     uint64_t GetMaxGeneratedBlockSize() const { return nMaxGeneratedBlockSize; }
 
-    static Optional<int64_t> m_last_block_num_txs;
-    static Optional<int64_t> m_last_block_size;
+    static std::optional<int64_t> m_last_block_num_txs;
+    static std::optional<int64_t> m_last_block_size;
 
 private:
     // utility functions
@@ -192,7 +191,7 @@ private:
      * statistics from the package selection (for logging statistics).
      */
     void addPackageTxs(int &nPackagesSelected, int &nDescendantsUpdated)
-        EXCLUSIVE_LOCKS_REQUIRED(mempool->cs);
+        EXCLUSIVE_LOCKS_REQUIRED(m_mempool.cs);
 
     // helper functions for addPackageTxs()
     /** Remove confirmed (inBlock) entries from given set */
@@ -213,7 +212,7 @@ private:
     bool SkipMapTxEntry(CTxMemPool::txiter it,
                         indexed_modified_transaction_set &mapModifiedTx,
                         CTxMemPool::setEntries &failedTx)
-        EXCLUSIVE_LOCKS_REQUIRED(mempool->cs);
+        EXCLUSIVE_LOCKS_REQUIRED(m_mempool.cs);
     /** Sort the package in an order that is valid to appear in a block */
     void SortForBlock(const CTxMemPool::setEntries &package,
                       std::vector<CTxMemPool::txiter> &sortedEntries);
@@ -224,7 +223,7 @@ private:
      */
     int UpdatePackagesForAdded(const CTxMemPool::setEntries &alreadyAdded,
                                indexed_modified_transaction_set &mapModifiedTx)
-        EXCLUSIVE_LOCKS_REQUIRED(mempool->cs);
+        EXCLUSIVE_LOCKS_REQUIRED(m_mempool.cs);
 };
 
 /** Modify the extranonce in a block */

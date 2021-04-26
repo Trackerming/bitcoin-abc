@@ -51,7 +51,7 @@ class AddressTypeTest(BitcoinTestFramework):
     def set_test_params(self):
         self.num_nodes = 5
         # whitelist all peers to speed up tx relay / mempool sync
-        self.extra_args = [["-whitelist=127.0.0.1"]] * self.num_nodes
+        self.extra_args = [["-whitelist=noban@127.0.0.1"]] * self.num_nodes
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -65,12 +65,9 @@ class AddressTypeTest(BitcoinTestFramework):
                 connect_nodes(self.nodes[i], self.nodes[j])
         self.sync_all()
 
-    def get_balances(self, confirmed=True):
-        """Return a list of confirmed or unconfirmed balances."""
-        if confirmed:
-            return [self.nodes[i].getbalance() for i in range(4)]
-        else:
-            return [self.nodes[i].getunconfirmedbalance() for i in range(4)]
+    def get_balances(self, key='trusted'):
+        """Return a list of balances."""
+        return [self.nodes[i].getbalances()['mine'][key] for i in range(4)]
 
     def test_address(self, node, address, multisig, typ):
         """Run sanity checks on an address."""
@@ -239,7 +236,7 @@ class AddressTypeTest(BitcoinTestFramework):
             self.nodes[from_node].sendmany("", sends)
             self.sync_mempools()
 
-            unconf_balances = self.get_balances(False)
+            unconf_balances = self.get_balances('untrusted_pending')
             self.log.debug(
                 "Check unconfirmed balances: {}".format(unconf_balances))
             assert_equal(unconf_balances[from_node], 0)

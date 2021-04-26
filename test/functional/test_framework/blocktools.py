@@ -4,8 +4,13 @@
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Utilities for manipulating blocks and transactions."""
 
+import unittest
+
 from .script import (
     CScript,
+    CScriptNum,
+    CScriptOp,
+    OP_1,
     OP_CHECKSIG,
     OP_DUP,
     OP_EQUALVERIFY,
@@ -22,7 +27,6 @@ from .messages import (
     CTxOut,
     FromHex,
     ToHex,
-    ser_string,
 )
 from .txtools import pad_tx
 from .util import assert_equal, satoshi_round
@@ -56,20 +60,13 @@ def make_conform_to_ctor(block):
         sorted(block.vtx[1:], key=lambda tx: tx.get_id())
 
 
-def serialize_script_num(value):
-    r = bytearray(0)
-    if value == 0:
-        return r
-    neg = value < 0
-    absvalue = -value if neg else value
-    while (absvalue):
-        r.append(int(absvalue & 0xff))
-        absvalue >>= 8
-    if r[-1] & 0x80:
-        r.append(0x80 if neg else 0)
-    elif neg:
-        r[-1] |= 0x80
-    return r
+def script_BIP34_coinbase_height(height):
+    if height <= 16:
+        res = CScriptOp.encode_op_n(height)
+        # Append dummy to increase scriptSig size above 2
+        # (see bad-cb-length consensus rule)
+        return CScript([res, OP_1])
+    return CScript([CScriptNum(height)])
 
 
 def create_coinbase(height, pubkey=None):
@@ -79,7 +76,8 @@ def create_coinbase(height, pubkey=None):
     otherwise an anyone-can-spend output."""
     coinbase = CTransaction()
     coinbase.vin.append(CTxIn(COutPoint(0, 0xffffffff),
-                              ser_string(serialize_script_num(height)), 0xffffffff))
+                              script_BIP34_coinbase_height(height),
+                              0xffffffff))
     coinbaseoutput = CTxOut()
     coinbaseoutput.nValue = 50 * COIN
     halvings = int(height / 150)  # regtest
@@ -97,8 +95,8 @@ def create_coinbase(height, pubkey=None):
     return coinbase
 
 
-def create_tx_with_script(prevtx, n, script_sig=b"",
-                          amount=1, script_pub_key=CScript()):
+def create_tx_with_script(prevtx, n, script_sig=b"", *,
+                          amount, script_pub_key=CScript()):
     """Return one-input, one-output transaction object
        spending the prevtx's n-th output with the given amount.
 
@@ -113,26 +111,25 @@ def create_tx_with_script(prevtx, n, script_sig=b"",
     return tx
 
 
-def create_transaction(node, txid, to_address, amount):
+def create_transaction(node, txid, to_address, *, amount):
     """ Return signed transaction spending the first output of the
         input txid. Note that the node must be able to sign for the
         output that is being spent, and the node must not be running
         multiple wallets.
     """
-    raw_tx = create_raw_transaction(node, txid, to_address, amount)
+    raw_tx = create_raw_transaction(node, txid, to_address, amount=amount)
     tx = FromHex(CTransaction(), raw_tx)
     return tx
 
 
-def create_raw_transaction(node, txid, to_address, amount):
+def create_raw_transaction(node, txid, to_address, *, amount):
     """ Return raw signed transaction spending the first output of the
         input txid. Note that the node must be able to sign for the
         output that is being spent, and the node must not be running
         multiple wallets.
     """
-    inputs = [{"txid": txid, "vout": 0}]
-    outputs = {to_address: amount}
-    rawtx = node.createrawtransaction(inputs, outputs)
+    rawtx = node.createrawtransaction(
+        inputs=[{"txid": txid, "vout": 0}], outputs={to_address: amount})
     signresult = node.signrawtransactionwithwallet(rawtx)
     assert_equal(signresult["complete"], True)
     return signresult['hex']
@@ -231,3 +228,10 @@ def send_big_transactions(node, utxos, num, fee_multiplier):
         txid = node.sendrawtransaction(signresult["hex"], 0)
         txids.append(txid)
     return txids
+
+
+class TestFrameworkBlockTools(unittest.TestCase):
+    def test_create_coinbase(self):
+        height = 20
+        coinbase_tx = create_coinbase(height=height)
+        assert_equal(CScriptNum.decode(coinbase_tx.vin[0].scriptSig), height)

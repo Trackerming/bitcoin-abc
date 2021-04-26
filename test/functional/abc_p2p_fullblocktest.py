@@ -59,8 +59,12 @@ class FullBlockTest(BitcoinTestFramework):
         self.tip = None
         self.blocks = {}
         self.excessive_block_size = 100 * ONE_MEGABYTE
-        self.extra_args = [['-whitelist=127.0.0.1',
+        self.extra_args = [['-whitelist=noban@127.0.0.1',
                             "-excessiveblocksize={}".format(self.excessive_block_size)]]
+        self.supports_cli = False
+        # The default timeout is not enough when submitting large blocks with
+        # TSAN enabled
+        self.rpc_timeout = 360
 
     def add_options(self, parser):
         super().add_options(parser)
@@ -185,9 +189,6 @@ class FullBlockTest(BitcoinTestFramework):
     def run_test(self):
         node = self.nodes[0]
         node.add_p2p_connection(P2PDataStore())
-
-        # Set the blocksize to 2MB as initial condition
-        node.setexcessiveblock(self.excessive_block_size)
 
         self.genesis_hash = int(node.getbestblockhash(), 16)
         self.block_heights[self.genesis_hash] = 0

@@ -11,10 +11,14 @@
 
 class CBlock;
 class CBlockIndex;
+class ChainstateManager;
 class Config;
 class CTxMemPool;
 class JSONRPCRequest;
 struct NodeContext;
+namespace util {
+class Ref;
+} // namespace util
 
 extern RecursiveMutex cs_main;
 
@@ -29,7 +33,7 @@ UniValue getblockchaininfo(const Config &config, const JSONRPCRequest &request);
 double GetDifficulty(const CBlockIndex *blockindex);
 
 /** Callback for when block tip changed. */
-void RPCNotifyBlockChange(bool ibd, const CBlockIndex *pindex);
+void RPCNotifyBlockChange(const CBlockIndex *pindex);
 
 /** Block description to JSON */
 UniValue blockToJSON(const CBlock &block, const CBlockIndex *tip,
@@ -47,11 +51,8 @@ UniValue blockheaderToJSON(const CBlockIndex *tip,
                            const CBlockIndex *blockindex)
     LOCKS_EXCLUDED(cs_main);
 
-//! Pointer to node state that needs to be declared as a global to be accessible
-//! RPC methods. Due to limitations of the RPC framework, there's currently no
-//! direct way to pass in state to RPC methods without globals.
-extern NodeContext *g_rpc_node;
-
-CTxMemPool &EnsureMemPool();
+NodeContext &EnsureNodeContext(const util::Ref &context);
+CTxMemPool &EnsureMemPool(const util::Ref &context);
+ChainstateManager &EnsureChainman(const util::Ref &context);
 
 #endif // BITCOIN_RPC_BLOCKCHAIN_H

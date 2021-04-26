@@ -6,8 +6,11 @@
 #define BITCOIN_QT_OPTIONSMODEL_H
 
 #include <amount.h>
+#include <qt/guiconstants.h>
 
 #include <QAbstractListModel>
+
+#include <cassert>
 
 namespace interfaces {
 class Node;
@@ -20,6 +23,22 @@ QT_END_NAMESPACE
 extern const char *DEFAULT_GUI_PROXY_HOST;
 static constexpr unsigned short DEFAULT_GUI_PROXY_PORT = 9050;
 
+/**
+ * Convert configured prune target MiB to displayed GB. Round up to avoid
+ * underestimating max disk usage.
+ */
+static inline int PruneMiBtoGB(int64_t mib) {
+    return (mib * 1024 * 1024 + GB_BYTES - 1) / GB_BYTES;
+}
+
+/**
+ * Convert displayed prune target GB to configured MiB. Round down so roundtrip
+ * GB -> MiB -> GB conversion is stable.
+ */
+static inline int64_t PruneGBtoMiB(int gb) {
+    return gb * GB_BYTES / 1024 / 1024;
+}
+
 /** Interface from Qt to configuration data structure for Bitcoin client.
    To Qt, the options are presented as a list with the different options
    laid out vertically.
@@ -30,7 +49,7 @@ class OptionsModel : public QAbstractListModel {
     Q_OBJECT
 
 public:
-    explicit OptionsModel(interfaces::Node &node, QObject *parent = nullptr,
+    explicit OptionsModel(QObject *parent = nullptr,
                           bool resetSettings = false);
 
     enum OptionID {
@@ -82,14 +101,25 @@ public:
         return strOverriddenByCommandLine;
     }
 
+    /* Explicit setters */
+    void SetPruneEnabled(bool prune, bool force = false);
+    void SetPruneTargetGB(int prune_target_gb, bool force = false);
+
     /* Restart flag helper */
     void setRestartRequired(bool fRequired);
     bool isRestartRequired() const;
 
-    interfaces::Node &node() const { return m_node; }
+    interfaces::Node &node() const {
+        assert(m_node);
+        return *m_node;
+    }
+    void setNode(interfaces::Node &node) {
+        assert(!m_node);
+        m_node = &node;
+    }
 
 private:
-    interfaces::Node &m_node;
+    interfaces::Node *m_node = nullptr;
     /* Qt-only settings */
     bool fHideTrayIcon;
     bool fMinimizeToTray;

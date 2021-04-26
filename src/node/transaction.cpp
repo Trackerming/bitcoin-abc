@@ -12,7 +12,6 @@
 #include <node/context.h>
 #include <primitives/txid.h>
 #include <txmempool.h>
-#include <util/validation.h>
 #include <validation.h>
 #include <validationinterface.h>
 
@@ -28,6 +27,7 @@ TransactionError BroadcastTransaction(NodeContext &node, const Config &config,
     // before RPC server is accepting calls, and reset after chain clients and
     // RPC sever are stopped. node.connman should never be null here.
     assert(node.connman);
+    assert(node.mempool);
     std::promise<void> promise;
     TxId txid = tx->GetId();
     bool callback_set = false;
@@ -36,23 +36,23 @@ TransactionError BroadcastTransaction(NodeContext &node, const Config &config,
         LOCK(cs_main);
         // If the transaction is already confirmed in the chain, don't do
         // anything and return early.
-        CCoinsViewCache &view = *pcoinsTip;
+        CCoinsViewCache &view = ::ChainstateActive().CoinsTip();
         for (size_t o = 0; o < tx->vout.size(); o++) {
             const Coin &existingCoin = view.AccessCoin(COutPoint(txid, o));
-            // IsSpent doesnt mean the coin is spent, it means the output
-            // doesnt' exist. So if the output does exist, then this transaction
+            // IsSpent doesn't mean the coin is spent, it means the output
+            // doesn't exist. So if the output does exist, then this transaction
             // exists in the chain.
             if (!existingCoin.IsSpent()) {
                 return TransactionError::ALREADY_IN_CHAIN;
             }
         }
 
-        if (!g_mempool.exists(txid)) {
+        if (!node.mempool->exists(txid)) {
             // Transaction is not already in the mempool. Submit it.
             TxValidationState state;
-            if (!AcceptToMemoryPool(config, g_mempool, state, std::move(tx),
+            if (!AcceptToMemoryPool(config, *node.mempool, state, std::move(tx),
                                     false /* bypass_limits */, max_tx_fee)) {
-                err_string = FormatStateMessage(state);
+                err_string = state.ToString();
                 if (state.IsInvalid()) {
                     if (state.GetResult() ==
                         TxValidationResult::TX_MISSING_INPUTS) {
@@ -88,6 +88,10 @@ TransactionError BroadcastTransaction(NodeContext &node, const Config &config,
     }
 
     if (relay) {
+        // the mempool tracks locally submitted transactions to make a
+        // best-effort of initial broadcast
+        node.mempool->AddUnbroadcastTx(txid);
+
         RelayTransaction(txid, *node.connman);
     }
 

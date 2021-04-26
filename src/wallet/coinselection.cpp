@@ -4,7 +4,6 @@
 
 #include <wallet/coinselection.h>
 
-#include <optional.h>
 #include <util/moneystr.h>
 #include <util/system.h>
 
@@ -133,6 +132,9 @@ bool SelectCoinsBnB(std::vector<OutputGroup> &utxo_pool,
                 best_selection = curr_selection;
                 best_selection.resize(utxo_pool.size());
                 best_waste = curr_waste;
+                if (best_waste == Amount::zero()) {
+                    break;
+                }
             }
             // Remove the excess value as we will be selecting different coins
             // now
@@ -253,7 +255,7 @@ bool KnapsackSolver(const Amount nTargetValue, std::vector<OutputGroup> &groups,
     nValueRet = Amount::zero();
 
     // List of values less than target
-    Optional<OutputGroup> lowest_larger;
+    std::optional<OutputGroup> lowest_larger;
     std::vector<OutputGroup> applicable_groups;
     Amount nTotalLower = Amount::zero();
 

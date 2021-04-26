@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 
+class ArgsManager;
 class Config;
 class CScheduler;
 class CWallet;
@@ -22,14 +23,17 @@ class RPCServer;
 namespace boost {
 class thread_group;
 } // namespace boost
+namespace util {
+class Ref;
+} // namespace util
 
 /** Interrupt threads */
 void Interrupt(NodeContext &node);
 void Shutdown(NodeContext &node);
 //! Initialize the logging infrastructure
-void InitLogging();
+void InitLogging(const ArgsManager &args);
 //! Parameter interaction: change current parameters depending on various rules
-void InitParameterInteraction();
+void InitParameterInteraction(ArgsManager &args);
 
 /**
  * Initialize bitcoin: Basic context setup.
@@ -37,7 +41,7 @@ void InitParameterInteraction();
  * Do not call Shutdown() if this function fails.
  * @pre Parameters should be parsed and config file should be read.
  */
-bool AppInitBasicSetup();
+bool AppInitBasicSetup(ArgsManager &args);
 /**
  * Initialization: parameter interaction.
  * @note This can be done before daemonization.
@@ -45,7 +49,7 @@ bool AppInitBasicSetup();
  * @pre Parameters should be parsed and config file should be read,
  * AppInitBasicSetup should have been called.
  */
-bool AppInitParameterInteraction(Config &config);
+bool AppInitParameterInteraction(Config &config, const ArgsManager &args);
 /**
  * Initialization sanity checks: ecc init, sanity checks, dir lock.
  * @note This can be done before daemonization.
@@ -73,9 +77,9 @@ bool AppInitMain(Config &config, RPCServer &rpcServer,
                  NodeContext &node);
 
 /**
- * Setup the arguments for gArgs.
+ * Register all arguments with the ArgsManager
  */
-void SetupServerArgs();
+void SetupServerArgs(NodeContext &node);
 
 /** Returns licensing information (for -version) */
 std::string LicenseInfo();

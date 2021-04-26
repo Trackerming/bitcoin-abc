@@ -94,14 +94,14 @@ static int ec_privkey_import_der(const secp256k1_context *ctx, uint8_t *out32,
  * publicKey fields are included.
  *
  * privkey must point to an output buffer of length at least
- * CKey::PRIVATE_KEY_SIZE bytes. privkeylen must initially be set to the size of
+ * CKey::SIZE bytes. privkeylen must initially be set to the size of
  * the privkey buffer. Upon return it will be set to the number of bytes used in
  * the buffer. key32 must point to a 32-byte raw private key.
  */
 static int ec_privkey_export_der(const secp256k1_context *ctx, uint8_t *privkey,
                                  size_t *privkeylen, const uint8_t *key32,
-                                 int compressed) {
-    assert(*privkeylen >= CKey::PRIVATE_KEY_SIZE);
+                                 bool compressed) {
+    assert(*privkeylen >= CKey::SIZE);
     secp256k1_pubkey pubkey;
     size_t pubkeylen = 0;
     if (!secp256k1_ec_pubkey_create(ctx, &pubkey, key32)) {
@@ -133,12 +133,12 @@ static int ec_privkey_export_der(const secp256k1_context *ctx, uint8_t *privkey,
         ptr += 32;
         memcpy(ptr, middle, sizeof(middle));
         ptr += sizeof(middle);
-        pubkeylen = CPubKey::COMPRESSED_PUBLIC_KEY_SIZE;
+        pubkeylen = CPubKey::COMPRESSED_SIZE;
         secp256k1_ec_pubkey_serialize(ctx, ptr, &pubkeylen, &pubkey,
                                       SECP256K1_EC_COMPRESSED);
         ptr += pubkeylen;
         *privkeylen = ptr - privkey;
-        assert(*privkeylen == CKey::COMPRESSED_PRIVATE_KEY_SIZE);
+        assert(*privkeylen == CKey::COMPRESSED_SIZE);
     } else {
         static const uint8_t begin[] = {0x30, 0x82, 0x01, 0x13, 0x02,
                                         0x01, 0x01, 0x04, 0x20};
@@ -166,12 +166,12 @@ static int ec_privkey_export_der(const secp256k1_context *ctx, uint8_t *privkey,
         ptr += 32;
         memcpy(ptr, middle, sizeof(middle));
         ptr += sizeof(middle);
-        pubkeylen = CPubKey::PUBLIC_KEY_SIZE;
+        pubkeylen = CPubKey::SIZE;
         secp256k1_ec_pubkey_serialize(ctx, ptr, &pubkeylen, &pubkey,
                                       SECP256K1_EC_UNCOMPRESSED);
         ptr += pubkeylen;
         *privkeylen = ptr - privkey;
-        assert(*privkeylen == CKey::PRIVATE_KEY_SIZE);
+        assert(*privkeylen == CKey::SIZE);
     }
     return 1;
 }
@@ -198,11 +198,10 @@ CPrivKey CKey::GetPrivKey() const {
     CPrivKey privkey;
     int ret;
     size_t privkeylen;
-    privkey.resize(PRIVATE_KEY_SIZE);
-    privkeylen = PRIVATE_KEY_SIZE;
-    ret = ec_privkey_export_der(
-        secp256k1_context_sign, privkey.data(), &privkeylen, begin(),
-        fCompressed ? SECP256K1_EC_COMPRESSED : SECP256K1_EC_UNCOMPRESSED);
+    privkey.resize(SIZE);
+    privkeylen = SIZE;
+    ret = ec_privkey_export_der(secp256k1_context_sign, privkey.data(),
+                                &privkeylen, begin(), fCompressed);
     assert(ret);
     privkey.resize(privkeylen);
     return privkey;
@@ -211,7 +210,7 @@ CPrivKey CKey::GetPrivKey() const {
 CPubKey CKey::GetPubKey() const {
     assert(fValid);
     secp256k1_pubkey pubkey;
-    size_t clen = CPubKey::PUBLIC_KEY_SIZE;
+    size_t clen = CPubKey::SIZE;
     CPubKey result;
     int ret =
         secp256k1_ec_pubkey_create(secp256k1_context_sign, &pubkey, begin());
@@ -270,20 +269,34 @@ bool CKey::SignECDSA(const uint256 &hash, std::vector<uint8_t> &vchSig,
     return true;
 }
 
+static bool DoSignSchnorr(const CKey &key, const uint256 &hash, uint8_t *buf,
+                          uint32_t test_case) {
+    if (!key.IsValid()) {
+        return false;
+    }
+
+    uint8_t extra_entropy[32] = {0};
+    WriteLE32(extra_entropy, test_case);
+
+    int ret = secp256k1_schnorr_sign(
+        secp256k1_context_sign, buf, hash.begin(), key.begin(),
+        secp256k1_nonce_function_rfc6979, test_case ? extra_entropy : nullptr);
+    assert(ret);
+    return true;
+}
+
+bool CKey::SignSchnorr(const uint256 &hash, SchnorrSig &sig,
+                       uint32_t test_case) const {
+    return DoSignSchnorr(*this, hash, sig.data(), test_case);
+}
+
 bool CKey::SignSchnorr(const uint256 &hash, std::vector<uint8_t> &vchSig,
                        uint32_t test_case) const {
     if (!fValid) {
         return false;
     }
-    vchSig.resize(64);
-    uint8_t extra_entropy[32] = {0};
-    WriteLE32(extra_entropy, test_case);
-
-    int ret = secp256k1_schnorr_sign(
-        secp256k1_context_sign, &vchSig[0], hash.begin(), begin(),
-        secp256k1_nonce_function_rfc6979, test_case ? extra_entropy : nullptr);
-    assert(ret);
-    return true;
+    vchSig.resize(CPubKey::SCHNORR_SIZE);
+    return DoSignSchnorr(*this, hash, vchSig.data(), test_case);
 }
 
 bool CKey::VerifyPubKey(const CPubKey &pubkey) const {
@@ -294,10 +307,7 @@ bool CKey::VerifyPubKey(const CPubKey &pubkey) const {
     std::string str = "Bitcoin key verification\n";
     GetRandBytes(rnd, sizeof(rnd));
     uint256 hash;
-    CHash256()
-        .Write((uint8_t *)str.data(), str.size())
-        .Write(rnd, sizeof(rnd))
-        .Finalize(hash.begin());
+    CHash256().Write(MakeUCharSpan(str)).Write(rnd).Finalize(hash);
     std::vector<uint8_t> vchSig;
     SignECDSA(hash, vchSig);
     return pubkey.VerifyECDSA(hash, vchSig);
@@ -315,7 +325,7 @@ bool CKey::SignCompact(const uint256 &hash,
         secp256k1_context_sign, &sig, hash.begin(), begin(),
         secp256k1_nonce_function_rfc6979, nullptr);
     assert(ret);
-    secp256k1_ecdsa_recoverable_signature_serialize_compact(
+    ret = secp256k1_ecdsa_recoverable_signature_serialize_compact(
         secp256k1_context_sign, &vchSig[1], &rec, &sig);
     assert(ret);
     assert(rec != -1);
@@ -346,7 +356,7 @@ bool CKey::Derive(CKey &keyChild, ChainCode &ccChild, unsigned int nChild,
     std::vector<uint8_t, secure_allocator<uint8_t>> vout(64);
     if ((nChild >> 31) == 0) {
         CPubKey pubkey = GetPubKey();
-        assert(pubkey.size() == CPubKey::COMPRESSED_PUBLIC_KEY_SIZE);
+        assert(pubkey.size() == CPubKey::COMPRESSED_SIZE);
         BIP32Hash(cc, nChild, *pubkey.begin(), pubkey.begin() + 1, vout.data());
     } else {
         assert(size() == 32);

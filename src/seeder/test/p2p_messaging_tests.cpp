@@ -24,34 +24,36 @@ std::ostream &operator<<(std::ostream &os, const PeerMessagingState &state) {
     return os;
 }
 
-class TestCSeederNode : public CSeederNode {
+namespace {
+class CSeederNodeTest : public CSeederNode {
 public:
-    TestCSeederNode(const CService &service, std::vector<CAddress> *vAddrIn)
-        : CSeederNode(service, vAddrIn) {
-        SelectParams(CBaseChainParams::REGTEST);
-    }
+    CSeederNodeTest(const CService &service, std::vector<CAddress> *vAddrIn)
+        : CSeederNode(service, vAddrIn) {}
 
     void TestProcessMessage(const std::string &strCommand, CDataStream &message,
                             PeerMessagingState expectedState) {
-        PeerMessagingState ret =
-            CSeederNode::ProcessMessage(strCommand, message);
+        PeerMessagingState ret = ProcessMessage(strCommand, message);
         BOOST_CHECK_EQUAL(ret, expectedState);
     }
+
+    CDataStream getSendBuffer() { return vSend; }
 };
+} // namespace
 
 static const unsigned short SERVICE_PORT = 18444;
 
 struct SeederTestingSetup {
     SeederTestingSetup() {
+        SelectParams(CBaseChainParams::REGTEST);
         CNetAddr ip;
         ip.SetInternal("bitcoin.test");
         CService service = {ip, SERVICE_PORT};
         vAddr.emplace_back(service, ServiceFlags());
-        testNode = std::make_unique<TestCSeederNode>(service, &vAddr);
+        testNode = std::make_unique<CSeederNodeTest>(service, &vAddr);
     }
 
     std::vector<CAddress> vAddr;
-    std::unique_ptr<TestCSeederNode> testNode;
+    std::unique_ptr<CSeederNodeTest> testNode;
 };
 
 BOOST_FIXTURE_TEST_SUITE(p2p_messaging_tests, SeederTestingSetup)
@@ -71,14 +73,12 @@ CreateVersionMessage(int64_t now, CAddress addrTo, CAddress addrFrom,
 
 static const int SEEDER_INIT_VERSION = 0;
 
-BOOST_AUTO_TEST_CASE(seeder_node_version_test) {
+BOOST_AUTO_TEST_CASE(process_version_msg) {
     CService serviceFrom;
-    CAddress addrFrom(serviceFrom,
-                      ServiceFlags(NODE_NETWORK | NODE_BITCOIN_CASH));
+    CAddress addrFrom(serviceFrom, ServiceFlags(NODE_NETWORK));
 
-    CDataStream versionMessage =
-        CreateVersionMessage(time(nullptr), vAddr[0], addrFrom,
-                             GetRequireHeight(), INIT_PROTO_VERSION);
+    CDataStream versionMessage = CreateVersionMessage(
+        GetTime(), vAddr[0], addrFrom, GetRequireHeight(), INIT_PROTO_VERSION);
 
     // Verify the version is set as the initial value
     BOOST_CHECK_EQUAL(testNode->CSeederNode::GetClientVersion(),
@@ -90,6 +90,34 @@ BOOST_AUTO_TEST_CASE(seeder_node_version_test) {
                       versionMessage.GetVersion());
 }
 
+BOOST_AUTO_TEST_CASE(process_verack_msg) {
+    CDataStream verackMessage(SER_NETWORK, 0);
+    verackMessage.SetVersion(INIT_PROTO_VERSION);
+    testNode->TestProcessMessage(NetMsgType::VERACK, verackMessage,
+                                 PeerMessagingState::AwaitingMessages);
+
+    // Seeder should respond with an ADDR message
+    const CMessageHeader::MessageMagic netMagic = Params().NetMagic();
+    CMessageHeader header(netMagic);
+    CDataStream sendBuffer = testNode->getSendBuffer();
+    sendBuffer >> header;
+    BOOST_CHECK(header.IsValidWithoutConfig(netMagic));
+    BOOST_CHECK_EQUAL(header.GetCommand(), NetMsgType::GETADDR);
+
+    // Next message should be GETHEADERS
+    sendBuffer >> header;
+    BOOST_CHECK(header.IsValidWithoutConfig(netMagic));
+    BOOST_CHECK_EQUAL(header.GetCommand(), NetMsgType::GETHEADERS);
+
+    CBlockLocator locator;
+    uint256 hashStop;
+    sendBuffer >> locator >> hashStop;
+    std::vector<BlockHash> expectedLocator = {
+        Params().Checkpoints().mapCheckpoints.rbegin()->second};
+    BOOST_CHECK(locator.vHave == expectedLocator);
+    BOOST_CHECK(hashStop == uint256());
+}
+
 static CDataStream CreateAddrMessage(std::vector<CAddress> sendAddrs,
                                      uint32_t nVersion = INIT_PROTO_VERSION) {
     CDataStream payload(SER_NETWORK, 0);
@@ -98,7 +126,7 @@ static CDataStream CreateAddrMessage(std::vector<CAddress> sendAddrs,
     return payload;
 }
 
-BOOST_AUTO_TEST_CASE(seeder_node_addr_test) {
+BOOST_AUTO_TEST_CASE(process_addr_msg) {
     // vAddrs starts with 1 entry.
     std::vector<CAddress> sendAddrs(ADDR_SOFT_CAP - 1, vAddr[0]);
 

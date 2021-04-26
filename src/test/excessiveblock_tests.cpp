@@ -4,6 +4,8 @@
 
 #include <consensus/consensus.h>
 #include <rpc/server.h>
+#include <util/ref.h>
+#include <util/string.h>
 
 #include <test/util/setup_common.h>
 
@@ -13,9 +15,21 @@
 #include <limits>
 #include <string>
 
-extern UniValue CallRPC(std::string strMethod);
+extern UniValue CallRPC(const std::string &args, const util::Ref &context);
 
-BOOST_FIXTURE_TEST_SUITE(excessiveblock_tests, TestingSetup)
+class ExcessiveBlockTestingSetup : public TestingSetup {
+public:
+    ExcessiveBlockTestingSetup()
+        : TestingSetup(CBaseChainParams::MAIN,
+                       {"-deprecatedrpc=setexcessiveblock"}){};
+
+    UniValue CallRPC(const std::string &args) {
+        const util::Ref context{m_node};
+        return ::CallRPC(args, context);
+    }
+};
+
+BOOST_FIXTURE_TEST_SUITE(excessiveblock_tests, ExcessiveBlockTestingSetup)
 
 BOOST_AUTO_TEST_CASE(excessiveblock_rpc) {
     BOOST_CHECK_NO_THROW(CallRPC("getexcessiveblock"));
@@ -32,38 +46,36 @@ BOOST_AUTO_TEST_CASE(excessiveblock_rpc) {
     BOOST_CHECK_THROW(CallRPC("setexcessiveblock 0"), std::runtime_error);
     BOOST_CHECK_THROW(CallRPC("setexcessiveblock 1"), std::runtime_error);
     BOOST_CHECK_THROW(CallRPC("setexcessiveblock 1000"), std::runtime_error);
-    BOOST_CHECK_THROW(CallRPC(std::string("setexcessiveblock ") +
-                              std::to_string(ONE_MEGABYTE - 1)),
-                      std::runtime_error);
-    BOOST_CHECK_THROW(CallRPC(std::string("setexcessiveblock ") +
-                              std::to_string(ONE_MEGABYTE)),
-                      std::runtime_error);
+    BOOST_CHECK_THROW(
+        CallRPC(std::string("setexcessiveblock ") + ToString(ONE_MEGABYTE - 1)),
+        std::runtime_error);
+    BOOST_CHECK_THROW(
+        CallRPC(std::string("setexcessiveblock ") + ToString(ONE_MEGABYTE)),
+        std::runtime_error);
 
     BOOST_CHECK_NO_THROW(CallRPC(std::string("setexcessiveblock ") +
-                                 std::to_string(ONE_MEGABYTE + 1)));
+                                 ToString(ONE_MEGABYTE + 1)));
     BOOST_CHECK_NO_THROW(CallRPC(std::string("setexcessiveblock ") +
-                                 std::to_string(ONE_MEGABYTE + 10)));
+                                 ToString(ONE_MEGABYTE + 10)));
 
     // Default can be higher than 1MB in future - test it too
     BOOST_CHECK_NO_THROW(CallRPC(std::string("setexcessiveblock ") +
-                                 std::to_string(DEFAULT_MAX_BLOCK_SIZE)));
+                                 ToString(DEFAULT_MAX_BLOCK_SIZE)));
     BOOST_CHECK_NO_THROW(CallRPC(std::string("setexcessiveblock ") +
-                                 std::to_string(DEFAULT_MAX_BLOCK_SIZE * 8)));
+                                 ToString(DEFAULT_MAX_BLOCK_SIZE * 8)));
 
     BOOST_CHECK_NO_THROW(
         CallRPC(std::string("setexcessiveblock ") +
-                std::to_string(std::numeric_limits<int64_t>::max())));
-
-    BOOST_CHECK_THROW(
-        CallRPC(
-            std::string("setexcessiveblock ") +
-            std::to_string(uint64_t(std::numeric_limits<int64_t>::max()) + 1)),
-        std::runtime_error);
+                ToString(std::numeric_limits<int64_t>::max())));
 
     BOOST_CHECK_THROW(
         CallRPC(std::string("setexcessiveblock ") +
-                std::to_string(std::numeric_limits<uint64_t>::max())),
+                ToString(uint64_t(std::numeric_limits<int64_t>::max()) + 1)),
         std::runtime_error);
+
+    BOOST_CHECK_THROW(CallRPC(std::string("setexcessiveblock ") +
+                              ToString(std::numeric_limits<uint64_t>::max())),
+                      std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

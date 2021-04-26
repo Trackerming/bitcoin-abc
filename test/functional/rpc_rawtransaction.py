@@ -57,6 +57,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.setup_clean_chain = True
         self.num_nodes = 3
         self.extra_args = [["-txindex"], ["-txindex"], ["-txindex"]]
+        self.supports_cli = False
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -204,6 +205,57 @@ class RawTransactionsTest(BitcoinTestFramework):
             self.nodes[2].createrawtransaction(inputs=[{'txid': txid, 'vout': 9}], outputs=[
                                                {address: 99}, {address2: 99}, {'data': '99'}]),
         )
+
+        for type in ["legacy"]:
+            addr = self.nodes[0].getnewaddress("", type)
+            addrinfo = self.nodes[0].getaddressinfo(addr)
+            pubkey = addrinfo["scriptPubKey"]
+
+            self.log.info(
+                'sendrawtransaction with missing prevtx info ({})'.format(type))
+
+            # Test `signrawtransactionwithwallet` invalid `prevtxs`
+            inputs = [{'txid': txid, 'vout': 3, 'sequence': 1000}]
+            outputs = {self.nodes[0].getnewaddress(): 1}
+            rawtx = self.nodes[0].createrawtransaction(inputs, outputs)
+
+            prevtx = dict(txid=txid, scriptPubKey=pubkey, vout=3, amount=1)
+            succ = self.nodes[0].signrawtransactionwithwallet(rawtx, [prevtx])
+            assert succ["complete"]
+
+            assert_raises_rpc_error(-8, "Missing amount", self.nodes[0].signrawtransactionwithwallet, rawtx, [
+                {
+                    "txid": txid,
+                    "scriptPubKey": pubkey,
+                    "vout": 3,
+                }
+            ])
+
+            assert_raises_rpc_error(-3, "Missing vout", self.nodes[0].signrawtransactionwithwallet, rawtx, [
+                {
+                    "txid": txid,
+                    "scriptPubKey": pubkey,
+                    "amount": 1,
+                }
+            ])
+            assert_raises_rpc_error(-3, "Missing txid", self.nodes[0].signrawtransactionwithwallet, rawtx, [
+                {
+                    "scriptPubKey": pubkey,
+                    "vout": 3,
+                    "amount": 1,
+                }
+            ])
+            assert_raises_rpc_error(-3, "Missing scriptPubKey", self.nodes[0].signrawtransactionwithwallet, rawtx, [
+                {
+                    "txid": txid,
+                    "vout": 3,
+                    "amount": 1
+                }
+            ])
+
+        #########################################
+        # sendrawtransaction with missing input #
+        #########################################
 
         self.log.info('sendrawtransaction with missing input')
         # won't exists
@@ -430,45 +482,46 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         # getrawtransaction tests
         # 1. valid parameters - only supply txid
-        txHash = rawTx["hash"]
+        txId = rawTx["txid"]
         assert_equal(
-            self.nodes[0].getrawtransaction(txHash), rawTxSigned['hex'])
+            self.nodes[0].getrawtransaction(txId), rawTxSigned['hex'])
 
         # 2. valid parameters - supply txid and 0 for non-verbose
         assert_equal(
-            self.nodes[0].getrawtransaction(txHash, 0), rawTxSigned['hex'])
+            self.nodes[0].getrawtransaction(txId, 0), rawTxSigned['hex'])
 
         # 3. valid parameters - supply txid and False for non-verbose
-        assert_equal(self.nodes[0].getrawtransaction(
-            txHash, False), rawTxSigned['hex'])
+        assert_equal(self.nodes[0].getrawtransaction(txId, False),
+                     rawTxSigned['hex'])
 
         # 4. valid parameters - supply txid and 1 for verbose.
         # We only check the "hex" field of the output so we don't need to
         # update this test every time the output format changes.
-        assert_equal(self.nodes[0].getrawtransaction(
-            txHash, 1)["hex"], rawTxSigned['hex'])
+        assert_equal(self.nodes[0].getrawtransaction(txId, 1)["hex"],
+                     rawTxSigned['hex'])
 
         # 5. valid parameters - supply txid and True for non-verbose
-        assert_equal(self.nodes[0].getrawtransaction(
-            txHash, True)["hex"], rawTxSigned['hex'])
+        assert_equal(self.nodes[0].getrawtransaction(txId, True)["hex"],
+                     rawTxSigned['hex'])
 
         # 6. invalid parameters - supply txid and string "Flase"
-        assert_raises_rpc_error(
-            -1, "not a boolean", self.nodes[0].getrawtransaction, txHash, "False")
+        assert_raises_rpc_error(-1, "not a boolean",
+                                self.nodes[0].getrawtransaction,
+                                txId, "Flase")
 
         # 7. invalid parameters - supply txid and empty array
-        assert_raises_rpc_error(
-            -1, "not a boolean", self.nodes[0].getrawtransaction, txHash, [])
+        assert_raises_rpc_error(-1, "not a boolean",
+                                self.nodes[0].getrawtransaction, txId, [])
 
         # 8. invalid parameters - supply txid and empty dict
         assert_raises_rpc_error(
-            -1, "not a boolean", self.nodes[0].getrawtransaction, txHash, {})
+            -1, "not a boolean", self.nodes[0].getrawtransaction, txId, {})
 
         # Sanity checks on verbose getrawtransaction output
-        rawTxOutput = self.nodes[0].getrawtransaction(txHash, True)
+        rawTxOutput = self.nodes[0].getrawtransaction(txId, True)
         assert_equal(rawTxOutput["hex"], rawTxSigned["hex"])
-        assert_equal(rawTxOutput["txid"], txHash)
-        assert_equal(rawTxOutput["hash"], txHash)
+        assert_equal(rawTxOutput["txid"], txId)
+        assert_equal(rawTxOutput["hash"], txId)
         assert_greater_than(rawTxOutput["size"], 300)
         assert_equal(rawTxOutput["version"], 0x02)
         assert_equal(rawTxOutput["locktime"], 0)
@@ -540,6 +593,7 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         self.log.info('sendrawtransaction/testmempoolaccept with maxfeerate')
 
+        # Test a transaction with a small fee.
         txId = self.nodes[0].sendtoaddress(self.nodes[2].getnewaddress(), 1.0)
         rawTx = self.nodes[0].getrawtransaction(txId, True)
         vout = next(o for o in rawTx['vout']
@@ -547,30 +601,60 @@ class RawTransactionsTest(BitcoinTestFramework):
 
         self.sync_all()
         inputs = [{"txid": txId, "vout": vout['n']}]
-        # 1000 sat fee
-        outputs = {self.nodes[0].getnewaddress(): Decimal("0.99999000")}
+        # Fee 10,000 satoshis, (1 - (10000 sat * 0.00000001 BCH/sat)) = 0.9999
+        outputs = {self.nodes[0].getnewaddress(): Decimal("0.99990000")}
         rawTx = self.nodes[2].createrawtransaction(inputs, outputs)
         rawTxSigned = self.nodes[2].signrawtransactionwithwallet(rawTx)
         assert_equal(rawTxSigned['complete'], True)
-        # 1000 sat fee, ~200 b transaction, fee rate should land around 5 sat/b = 0.00005000 BTC/kB
+        # Fee 10,000 satoshis, ~200 b transaction, fee rate should land around 50 sat/byte = 0.00050000 BCH/kB
         # Thus, testmempoolaccept should reject
         testres = self.nodes[2].testmempoolaccept(
-            [rawTxSigned['hex']], 0.00001000)[0]
+            [rawTxSigned['hex']], 0.00050000)[0]
         assert_equal(testres['allowed'], False)
-        assert_equal(testres['reject-reason'], '256: absurdly-high-fee')
+        assert_equal(testres['reject-reason'], 'absurdly-high-fee')
         # and sendrawtransaction should throw
         assert_raises_rpc_error(-26,
                                 "absurdly-high-fee",
                                 self.nodes[2].sendrawtransaction,
                                 rawTxSigned['hex'],
                                 0.00001000)
-        # And below calls should both succeed
+        # and the following calls should both succeed
         testres = self.nodes[2].testmempoolaccept(
-            rawtxs=[rawTxSigned['hex']], maxfeerate=0.00007000)[0]
+            rawtxs=[rawTxSigned['hex']])[0]
+        assert_equal(testres['allowed'], True)
+        self.nodes[2].sendrawtransaction(hexstring=rawTxSigned['hex'])
+
+        # Test a transaction with a large fee.
+        txId = self.nodes[0].sendtoaddress(self.nodes[2].getnewaddress(), 1.0)
+        rawTx = self.nodes[0].getrawtransaction(txId, True)
+        vout = next(o for o in rawTx['vout']
+                    if o['value'] == Decimal('1.00000000'))
+
+        self.sync_all()
+        inputs = [{"txid": txId, "vout": vout['n']}]
+        # Fee 2,000,000 satoshis, (1 - (2000000 sat * 0.00000001 BCH/sat)) =
+        # 0.98
+        outputs = {self.nodes[0].getnewaddress(): Decimal("0.98000000")}
+        rawTx = self.nodes[2].createrawtransaction(inputs, outputs)
+        rawTxSigned = self.nodes[2].signrawtransactionwithwallet(rawTx)
+        assert_equal(rawTxSigned['complete'], True)
+        # Fee 2,000,000 satoshis, ~100 b transaction, fee rate should land around 20,000 sat/byte = 0.20000000 BCH/kB
+        # Thus, testmempoolaccept should reject
+        testres = self.nodes[2].testmempoolaccept([rawTxSigned['hex']])[0]
+        assert_equal(testres['allowed'], False)
+        assert_equal(testres['reject-reason'], 'absurdly-high-fee')
+        # and sendrawtransaction should throw
+        assert_raises_rpc_error(-26,
+                                "absurdly-high-fee",
+                                self.nodes[2].sendrawtransaction,
+                                rawTxSigned['hex'])
+        # and the following calls should both succeed
+        testres = self.nodes[2].testmempoolaccept(
+            rawtxs=[rawTxSigned['hex']], maxfeerate='0.20000000')[0]
         assert_equal(testres['allowed'], True)
         self.nodes[2].sendrawtransaction(
             hexstring=rawTxSigned['hex'],
-            maxfeerate=0.00007000)
+            maxfeerate='0.20000000')
 
         ##########################################
         # Decoding weird scripts in transactions #

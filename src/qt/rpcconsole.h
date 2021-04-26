@@ -61,12 +61,15 @@ public:
 
     enum MessageClass { MC_ERROR, MC_DEBUG, CMD_REQUEST, CMD_REPLY, CMD_ERROR };
 
-    enum TabTypes {
-        TAB_INFO = 0,
-        TAB_CONSOLE = 1,
-        TAB_GRAPH = 2,
-        TAB_PEERS = 3
-    };
+    enum class TabTypes { INFO, CONSOLE, GRAPH, PEERS };
+
+    std::vector<TabTypes> tabs() const {
+        return {TabTypes::INFO, TabTypes::CONSOLE, TabTypes::GRAPH,
+                TabTypes::PEERS};
+    }
+
+    QString tabTitle(TabTypes tab_type) const;
+    QKeySequence tabShortcut(TabTypes tab_type) const;
 
 protected:
     virtual bool eventFilter(QObject *obj, QEvent *event) override;
@@ -135,7 +138,6 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     // For RPC command executor
-    void stopExecutor();
     void cmdRequest(const QString &command, const WalletModel *wallet_model);
 
 private:
@@ -171,6 +173,9 @@ private:
 
     /** Update UI with latest network info from model. */
     void updateNetworkState();
+
+private Q_SLOTS:
+    void updateAlerts(const QString &warnings);
 };
 
 #endif // BITCOIN_QT_RPCCONSOLE_H

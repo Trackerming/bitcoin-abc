@@ -98,6 +98,11 @@ QList<QModelIndex> getEntryData(QAbstractItemView *view, int column);
 
 void setClipboard(const QString &str);
 
+/**
+ * Determine default data directory for operating system.
+ */
+QString getDefaultDataDirectory();
+
 /** Get save filename, mimics QFileDialog::getSaveFileName, except that it
   appends a default suffix
     when no suffix is provided by the user.
@@ -146,6 +151,9 @@ bool isObscured(QWidget *w);
 
 // Activate, show and raise the widget
 void bringToFront(QWidget *w);
+
+// Set shortcut to close window
+void handleCloseWindowShortcut(QWidget *w);
 
 // Open debug.log
 void openDebugLogfile();
@@ -287,7 +295,7 @@ Q_SIGNALS:
     void keyEscapePressed();
 
 private:
-    bool eventFilter(QObject *object, QEvent *event);
+    bool eventFilter(QObject *object, QEvent *event) override;
 };
 
 /**
@@ -299,6 +307,11 @@ private:
  * introduced.
  */
 int TextWidth(const QFontMetrics &fm, const QString &text);
+
+/**
+ * Writes to debug.log short info about the used Qt and the host system.
+ */
+void LogQtInfo();
 
 // Fix known bugs in QProgressDialog class.
 void PolishProgressDialog(QProgressDialog *dialog);

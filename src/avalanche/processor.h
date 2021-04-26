@@ -6,9 +6,12 @@
 #define BITCOIN_AVALANCHE_PROCESSOR_H
 
 #include <avalanche/node.h>
+#include <avalanche/peermanager.h>
 #include <avalanche/protocol.h>
 #include <blockindexworkcomparator.h>
 #include <eventloop.h>
+#include <interfaces/chain.h>
+#include <interfaces/handler.h>
 #include <key.h>
 #include <rwcollection.h>
 
@@ -21,11 +24,17 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
+class ArgsManager;
 class Config;
 class CBlockIndex;
 class CScheduler;
+class PeerManager;
+struct bilingual_str;
+
+using NodePeerManager = PeerManager;
 
 /**
  * Is avalanche enabled by default.
@@ -58,6 +67,7 @@ static constexpr int AVALANCHE_MAX_INFLIGHT_POLL = 10;
 
 namespace avalanche {
 
+class Delegation;
 class PeerManager;
 class Proof;
 
@@ -187,6 +197,7 @@ namespace {
 
 class Processor {
     CConnman *connman;
+    NodePeerManager *nodePeerManager;
     std::chrono::milliseconds queryTimeoutDuration;
 
     /**
@@ -235,15 +246,35 @@ class Processor {
 
     RWCollection<QuerySet> queries;
 
-    /** The key used to sign responses. */
+    /** Data required to participate. */
+    struct PeerData;
+    std::unique_ptr<PeerData> peerData;
     CKey sessionKey;
 
     /** Event loop machinery. */
     EventLoop eventLoop;
 
+    /** Registered interfaces::Chain::Notifications handler. */
+    class NotificationsHandler;
+    std::unique_ptr<interfaces::Handler> chainNotificationsHandler;
+
+    /**
+     * Flag indicating that the proof must be registered at first new block
+     * after IBD
+     */
+    bool mustRegisterProof = false;
+
+    Processor(interfaces::Chain &chain, CConnman *connmanIn,
+              NodePeerManager *nodePeerManagerIn,
+              std::unique_ptr<PeerData> peerDataIn, CKey sessionKeyIn);
+
 public:
-    explicit Processor(CConnman *connmanIn);
     ~Processor();
+
+    static std::unique_ptr<Processor>
+    MakeProcessor(const ArgsManager &argsman, interfaces::Chain &chain,
+                  CConnman *connman, NodePeerManager *nodePeerManager,
+                  bilingual_str &error);
 
     void setQueryTimeoutDuration(std::chrono::milliseconds d) {
         queryTimeoutDuration = d;
@@ -258,10 +289,34 @@ public:
     bool registerVotes(NodeId nodeid, const Response &response,
                        std::vector<BlockUpdate> &updates);
 
-    bool addNode(NodeId nodeid, const Proof &proof, const CPubKey &pubkey);
+    bool addNode(NodeId nodeid, const Proof &proof,
+                 const Delegation &delegation);
     bool forNode(NodeId nodeid, std::function<bool(const Node &n)> func) const;
 
-    CPubKey getSessionPubKey() const { return sessionKey.GetPubKey(); }
+    CPubKey getSessionPubKey() const;
+    bool sendHello(CNode *pfrom) const;
+
+    /**
+     * Build and return the challenge whose signature we expect a peer to
+     * include in his AVAHELLO message.
+     */
+    uint256 buildRemoteSighash(CNode *pfrom) const;
+
+    /**
+     * Get the local proof used by this node.
+     *
+     * @returns Proof for this node.
+     * @throws a std::runtime_error if there is no proof set for this node
+     */
+    const Proof getProof() const;
+
+    /*
+     * Return whether the avalanche service flag should be set.
+     */
+    bool isAvalancheServiceAvailable() { return !!peerData; }
+
+    std::vector<avalanche::Peer> getPeers() const;
+    std::vector<NodeId> getNodeIdsForPeer(PeerId peerId) const;
 
     bool startEventLoop(CScheduler &scheduler);
     bool stopEventLoop();
@@ -271,6 +326,12 @@ private:
     void clearTimedoutRequests();
     std::vector<CInv> getInvsForNextPoll(bool forPoll = true);
     NodeId getSuitableNodeToQuery();
+
+    /**
+     * Build and return the challenge whose signature is included in the
+     * AVAHELLO message that we send to a peer.
+     */
+    uint256 buildLocalSighash(CNode *pfrom) const;
 
     friend struct ::avalanche::AvalancheTest;
 };

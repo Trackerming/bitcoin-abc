@@ -1,5 +1,5 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2016 The Bitcoin Core developers
+// Copyright (c) 2009-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -64,14 +64,9 @@ public:
     bool IsValidWithoutConfig(const MessageMagic &magic) const;
     bool IsOversized(const Config &config) const;
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(pchMessageStart);
-        READWRITE(pchCommand);
-        READWRITE(nMessageSize);
-        READWRITE(pchChecksum);
+    SERIALIZE_METHODS(CMessageHeader, obj) {
+        READWRITE(obj.pchMessageStart, obj.pchCommand, obj.nMessageSize,
+                  obj.pchChecksum);
     }
 
     MessageMagic pchMessageStart;
@@ -104,6 +99,19 @@ extern const char *VERACK;
  * @see https://bitcoin.org/en/developer-reference#addr
  */
 extern const char *ADDR;
+/**
+ * The addrv2 message relays connection information for peers on the network
+ * just like the addr message, but is extended to allow gossiping of longer node
+ * addresses (see BIP155).
+ */
+extern const char *ADDRV2;
+/**
+ * The sendaddrv2 message signals support for receiving ADDRV2 messages
+ * (BIP155). It also implies that its sender can encode as ADDRV2 and would send
+ * ADDRV2 instead of ADDR to a peer that has signaled ADDRV2 support by sending
+ * SENDADDRV2.
+ */
+extern const char *SENDADDRV2;
 /**
  * The inv message (inventory message) transmits one or more inventories of
  * objects known to the transmitting peer.
@@ -181,7 +189,7 @@ extern const char *PONG;
 /**
  * The notfound message is a reply to a getdata message which requested an
  * object the receiving node does not have available for relay.
- * @ince protocol version 70001.
+ * @since protocol version 70001.
  * @see https://bitcoin.org/en/developer-reference#notfound
  */
 extern const char *NOTFOUND;
@@ -212,13 +220,6 @@ extern const char *FILTERADD;
  * @see https://bitcoin.org/en/developer-reference#filterclear
  */
 extern const char *FILTERCLEAR;
-/**
- * The reject message informs the receiving node that one of its previous
- * messages has been rejected.
- * @since protocol version 70002 as described by BIP61.
- * @see https://bitcoin.org/en/developer-reference#reject
- */
-extern const char *REJECT;
 /**
  * Indicates that a node prefers to receive new block announcements via a
  * "headers" message rather than an "inv".
@@ -259,6 +260,47 @@ extern const char *GETBLOCKTXN;
  */
 extern const char *BLOCKTXN;
 /**
+ * getcfilters requests compact filters for a range of blocks.
+ * Only available with service bit NODE_COMPACT_FILTERS as described by
+ * BIP 157 & 158.
+ */
+extern const char *GETCFILTERS;
+/**
+ * cfilter is a response to a getcfilters request containing a single compact
+ * filter.
+ */
+extern const char *CFILTER;
+/**
+ * getcfheaders requests a compact filter header and the filter hashes for a
+ * range of blocks, which can then be used to reconstruct the filter headers
+ * for those blocks.
+ * Only available with service bit NODE_COMPACT_FILTERS as described by
+ * BIP 157 & 158.
+ */
+extern const char *GETCFHEADERS;
+/**
+ * cfheaders is a response to a getcfheaders request containing a filter header
+ * and a vector of filter hashes for each subsequent block in the requested
+ * range.
+ */
+extern const char *CFHEADERS;
+/**
+ * getcfcheckpt requests evenly spaced compact filter headers, enabling
+ * parallelized download and validation of the headers between them.
+ * Only available with service bit NODE_COMPACT_FILTERS as described by
+ * BIP 157 & 158.
+ */
+extern const char *GETCFCHECKPT;
+/**
+ * cfcheckpt is a response to a getcfcheckpt request containing a vector of
+ * evenly spaced filter headers for blocks on the requested chain.
+ */
+extern const char *CFCHECKPT;
+/**
+ * Contains a delegation and a signature.
+ */
+extern const char *AVAHELLO;
+/**
  * Contains an avalanche::Poll.
  * Peer should respond with "avaresponse" message.
  */
@@ -268,6 +310,12 @@ extern const char *AVAPOLL;
  * Sent in response to a "avapoll" message.
  */
 extern const char *AVARESPONSE;
+/**
+ * Contains an avalanche::Proof.
+ * Sent in response to a "getdata" message with inventory type
+ * MSG_AVA_PROOF.
+ */
+extern const char *AVAPROOF;
 
 /**
  * Indicate if the message is used to transmit the content of a block.
@@ -277,13 +325,14 @@ extern const char *AVARESPONSE;
 bool IsBlockLike(const std::string &strCommand);
 }; // namespace NetMsgType
 
-/* Get a vector of all valid message types (see above) */
+/** Get a vector of all valid message types (see above) */
 const std::vector<std::string> &getAllNetMessageTypes();
 
 /**
  * nServices flags.
  */
 enum ServiceFlags : uint64_t {
+    // NOTE: When adding here, be sure to update serviceFlagToStr too
     // Nothing
     NODE_NONE = 0,
     // NODE_NETWORK means that the node is capable of serving the complete block
@@ -300,16 +349,15 @@ enum ServiceFlags : uint64_t {
     // advertising this bit, but no longer do as of protocol version 70011 (=
     // NO_BLOOM_VERSION)
     NODE_BLOOM = (1 << 2),
-    // NODE_XTHIN means the node supports Xtreme Thinblocks. If this is turned
-    // off then the node will not service nor make xthin requests.
-    NODE_XTHIN = (1 << 4),
-    // NODE_BITCOIN_CASH means the node supports Bitcoin Cash and the
-    // associated consensus rule changes.
-    // This service bit is intended to be used prior until some time after the
-    // UAHF activation when the Bitcoin Cash network has adequately separated.
-    // TODO: remove (free up) the NODE_BITCOIN_CASH service bit once no longer
-    // needed.
-    NODE_BITCOIN_CASH = (1 << 5),
+    // Bit 4 was NODE_XTHIN, removed in v0.22.12
+
+    // Bit 5 was NODE_BITCOIN_CASH, removed in v0.22.8
+
+    // NODE_COMPACT_FILTERS means the node will service basic block filter
+    // requests.
+    // See BIP157 and BIP158 for details on how this is implemented.
+    NODE_COMPACT_FILTERS = (1 << 6),
+
     // NODE_NETWORK_LIMITED means the same as NODE_NETWORK with the limitation
     // of only serving the last 288 (2 day) blocks
     // See BIP159 for details on how this is implemented.
@@ -330,6 +378,13 @@ enum ServiceFlags : uint64_t {
     // preconsensus mechanism.
     NODE_AVALANCHE = (1 << 24),
 };
+
+/**
+ * Convert service flags (a bitmask of NODE_*) to human readable strings.
+ * It supports unknown service flags which will be returned as "UNKNOWN[...]".
+ * @param[in] flags multiple NODE_* bitwise-OR-ed together
+ */
+std::vector<std::string> serviceFlagsToStr(const uint64_t flags);
 
 /**
  * Gets the set of service flags which are "desirable" for a given peer.
@@ -384,40 +439,56 @@ static inline bool MayHaveUsefulAddressDB(ServiceFlags services) {
  * A CService with information about it as peer.
  */
 class CAddress : public CService {
+    static constexpr uint32_t TIME_INIT{100000000};
+
 public:
-    CAddress();
-    explicit CAddress(CService ipIn, ServiceFlags nServicesIn);
+    CAddress() : CService{} {};
+    CAddress(CService ipIn, ServiceFlags nServicesIn)
+        : CService{ipIn}, nServices{nServicesIn} {};
+    CAddress(CService ipIn, ServiceFlags nServicesIn, uint32_t nTimeIn)
+        : CService{ipIn}, nTime{nTimeIn}, nServices{nServicesIn} {};
 
     void Init();
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        if (ser_action.ForRead()) Init();
+    SERIALIZE_METHODS(CAddress, obj) {
+        SER_READ(obj, obj.nTime = TIME_INIT);
         int nVersion = s.GetVersion();
-        if (s.GetType() & SER_DISK) READWRITE(nVersion);
+        if (s.GetType() & SER_DISK) {
+            READWRITE(nVersion);
+        }
         if ((s.GetType() & SER_DISK) ||
-            (nVersion >= CADDR_TIME_VERSION && !(s.GetType() & SER_GETHASH)))
-            READWRITE(nTime);
-        uint64_t nServicesInt = nServices;
-        READWRITE(nServicesInt);
-        nServices = static_cast<ServiceFlags>(nServicesInt);
-        READWRITEAS(CService, *this);
+            (nVersion != INIT_PROTO_VERSION && !(s.GetType() & SER_GETHASH))) {
+            // The only time we serialize a CAddress object without nTime is in
+            // the initial VERSION messages which contain two CAddress records.
+            // At that point, the serialization version is INIT_PROTO_VERSION.
+            // After the version handshake, serialization version is >=
+            // MIN_PEER_PROTO_VERSION and all ADDR messages are serialized with
+            // nTime.
+            READWRITE(obj.nTime);
+        }
+        if (nVersion & ADDRV2_FORMAT) {
+            uint64_t services_tmp;
+            SER_WRITE(obj, services_tmp = obj.nServices);
+            READWRITE(Using<CompactSizeFormatter<false>>(services_tmp));
+            SER_READ(obj,
+                     obj.nServices = static_cast<ServiceFlags>(services_tmp));
+        } else {
+            READWRITE(Using<CustomUintFormatter<8>>(obj.nServices));
+        }
+        READWRITEAS(CService, obj);
     }
 
-    // TODO: make private (improves encapsulation)
-public:
-    ServiceFlags nServices;
-
     // disk and network only
-    unsigned int nTime;
+    uint32_t nTime{TIME_INIT};
+
+    ServiceFlags nServices{NODE_NONE};
 };
 
 /** getdata message type flags */
 const uint32_t MSG_TYPE_MASK = 0xffffffff >> 3;
 
-/** getdata / inv message types.
+/**
+ * getdata / inv message types.
  * These numbers are defined by the protocol. When adding a new value, be sure
  * to mention it in the respective BIP.
  */
@@ -430,6 +501,7 @@ enum GetDataMsg {
     MSG_FILTERED_BLOCK = 3,
     //! Defined in BIP152
     MSG_CMPCT_BLOCK = 4,
+    MSG_AVA_PROOF = 0x1f000001,
 };
 
 /**
@@ -439,21 +511,13 @@ enum GetDataMsg {
  */
 class CInv {
 public:
-    // TODO: make private (improves encapsulation)
     uint32_t type;
     uint256 hash;
 
-public:
     CInv() : type(0), hash() {}
     CInv(uint32_t typeIn, const uint256 &hashIn) : type(typeIn), hash(hashIn) {}
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(type);
-        READWRITE(hash);
-    }
+    SERIALIZE_METHODS(CInv, obj) { READWRITE(obj.type, obj.hash); }
 
     friend bool operator<(const CInv &a, const CInv &b) {
         return a.type < b.type || (a.type == b.type && a.hash < b.hash);

@@ -65,10 +65,9 @@ class TxDownloadTest(BitcoinTestFramework):
         txid = 0xdeadbeef
 
         self.log.info("Announce the txid from each incoming peer to node 0")
-        msg = msg_inv([CInv(t=1, h=txid)])
+        msg = msg_inv([CInv(t=MSG_TX, h=txid)])
         for p in self.nodes[0].p2ps:
-            p.send_message(msg)
-            p.sync_with_ping()
+            p.send_and_ping(msg)
 
         outstanding_peer_index = [i for i in range(len(self.nodes[0].p2ps))]
 
@@ -110,10 +109,9 @@ class TxDownloadTest(BitcoinTestFramework):
 
         self.log.info(
             "Announce the transaction to all nodes from all {} incoming peers, but never send it".format(NUM_INBOUND))
-        msg = msg_inv([CInv(t=1, h=txid)])
+        msg = msg_inv([CInv(t=MSG_TX, h=txid)])
         for p in self.peers:
-            p.send_message(msg)
-            p.sync_with_ping()
+            p.send_and_ping(msg)
 
         self.log.info("Put the tx in node 0's mempool")
         self.nodes[0].sendrawtransaction(tx)
@@ -143,7 +141,7 @@ class TxDownloadTest(BitcoinTestFramework):
         with mininode_lock:
             p.tx_getdata_count = 0
 
-        p.send_message(msg_inv([CInv(t=1, h=i) for i in txids]))
+        p.send_message(msg_inv([CInv(t=MSG_TX, h=i) for i in txids]))
         wait_until(lambda: p.tx_getdata_count >=
                    MAX_GETDATA_IN_FLIGHT, lock=mininode_lock)
         with mininode_lock:
@@ -151,7 +149,7 @@ class TxDownloadTest(BitcoinTestFramework):
 
         self.log.info(
             "Now check that if we send a NOTFOUND for a transaction, we'll get one more request")
-        p.send_message(msg_notfound(vec=[CInv(t=1, h=txids[0])]))
+        p.send_message(msg_notfound(vec=[CInv(t=MSG_TX, h=txids[0])]))
         wait_until(
             lambda: p.tx_getdata_count >= MAX_GETDATA_IN_FLIGHT + 1,
             timeout=10,
@@ -167,6 +165,10 @@ class TxDownloadTest(BitcoinTestFramework):
         wait_until(lambda: p.tx_getdata_count == MAX_GETDATA_IN_FLIGHT + 2)
         self.nodes[0].setmocktime(0)
 
+    def test_spurious_notfound(self):
+        self.log.info('Check that spurious notfound is ignored')
+        self.nodes[0].p2ps[0].send_message(msg_notfound(vec=[CInv(MSG_TX, 1)]))
+
     def run_test(self):
         # Setup the p2p connections
         self.peers = []
@@ -176,6 +178,8 @@ class TxDownloadTest(BitcoinTestFramework):
 
         self.log.info(
             "Nodes are setup with {} incoming connections each".format(NUM_INBOUND))
+
+        self.test_spurious_notfound()
 
         # Test the in-flight max first, because we want no transactions in
         # flight ahead of this test.

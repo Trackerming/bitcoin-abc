@@ -12,8 +12,15 @@
 #include <validationinterface.h>
 
 extern RecursiveMutex cs_main;
+extern RecursiveMutex g_cs_orphans;
 
+class BlockTransactionsRequest;
+class BlockValidationState;
+class CBlockHeader;
+class CTxMemPool;
+class ChainstateManager;
 class Config;
+class TxValidationState;
 
 /**
  * Default for -maxorphantx, maximum number of orphan transactions kept in
@@ -25,30 +32,25 @@ static const unsigned int DEFAULT_MAX_ORPHAN_TRANSACTIONS = 100;
  * reconstruction.
  */
 static const unsigned int DEFAULT_BLOCK_RECONSTRUCTION_EXTRA_TXN = 100;
+static const bool DEFAULT_PEERBLOCKFILTERS = false;
+/** Threshold for marking a node to be discouraged, e.g. disconnected and added
+ * to the discouragement filter. */
+static const int DISCOURAGEMENT_THRESHOLD{100};
 
-/** Default for BIP61 (sending reject messages) */
-static constexpr bool DEFAULT_ENABLE_BIP61{false};
-
-class PeerLogicValidation final : public CValidationInterface,
-                                  public NetEventsInterface {
-private:
-    CConnman *const connman;
-    BanMan *const m_banman;
-
-    bool SendRejectsAndCheckIfBanned(CNode *pnode, bool enable_bip61)
-        EXCLUSIVE_LOCKS_REQUIRED(cs_main);
-
+class PeerManager final : public CValidationInterface,
+                          public NetEventsInterface {
 public:
-    PeerLogicValidation(CConnman *connman, BanMan *banman,
-                        CScheduler &scheduler, bool enable_bip61);
+    PeerManager(const CChainParams &chainparams, CConnman &connman,
+                BanMan *banman, CScheduler &scheduler,
+                ChainstateManager &chainman, CTxMemPool &pool);
 
     /**
      * Overridden from CValidationInterface.
      */
-    void
-    BlockConnected(const std::shared_ptr<const CBlock> &pblock,
-                   const CBlockIndex *pindexConnected,
-                   const std::vector<CTransactionRef> &vtxConflicted) override;
+    void BlockConnected(const std::shared_ptr<const CBlock> &pblock,
+                        const CBlockIndex *pindexConnected) override;
+    void BlockDisconnected(const std::shared_ptr<const CBlock> &block,
+                           const CBlockIndex *pindex) override;
     /**
      * Overridden from CValidationInterface.
      */
@@ -97,7 +99,7 @@ public:
      * Consider evicting an outbound peer based on the amount of time they've
      * been behind our tip.
      */
-    void ConsiderEviction(CNode *pto, int64_t time_in_seconds)
+    void ConsiderEviction(CNode &pto, int64_t time_in_seconds)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
     /**
      * Evict extra outbound peers. If we think our tip may be stale, connect to
@@ -112,16 +114,96 @@ public:
     void EvictExtraOutboundPeers(int64_t time_in_seconds)
         EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
+    /** Process a single message from a peer. Public for fuzz testing */
+    void ProcessMessage(const Config &config, CNode &pfrom,
+                        const std::string &msg_type, CDataStream &vRecv,
+                        const std::chrono::microseconds time_received,
+                        const std::atomic<bool> &interruptMsgProc);
+
+    /**
+     * Increment peer's misbehavior score. If the new value >=
+     * DISCOURAGEMENT_THRESHOLD, mark the node to be discouraged, meaning the
+     * peer might be disconnected and added to the discouragement filter. Public
+     * for unit testing.
+     */
+    void Misbehaving(const NodeId pnode, const int howmuch,
+                     const std::string &message);
+
+    /**
+     * Retrieve unbroadcast transactions from the mempool and reattempt
+     * sending to peers
+     */
+    void ReattemptInitialBroadcast(CScheduler &scheduler) const;
+
 private:
+    // overloaded variant of above to operate on CNode*s
+    void Misbehaving(const CNode &node, int howmuch,
+                     const std::string &message) {
+        Misbehaving(node.GetId(), howmuch, message);
+    }
+
+    /**
+     * Potentially mark a node discouraged based on the contents of a
+     * BlockValidationState object
+     *
+     * @param[in] via_compact_block this bool is passed in because
+     * net_processing should punish peers differently depending on whether the
+     * data was provided in a compact block message or not. If the compact block
+     * had a valid header, but contained invalid txs, the peer should not be
+     * punished. See BIP 152.
+     *
+     * @return Returns true if the peer was punished (probably disconnected)
+     */
+    bool MaybePunishNodeForBlock(NodeId nodeid,
+                                 const BlockValidationState &state,
+                                 bool via_compact_block,
+                                 const std::string &message = "");
+
+    /**
+     * Potentially disconnect and discourage a node based on the contents of a
+     * TxValidationState object
+     *
+     * @return Returns true if the peer was punished (probably disconnected)
+     */
+    bool MaybePunishNodeForTx(NodeId nodeid, const TxValidationState &state,
+                              const std::string &message = "");
+
+    /**
+     * Maybe disconnect a peer and discourage future connections from its
+     * address.
+     *
+     * @param[in]   pnode     The node to check.
+     * @return                True if the peer was marked for disconnection in
+     * this function
+     */
+    bool MaybeDiscourageAndDisconnect(CNode &pnode);
+
+    void ProcessOrphanTx(const Config &config, std::set<TxId> &orphan_work_set)
+        EXCLUSIVE_LOCKS_REQUIRED(cs_main, g_cs_orphans);
+    /** Process a single headers message from a peer. */
+    void ProcessHeadersMessage(const Config &config, CNode &pfrom,
+                               const std::vector<CBlockHeader> &headers,
+                               bool via_compact_block);
+
+    void SendBlockTransactions(CNode &pfrom, const CBlock &block,
+                               const BlockTransactionsRequest &req);
+
+    const CChainParams &m_chainparams;
+    CConnman &m_connman;
+    /**
+     * Pointer to this node's banman. May be nullptr - check existence before
+     * dereferencing.
+     */
+    BanMan *const m_banman;
+    ChainstateManager &m_chainman;
+    CTxMemPool &m_mempool;
+
     //! Next time to check for stale tip
     int64_t m_stale_tip_check_time;
-
-    /** Enable BIP61 (sending reject messages) */
-    const bool m_enable_bip61;
 };
 
 struct CNodeStateStats {
-    int nMisbehavior = 0;
+    int m_misbehavior_score = 0;
     int nSyncHeight = -1;
     int nCommonHeight = -1;
     std::vector<int> vHeightInFlight;
@@ -129,8 +211,6 @@ struct CNodeStateStats {
 
 /** Get statistics from node state */
 bool GetNodeStateStats(NodeId nodeid, CNodeStateStats &stats);
-/** Increase a node's misbehavior score. */
-void Misbehaving(NodeId nodeid, int howmuch, const std::string &reason = "");
 
 /** Relay transaction to every node */
 void RelayTransaction(const TxId &txid, const CConnman &connman);

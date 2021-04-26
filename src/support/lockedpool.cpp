@@ -10,11 +10,6 @@
 #endif
 
 #ifdef WIN32
-#ifdef _WIN32_WINNT
-#undef _WIN32_WINNT
-#endif
-#define _WIN32_WINNT 0x0501
-#define WIN32_LEAN_AND_MEAN 1
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -33,7 +28,6 @@
 #endif
 
 LockedPoolManager *LockedPoolManager::_instance = nullptr;
-std::once_flag LockedPoolManager::init_flag;
 
 /*******************************************************************************/
 // Utilities
@@ -255,8 +249,16 @@ void *PosixLockedPageAllocator::AllocateLocked(size_t len,
     len = align_up(len, page_size);
     addr = mmap(nullptr, len, PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (addr == MAP_FAILED) {
+        return nullptr;
+    }
     if (addr) {
         *lockingSuccess = mlock(addr, len) == 0;
+#if defined(MADV_DONTDUMP) // Linux
+        madvise(addr, len, MADV_DONTDUMP);
+#elif defined(MADV_NOCORE) // FreeBSD
+        madvise(addr, len, MADV_NOCORE);
+#endif
     }
     return addr;
 }

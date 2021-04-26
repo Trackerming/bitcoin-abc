@@ -9,6 +9,10 @@
 
 #include <univalue.h>
 
+namespace util {
+class Ref;
+} // namespace util
+
 UniValue JSONRPCRequestObj(const std::string &strMethod, const UniValue &params,
                            const UniValue &id);
 UniValue JSONRPCReplyObj(const UniValue &result, const UniValue &error,
@@ -24,7 +28,7 @@ bool GetAuthCookie(std::string *cookie_out);
 /** Delete RPC authentication cookie from disk */
 void DeleteAuthCookie();
 /** Parse JSON-RPC batch reply into a vector */
-std::vector<UniValue> JSONRPCProcessBatchReply(const UniValue &in, size_t num);
+std::vector<UniValue> JSONRPCProcessBatchReply(const UniValue &in);
 
 class JSONRPCRequest {
 public:
@@ -35,8 +39,19 @@ public:
     std::string URI;
     std::string authUser;
     std::string peerAddr;
+    const util::Ref &context;
 
-    JSONRPCRequest() : id(NullUniValue), params(NullUniValue), fHelp(false) {}
+    JSONRPCRequest(const util::Ref &contextIn)
+        : id(NullUniValue), params(NullUniValue), fHelp(false),
+          context(contextIn) {}
+
+    //! Initializes request information from another request object and the
+    //! given context. The implementation should be updated if any members are
+    //! added or removed above.
+    JSONRPCRequest(const JSONRPCRequest &other, const util::Ref &contextIn)
+        : id(other.id), strMethod(other.strMethod), params(other.params),
+          fHelp(other.fHelp), URI(other.URI), authUser(other.authUser),
+          peerAddr(other.peerAddr), context(contextIn) {}
 
     void parse(const UniValue &valRequest);
 };

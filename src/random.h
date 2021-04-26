@@ -70,9 +70,27 @@
  * Thread-safe.
  */
 void GetRandBytes(uint8_t *buf, int num) noexcept;
+/**
+ * Generate a uniform random integer in the range [0..range).
+ * Precondition: range > 0
+ */
 uint64_t GetRand(uint64_t nMax) noexcept;
-std::chrono::microseconds
-GetRandMicros(std::chrono::microseconds duration_max) noexcept;
+/**
+ * Generate a uniform random duration in the range [0..max).
+ * Precondition: max.count() > 0
+ */
+template <typename D>
+D GetRandomDuration(typename std::common_type<D>::type max) noexcept {
+    // Having the compiler infer the template argument from the function
+    // argument is dangerous, because the desired return value generally has a
+    // different type than the function argument. So std::common_type is used to
+    // force the call site to specify the type of the return value.
+
+    assert(max.count() > 0);
+    return D{GetRand(max.count())};
+};
+constexpr auto GetRandMicros = GetRandomDuration<std::chrono::microseconds>;
+constexpr auto GetRandMillis = GetRandomDuration<std::chrono::milliseconds>;
 int GetRandInt(int nMax) noexcept;
 uint256 GetRandHash() noexcept;
 
@@ -93,6 +111,14 @@ void GetStrongRandBytes(uint8_t *buf, int num) noexcept;
  * Thread-safe.
  */
 void RandAddPeriodic() noexcept;
+
+/**
+ * Gathers entropy from the low bits of the time at which events occur. Should
+ * be called with a uint32_t describing the event at the time an event occurs.
+ *
+ * Thread-safe.
+ */
+void RandAddEvent(const uint32_t event_info) noexcept;
 
 /**
  * Fast randomness source. This is seeded once with secure random data, but
@@ -171,8 +197,12 @@ public:
         }
     }
 
-    /** Generate a random integer in the range [0..range). */
+    /**
+     * Generate a random integer in the range [0..range).
+     * Precondition: range > 0.
+     */
     uint64_t randrange(uint64_t range) noexcept {
+        assert(range);
         --range;
         int bits = CountBits(range);
         while (true) {
@@ -188,6 +218,9 @@ public:
 
     /** Generate a random 32-bit integer. */
     uint32_t rand32() noexcept { return randbits(32); }
+
+    /** generate a random uint160. */
+    uint160 rand160() noexcept;
 
     /** generate a random uint256. */
     uint256 rand256() noexcept;
@@ -232,7 +265,7 @@ template <typename I, typename R> void Shuffle(I first, I last, R &&rng) {
  * sure that the underlying OS APIs for all platforms support the number.
  * (many cap out at 256 bytes).
  */
-static const ssize_t NUM_OS_RANDOM_BYTES = 32;
+static const int NUM_OS_RANDOM_BYTES = 32;
 
 /**
  * Get 32 bytes of system entropy. Do not use this in application code: use

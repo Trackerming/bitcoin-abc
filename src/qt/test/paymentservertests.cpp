@@ -15,6 +15,7 @@
 
 #include <test/util/setup_common.h>
 
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
 
@@ -63,9 +64,14 @@ static SendCoinsRecipient handleRequest(PaymentServer *server,
 }
 
 void PaymentServerTests::paymentServerTests() {
+    // This is necessary to initialize openssl on the test framework
+    // (at least on Darwin).
+    SSL_library_init();
+
     BasicTestingSetup testing_setup(CBaseChainParams::MAIN);
     auto node = interfaces::MakeNode();
-    OptionsModel optionsModel(*node);
+    OptionsModel optionsModel;
+    optionsModel.setNode(*node);
     PaymentServer *server = new PaymentServer(nullptr, false);
     X509_STORE *caStore = X509_STORE_new();
     X509_STORE_add_cert(caStore, parse_b64der_cert(caCert1_BASE64));

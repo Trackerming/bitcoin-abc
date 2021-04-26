@@ -45,8 +45,6 @@ enum bloomflags {
 class CBloomFilter {
 private:
     std::vector<uint8_t> vData;
-    bool isFull;
-    bool isEmpty;
     uint32_t nHashFuncs;
     uint32_t nTweak;
     uint8_t nFlags;
@@ -68,17 +66,10 @@ public:
      */
     CBloomFilter(const uint32_t nElements, const double nFPRate,
                  const uint32_t nTweak, uint8_t nFlagsIn);
-    CBloomFilter()
-        : isFull(true), isEmpty(false), nHashFuncs(0), nTweak(0), nFlags(0) {}
+    CBloomFilter() : nHashFuncs(0), nTweak(0), nFlags(0) {}
 
-    ADD_SERIALIZE_METHODS;
-
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream &s, Operation ser_action) {
-        READWRITE(vData);
-        READWRITE(nHashFuncs);
-        READWRITE(nTweak);
-        READWRITE(nFlags);
+    SERIALIZE_METHODS(CBloomFilter, obj) {
+        READWRITE(obj.vData, obj.nHashFuncs, obj.nTweak, obj.nFlags);
     }
 
     void insert(const std::vector<uint8_t> &vKey);
@@ -88,9 +79,6 @@ public:
     bool contains(const std::vector<uint8_t> &vKey) const;
     bool contains(const COutPoint &outpoint) const;
     bool contains(const uint256 &hash) const;
-
-    void clear();
-    void reset(const uint32_t nNewTweak);
 
     //! True if the size is <= MAX_BLOOM_FILTER_SIZE and the number of hash
     //! functions is <= MAX_HASH_FUNCS (catch a filter which was just
@@ -112,9 +100,6 @@ public:
     bool IsRelevantAndUpdate(const CTransaction &tx) {
         return MatchAndInsertOutputs(tx) || MatchInputs(tx);
     }
-
-    //! Checks for empty and full filters to avoid wasting cpu
-    void UpdateEmptyFull();
 };
 
 /**
@@ -133,9 +118,6 @@ public:
  */
 class CRollingBloomFilter {
 public:
-    // A random bloom filter calls GetRand() at creation time. Don't create
-    // global CRollingBloomFilter objects, as they may be constructed before the
-    // randomizer is properly initialized.
     CRollingBloomFilter(const uint32_t nElements, const double nFPRate);
 
     void insert(const std::vector<uint8_t> &vKey);

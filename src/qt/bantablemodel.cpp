@@ -4,14 +4,16 @@
 
 #include <qt/bantablemodel.h>
 
-#include <qt/clientmodel.h>
-
 #include <interfaces/node.h>
+#include <net_types.h> // For banmap_t
 
-#include <algorithm>
+#include <utility>
 
-#include <QDebug>
+#include <QDateTime>
 #include <QList>
+#include <QLocale>
+#include <QModelIndex>
+#include <QVariant>
 
 bool BannedNodeLessThan::operator()(const CCombinedBan &left,
                                     const CCombinedBan &right) const {
@@ -76,8 +78,8 @@ public:
     }
 };
 
-BanTableModel::BanTableModel(interfaces::Node &node, ClientModel *parent)
-    : QAbstractTableModel(parent), m_node(node), clientModel(parent) {
+BanTableModel::BanTableModel(interfaces::Node &node, QObject *parent)
+    : QAbstractTableModel(parent), m_node(node) {
     columns << tr("IP/Netmask") << tr("Banned Until");
     priv.reset(new BanTablePriv());
 
@@ -113,7 +115,7 @@ QVariant BanTableModel::data(const QModelIndex &index, int role) const {
             case Bantime:
                 QDateTime date = QDateTime::fromMSecsSinceEpoch(0);
                 date = date.addSecs(rec->banEntry.nBanUntil);
-                return date.toString(Qt::SystemLocaleLongDate);
+                return date.toString(QLocale().dateTimeFormat());
         }
     }
 

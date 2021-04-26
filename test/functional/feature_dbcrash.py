@@ -52,6 +52,7 @@ class ChainstateWriteCrashTest(BitcoinTestFramework):
         self.num_nodes = 4
         self.setup_clean_chain = False
         self.rpc_timeout = 480
+        self.supports_cli = False
 
         # Set -maxmempool=0 to turn off mempool memory sharing with dbcache
         # Set -rpcservertimeout=900 to reduce socket disconnects in this
@@ -61,7 +62,7 @@ class ChainstateWriteCrashTest(BitcoinTestFramework):
                           "-noparkdeepreorg"]
 
         # Set different crash ratios and cache sizes.  Note that not all of
-        # -dbcache goes to pcoinsTip.
+        # -dbcache goes to the in-memory coins cache.
         self.node0_args = ["-dbcrashratio=8", "-dbcache=4"] + self.base_args
         self.node1_args = ["-dbcrashratio=16", "-dbcache=8"] + self.base_args
         self.node2_args = ["-dbcrashratio=24", "-dbcache=16"] + self.base_args

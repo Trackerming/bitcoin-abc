@@ -3,6 +3,7 @@
 
 #include <interfaces/chain.h>
 #include <interfaces/node.h>
+#include <qt/clientmodel.h>
 #include <qt/editaddressdialog.h>
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
@@ -14,6 +15,7 @@
 #include <key.h>
 #include <key_io.h>
 #include <wallet/wallet.h>
+#include <walletinitinterface.h>
 
 #include <QApplication>
 #include <QMessageBox>
@@ -56,10 +58,12 @@ void EditAddressAndSubmit(EditAddressDialog *dialog, const QString &label,
  */
 void TestAddAddressesToSendBook(interfaces::Node &node) {
     TestChain100Setup test;
+    node.setContext(&test.m_node);
 
-    std::shared_ptr<CWallet> wallet = std::make_shared<CWallet>(
-        Params(), node.context()->chain.get(), WalletLocation(),
-        WalletDatabase::CreateMock());
+    std::shared_ptr<CWallet> wallet =
+        std::make_shared<CWallet>(node.context()->chain.get(), WalletLocation(),
+                                  WalletDatabase::CreateMock());
+    wallet->SetupLegacyScriptPubKeyMan();
 
     bool firstRun;
     wallet->LoadWallet(firstRun);
@@ -99,7 +103,7 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
 
     auto check_addbook_size = [&wallet](int expected_size) {
         LOCK(wallet->cs_wallet);
-        QCOMPARE(static_cast<int>(wallet->mapAddressBook.size()),
+        QCOMPARE(static_cast<int>(wallet->m_address_book.size()),
                  expected_size);
     };
 
@@ -109,10 +113,11 @@ void TestAddAddressesToSendBook(interfaces::Node &node) {
     // Initialize relevant QT models.
     std::unique_ptr<const PlatformStyle> platformStyle(
         PlatformStyle::instantiate("other"));
-    OptionsModel optionsModel(node);
+    OptionsModel optionsModel;
+    ClientModel clientModel(node, &optionsModel);
     AddWallet(wallet);
-    WalletModel walletModel(interfaces::MakeWallet(wallet), node,
-                            platformStyle.get(), &optionsModel);
+    WalletModel walletModel(interfaces::MakeWallet(wallet), clientModel,
+                            platformStyle.get());
     RemoveWallet(wallet);
     EditAddressDialog editAddressDialog(EditAddressDialog::NewSendingAddress);
     editAddressDialog.setModel(walletModel.getAddressTableModel());
@@ -154,10 +159,10 @@ void AddressBookTests::addressBookTests() {
         // framework when it tries to look up unimplemented cocoa functions,
         // and fails to handle returned nulls
         // (https://bugreports.qt.io/browse/QTBUG-49686).
-        QWARN(
-            "Skipping AddressBookTests on mac build with 'minimal' platform "
-            "set due to Qt bugs. To run AppTests, invoke with 'test_bitcoin-qt "
-            "-platform cocoa' on mac, or else use a linux or windows build.");
+        QWARN("Skipping AddressBookTests on mac build with 'minimal' platform "
+              "set due to Qt bugs. To run AppTests, invoke with "
+              "'QT_QPA_PLATFORM=cocoa test_bitcoin-qt' on mac, or else use a "
+              "linux or windows build.");
         return;
     }
 #endif

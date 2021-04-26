@@ -8,8 +8,6 @@
 This module calls down into individual test cases via subprocess. It will
 forward all unrecognized arguments onto the individual test scripts.
 
-Functional tests are disabled on Windows by default. Use --force to run them anyway.
-
 For a description of arguments recognized by test scripts, see
 `test/functional/test_framework/test_framework.py:BitcoinTestFramework.main`.
 
@@ -32,6 +30,7 @@ import json
 import threading
 import multiprocessing
 from queue import Queue, Empty
+import unittest
 
 # Formatting. Default colors to empty strings.
 BOLD, GREEN, RED, GREY = ("", ""), ("", ""), ("", ""), ("", "")
@@ -46,10 +45,10 @@ except UnicodeDecodeError:
     CROSS = "x "
     CIRCLE = "o "
 
-if os.name != 'nt' or sys.getwindowsversion() >= (10, 0, 14393):
+if os.name != 'nt' or sys.getwindowsversion() >= (10, 0, 14393):  # type: ignore
     if os.name == 'nt':
         import ctypes
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.windll.kernel32  # type: ignore
         ENABLE_VIRTUAL_TERMINAL_PROCESSING = 4
         STD_OUTPUT_HANDLE = -11
         STD_ERROR_HANDLE = -12
@@ -75,6 +74,13 @@ if os.name != 'nt' or sys.getwindowsversion() >= (10, 0, 14393):
 TEST_EXIT_PASSED = 0
 TEST_EXIT_SKIPPED = 77
 
+TEST_FRAMEWORK_MODULES = [
+    "address",
+    "blocktools",
+    "messages",
+    "script",
+]
+
 NON_SCRIPTS = [
     # These are python files that live in the functional tests directory, but
     # are not test scripts.
@@ -93,6 +99,7 @@ TEST_PARAMS = {
     #    testName
     #    testName --param1 --param2
     #    testname --param3
+    "rpc_bind.py": [["--ipv4"], ["--ipv6"], ["--nonloopback"]],
     "rpc_deriveaddresses.py": [["--usecli"]],
     "wallet_txn_doublespend.py": [["--mineblock"]],
     "wallet_txn_clone.py": [["--mineblock"]],
@@ -136,7 +143,7 @@ class TestCase():
         testdir = os.path.join("{}", "{}_{}").format(
             self.tmpdir, re.sub(".py$", "", test_argv[0]), portseed)
         tmpdir_arg = ["--tmpdir={}".format(testdir)]
-        time0 = time.time()
+        start_time = time.time()
         process = subprocess.Popen([sys.executable, os.path.join(self.tests_dir, test_argv[0])] + test_argv[1:] + self.flags + portseed_arg + tmpdir_arg,
                                    universal_newlines=True,
                                    stdout=log_stdout,
@@ -155,7 +162,7 @@ class TestCase():
             status = "Failed"
 
         return TestResult(self.test_num, self.test_case, testdir, status,
-                          time.time() - time0, stdout, stderr)
+                          time.time() - start_time, stdout, stderr)
 
 
 def on_ci():
@@ -174,6 +181,9 @@ def main():
     build_dir = config["environment"]["BUILDDIR"]
     tests_dir = os.path.join(src_dir, 'test', 'functional')
 
+    # SRCDIR must be set for cdefs.py to find and parse consensus.h
+    os.environ["SRCDIR"] = src_dir
+
     # Parse arguments and pass through unrecognised args
     parser = argparse.ArgumentParser(add_help=False,
                                      usage='%(prog)s [test_runner.py options] [script options] [scripts]',
@@ -181,8 +191,10 @@ def main():
                                      epilog='''
     Help text and arguments for individual test script:''',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--combinedlogslen', '-c', type=int, default=0,
-                        help='print a combined log (of length n lines) from all test nodes and test framework to the console on failure.')
+    parser.add_argument('--combinedlogslen', '-c', type=int, default=0, metavar='n',
+                        help='On failure, print a log (of length n lines) to '
+                             'the console, combined from the test framework '
+                             'and all test nodes.')
     parser.add_argument('--coverage', action='store_true',
                         help='generate a basic coverage report for the RPC interface')
     parser.add_argument(
@@ -191,8 +203,6 @@ def main():
                         help='run the extended test suite in addition to the basic tests')
     parser.add_argument('--cutoff', type=int, default=DEFAULT_EXTENDED_CUTOFF,
                         help='set the cutoff runtime for what tests get run')
-    parser.add_argument('--force', '-f', action='store_true',
-                        help='run tests even on platforms where they are disabled by default (e.g. windows).')
     parser.add_argument('--help', '-h', '-?',
                         action='store_true', help='print help text and exit')
     parser.add_argument('--jobs', '-j', type=int, default=DEFAULT_JOBS,
@@ -228,12 +238,6 @@ def main():
     tmpdir = os.path.join("{}", "test_runner_₿₵_🏃_{:%Y%m%d_%H%M%S}").format(
         args.tmpdirprefix, datetime.datetime.now())
 
-    # If we fixed the command-line and filename encoding issue on Windows,
-    # these two lines could be removed
-    if config["environment"]["EXEEXT"] == ".exe":
-        tmpdir = os.path.join("{}", "test_runner_{:%Y%m%d_%H%M%S}").format(
-            args.tmpdirprefix, datetime.datetime.now())
-
     os.makedirs(tmpdir)
 
     logging.debug("Temporary test directory at {}".format(tmpdir))
@@ -242,13 +246,6 @@ def main():
         args.junitoutput = os.path.join(tmpdir, args.junitoutput)
 
     enable_bitcoind = config["components"].getboolean("ENABLE_BITCOIND")
-
-    if config["environment"]["EXEEXT"] == ".exe" and not args.force:
-        # https://github.com/bitcoin/bitcoin/commit/d52802551752140cf41f0d9a225a43e84404d3e9
-        # https://github.com/bitcoin/bitcoin/pull/5677#issuecomment-136646964
-        print(
-            "Tests currently disabled on Windows by default. Use --force option to enable")
-        sys.exit(0)
 
     if not enable_bitcoind:
         print("No functional tests to run.")
@@ -270,14 +267,14 @@ def main():
         # in the all_scripts list. Accept the name with or without .py
         # extension.
         individual_tests = [
-            re.sub(r"\.py$", "", t) + ".py" for t in tests if not t.endswith('*')]
+            re.sub(r"\.py$", "", test) + ".py" for test in tests if not test.endswith('*')]
         test_list = []
-        for t in individual_tests:
-            if t in all_scripts:
-                test_list.append(t)
+        for test in individual_tests:
+            if test in all_scripts:
+                test_list.append(test)
             else:
                 print("{}WARNING!{} Test '{}' not found in full test list.".format(
-                    BOLD[1], BOLD[0], t))
+                    BOLD[1], BOLD[0], test))
 
         # Allow for wildcard at the end of the name, so a single input can
         # match multiple tests
@@ -289,18 +286,15 @@ def main():
         # do not cut off explicitly specified tests
         cutoff = sys.maxsize
     else:
-        # No individual tests have been specified.
-        # Run all tests that do not exceed
+        # Run base tests only
         test_list = all_scripts
-        cutoff = args.cutoff
-        if args.extended:
-            cutoff = sys.maxsize
+        cutoff = sys.maxsize if args.extended else args.cutoff
 
     # Remove the test cases that the user has explicitly asked to exclude.
     if args.exclude:
-        tests_excl = [re.sub(r"\.py$", "", t)
-                      + (".py" if ".py" not in t else "") for t in args.exclude.split(',')]
-        for exclude_test in tests_excl:
+        exclude_tests = [re.sub(r"\.py$", "", test)
+                         + (".py" if ".py" not in test else "") for test in args.exclude.split(',')]
+        for exclude_test in exclude_tests:
             if exclude_test in test_list:
                 test_list.remove(exclude_test)
             else:
@@ -375,6 +369,20 @@ def run_tests(test_list, build_dir, tests_dir, junitoutput, tmpdir, num_jobs, te
         print("{}WARNING!{} There is a cache directory here: {}. If tests fail unexpectedly, try deleting the cache directory.".format(
             BOLD[1], BOLD[0], cache_dir))
 
+    # Test Framework Tests
+    print("Running Unit Tests for Test Framework Modules")
+    test_framework_tests = unittest.TestSuite()
+    for module in TEST_FRAMEWORK_MODULES:
+        test_framework_tests.addTest(
+            unittest.TestLoader().loadTestsFromName(
+                "test_framework.{}".format(module)))
+    result = unittest.TextTestRunner(
+        verbosity=1, failfast=True).run(test_framework_tests)
+    if not result.wasSuccessful():
+        logging.debug(
+            "Early exiting after failure in TestFramework unit tests")
+        sys.exit(False)
+
     flags = ['--cachedir={}'.format(cache_dir)] + args
 
     if enable_coverage:
@@ -395,10 +403,10 @@ def run_tests(test_list, build_dir, tests_dir, junitoutput, tmpdir, num_jobs, te
             raise
 
     # Run Tests
-    time0 = time.time()
+    start_time = time.time()
     test_results = execute_test_processes(
         num_jobs, test_list, tests_dir, tmpdir, flags, failfast)
-    runtime = time.time() - time0
+    runtime = time.time() - start_time
 
     max_len_name = len(max(test_list, key=len))
     print_results(test_results, tests_dir, max_len_name,
@@ -541,7 +549,7 @@ def execute_test_processes(
     resultCollector.start()
 
     # Start some worker threads
-    for j in range(num_jobs):
+    for job in range(num_jobs):
         t = threading.Thread(target=handle_test_cases)
         t.daemon = True
         t.start()
@@ -558,7 +566,7 @@ def execute_test_processes(
 
     # Flush our queues so the threads exit
     update_queue.put(None)
-    for j in range(num_jobs):
+    for job in range(num_jobs):
         job_queue.put(None)
 
     return test_results
@@ -714,9 +722,10 @@ def get_tests_to_run(test_list, test_params, cutoff, src_timings):
         params = test_params.get(test_name)
         if params is not None:
             tests_with_params.extend(
-                [test_name + " " + " ".join(p) for p in params])
+                [test_name + " " + " ".join(parameter) for parameter in params])
 
-    result = [t for t in tests_with_params if get_test_time(t) <= cutoff]
+    result = [
+        test for test in tests_with_params if get_test_time(test) <= cutoff]
     result.sort(key=lambda x: (-get_test_time(x), x))
     return result
 
@@ -776,17 +785,18 @@ class RPCCoverage():
         if not os.path.isfile(coverage_ref_filename):
             raise RuntimeError("No coverage reference found")
 
-        with open(coverage_ref_filename, 'r', encoding="utf8") as f:
-            all_cmds.update([i.strip() for i in f.readlines()])
+        with open(coverage_ref_filename, 'r', encoding="utf8") as file:
+            all_cmds.update([line.strip() for line in file.readlines()])
 
-        for root, dirs, files in os.walk(self.dir):
+        for root, _, files in os.walk(self.dir):
             for filename in files:
                 if filename.startswith(coverage_file_prefix):
                     coverage_filenames.add(os.path.join(root, filename))
 
         for filename in coverage_filenames:
-            with open(filename, 'r', encoding="utf8") as f:
-                covered_cmds.update([i.strip() for i in f.readlines()])
+            with open(filename, 'r', encoding="utf8") as file:
+                covered_cmds.update([line.strip()
+                                     for line in file.readlines()])
 
         return all_cmds - covered_cmds
 
@@ -839,8 +849,8 @@ class Timings():
 
     def load_timings(self):
         if os.path.isfile(self.timing_file):
-            with open(self.timing_file, encoding="utf8") as f:
-                return json.load(f)
+            with open(self.timing_file, encoding="utf8") as file:
+                return json.load(file)
         else:
             return []
 
@@ -866,13 +876,14 @@ class Timings():
     def save_timings(self, test_results):
         # we only save test that have passed - timings for failed test might be
         # wrong (timeouts or early fails)
-        passed_results = [t for t in test_results if t.status == 'Passed']
-        new_timings = list(map(lambda t: {'name': t.name, 'time': TimeResolution.seconds(t.time)},
+        passed_results = [
+            test for test in test_results if test.status == 'Passed']
+        new_timings = list(map(lambda test: {'name': test.name, 'time': TimeResolution.seconds(test.time)},
                                passed_results))
         merged_timings = self.get_merged_timings(new_timings)
 
-        with open(self.timing_file, 'w', encoding="utf8") as f:
-            json.dump(merged_timings, f, indent=True)
+        with open(self.timing_file, 'w', encoding="utf8") as file:
+            json.dump(merged_timings, file, indent=True)
 
 
 class TimeResolution:

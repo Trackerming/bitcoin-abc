@@ -6,15 +6,18 @@
 
 
 from build import BuildStatus, BuildTarget
+from deepmerge import always_merger
 from flask import abort, Flask, request
 from functools import wraps
 import hashlib
 import hmac
+import logging
 import os
 from phabricator_wrapper import (
     BITCOIN_ABC_PROJECT_PHID,
 )
 import re
+import shelve
 from shieldio import RasterBadge
 from shlex import quote
 from teamcity_wrapper import TeamcityRequestException
@@ -29,23 +32,32 @@ UNRESOLVED = "UNRESOLVED"
 
 LANDBOT_BUILD_TYPE = "BitcoinAbcLandBot"
 
+# FIXME: figure out why the base64 logo started causing phabricator to
+# get a 502 response with the embedded {image} link.
+# In the meantime use the TeamCity icon from simpleicons.org
+#
+# with open(os.path.join(os.path.dirname(__file__), 'resources', 'teamcity-icon-16.base64'), 'rb') as icon:
+#     BADGE_TC_BASE = RasterBadge(
+#         label='TC build',
+#         logo='data:image/png;base64,{}'.format(
+#             icon.read().strip().decode('utf-8')),
+#     )
+BADGE_TC_BASE = RasterBadge(
+    label='TC build',
+    logo='TeamCity'
+)
 
-with open(os.path.join(os.path.dirname(__file__), 'resources', 'teamcity-icon-16.base64'), 'rb') as icon:
-    BADGE_TC_BASE = RasterBadge(
-        label='TC build',
-        logo='data:image/png;base64,{}'.format(
-            icon.read().strip().decode('utf-8')),
-    )
-
-BADGE_TRAVIS_BASE = RasterBadge(
-    label='Travis build',
-    logo='travis'
+BADGE_CIRRUS_BASE = RasterBadge(
+    label='Cirrus build',
+    logo='cirrus-ci'
 )
 
 
-def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
+def create_server(tc, phab, slackbot, cirrus,
+                  db_file_no_ext=None, jsonEncoder=None):
     # Create Flask app for use as decorator
     app = Flask("abcbot")
+    app.logger.setLevel(logging.INFO)
 
     # json_encoder can be overridden for testing
     if jsonEncoder:
@@ -53,16 +65,56 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
 
     phab.setLogger(app.logger)
     tc.set_logger(app.logger)
-    travis.set_logger(app.logger)
+    cirrus.set_logger(app.logger)
 
-    # A collection of the known build targets
-    create_server.diff_targets = {}
+    # Optionally persistable database
+    create_server.db = {
+        # A collection of the known build targets
+        'diff_targets': {},
+        # Build status panel data
+        'panel_data': {},
+        # Whether the last status check of master was green
+        'master_is_green': True,
+        # Coverage panel data
+        'coverage_data': {},
+    }
 
-    # Build status panel data
-    create_server.panel_data = {}
+    # If db_file_no_ext is not None, attempt to restore old database state
+    if db_file_no_ext:
+        app.logger.info(
+            "Loading persisted state database with base name '{}'...".format(db_file_no_ext))
+        try:
+            with shelve.open(db_file_no_ext, flag='r') as db:
+                for key in create_server.db.keys():
+                    if key in db:
+                        create_server.db[key] = db[key]
+                        app.logger.info(
+                            "Restored key '{}' from persisted state".format(key))
+        except BaseException:
+            app.logger.info(
+                "Persisted state database with base name '{}' could not be opened. A new one will be created when written to.".format(db_file_no_ext))
+        app.logger.info("Done")
+    else:
+        app.logger.warning(
+            "No database file specified. State will not be persisted.")
 
-    # Whether the last status check of master was green
-    create_server.master_is_green = True
+    def persistDatabase(fn):
+        @wraps(fn)
+        def decorated_function(*args, **kwargs):
+            fn_ret = fn(*args, **kwargs)
+
+            # Persist database after executed decorated function
+            if db_file_no_ext:
+                with shelve.open(db_file_no_ext) as db:
+                    for key in create_server.db.keys():
+                        db[key] = create_server.db[key]
+                    app.logger.debug("Persisted current state")
+            else:
+                app.logger.debug(
+                    "No database file specified. Persisting state is being skipped.")
+
+            return fn_ret
+        return decorated_function
 
     # This decorator specifies an HMAC secret environment variable to use for verifying
     # requests for the given route. Currently, we're using Phabricator to trigger these
@@ -130,7 +182,7 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
 
             # Only link PRs that do not reside in code blocks
             if multilineCodeBlockDelimiters % 2 == 0:
-                def replacePRWithLink(baseUrl):
+                def replacePRWithLink(baseUrl, prefix):
                     def repl(match):
                         nonlocal foundPRs
                         # This check matches identation-based code blocks (2+ spaces)
@@ -145,41 +197,35 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                             foundPRs += 1
                             PRNum = match.group(1)
 
-                            remaining = ''
-                            if len(match.groups()) >= 2:
-                                remaining = match.group(2)
-
-                            return '[[{}/{} | PR{}]]{}'.format(
-                                baseUrl, PRNum, PRNum, remaining)
+                            return '[[{}/{} | {}#{}]]'.format(
+                                baseUrl, PRNum, prefix, PRNum)
                     return repl
 
-                line = re.sub(
-                    r'PR[ #]*(\d{3}\d+)',
-                    replacePRWithLink(
-                        'https://github.com/bitcoin/bitcoin/pull'),
-                    line)
+                githubUrl = 'https://github.com/{}/pull'
+                supportedRepos = dict()
+                supportedRepos = {
+                    'core': githubUrl.format('bitcoin/bitcoin'),
+                    'core-gui': githubUrl.format('bitcoin-core/gui'),
+                    'secp256k1': githubUrl.format('bitcoin-core/secp256k1')
+                }
 
-                # Be less aggressive about serving libsecp256k1 links. Check
-                # for some reference to the name first.
-                if re.search('secp', line, re.IGNORECASE):
-                    line = re.sub(r'PR[ #]*(\d{2}\d?)([^\d]|$)', replacePRWithLink(
-                        'https://github.com/bitcoin-core/secp256k1/pull'), line)
+                for prefix, url in supportedRepos.items():
+                    regEx = r'{}#(\d*)'.format(prefix)
+                    line = re.sub(regEx, replacePRWithLink(
+                        url, prefix), line)
 
             newSummary += line
 
         if foundPRs > 0:
             phab.updateRevisionSummary(revisionId, newSummary)
-            commentMessage = ("[Bot Message]\n"
-                              "One or more PR numbers were detected in the summary.\n"
-                              "Links to those PRs have been inserted into the summary for reference.")
-            phab.commentOnRevision(revisionId, commentMessage)
 
         return SUCCESS, 200
 
     @app.route("/build", methods=['POST'])
+    @persistDatabase
     def build():
         buildTypeId = request.args.get('buildTypeId', None)
-        ref = request.args.get('ref', 'master')
+        ref = request.args.get('ref', 'refs/heads/master')
 
         PHID = request.args.get('PHID', None)
 
@@ -192,16 +238,16 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
             }]
 
         build_id = tc.trigger_build(buildTypeId, ref, PHID, properties)['id']
-        if PHID in create_server.diff_targets:
-            build_target = create_server.diff_targets[PHID]
+        if PHID in create_server.db['diff_targets']:
+            build_target = create_server.db['diff_targets'][PHID]
         else:
             build_target = BuildTarget(PHID)
         build_target.queue_build(build_id, abcBuildName)
-        create_server.diff_targets[PHID] = build_target
-
+        create_server.db['diff_targets'][PHID] = build_target
         return SUCCESS, 200
 
     @app.route("/buildDiff", methods=['POST'])
+    @persistDatabase
     def build_diff():
         def get_mandatory_argument(argument):
             value = request.args.get(argument, None)
@@ -216,22 +262,58 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
 
         staging_ref = get_mandatory_argument('stagingRef')
         target_phid = get_mandatory_argument('targetPHID')
+        revision_id = get_mandatory_argument('revisionId')
 
         # Get the configuration from master
         config = yaml.safe_load(phab.get_file_content_from_master(
             "contrib/teamcity/build-configurations.yml"))
 
-        # Get a list of the builds that should run on diffs
-        builds = [
-            k for k,
-            v in config.get(
-                'builds',
-                {}).items() if v.get(
-                'runOnDiff',
-                False)]
+        # Get the list of changed files
+        changedFiles = phab.get_revision_changed_files(
+            revision_id=revision_id)
 
-        if target_phid in create_server.diff_targets:
-            build_target = create_server.diff_targets[target_phid]
+        # Get a list of the templates, if any
+        templates = config.get("templates", {})
+
+        # Get a list of the builds that should run on diffs
+        builds = []
+        for build_name, v in config.get('builds', {}).items():
+            # Merge the templates
+            template_config = {}
+            template_names = v.get("templates", [])
+            for template_name in template_names:
+                # Raise an error if the template does not exist
+                if template_name not in templates:
+                    raise AssertionError(
+                        "Build {} configuration inherits from template {}, but the template does not exist.".format(
+                            build_name,
+                            template_name
+                        )
+                    )
+                always_merger.merge(
+                    template_config, templates.get(template_name))
+            # Retrieve the full build configuration by applying the templates
+            build_config = always_merger.merge(template_config, v)
+
+            diffRegexes = build_config.get('runOnDiffRegex', None)
+            if build_config.get('runOnDiff', False) or diffRegexes is not None:
+                if diffRegexes:
+                    # If the regex matches at least one changed file, add this
+                    # build to the list.
+                    def regexesMatchAnyFile(regexes, files):
+                        for regex in regexes:
+                            for filename in files:
+                                if re.match(regex, filename):
+                                    return True
+                        return False
+
+                    if regexesMatchAnyFile(diffRegexes, changedFiles):
+                        builds.append(build_name)
+                else:
+                    builds.append(build_name)
+
+        if target_phid in create_server.db['diff_targets']:
+            build_target = create_server.db['diff_targets'][target_phid]
         else:
             build_target = BuildTarget(target_phid)
 
@@ -239,6 +321,9 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
             properties = [{
                 'name': 'env.ABC_BUILD_NAME',
                 'value': build_name,
+            }, {
+                'name': 'env.ABC_REVISION',
+                'value': revision_id,
             }]
             build_id = tc.trigger_build(
                 'BitcoinABC_BitcoinAbcStaging',
@@ -247,7 +332,11 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                 properties)['id']
             build_target.queue_build(build_id, build_name)
 
-        create_server.diff_targets[target_phid] = build_target
+        if len(build_target.builds) > 0:
+            create_server.db['diff_targets'][target_phid] = build_target
+        else:
+            phab.update_build_target_status(build_target)
+
         return SUCCESS, 200
 
     @app.route("/land", methods=['POST'])
@@ -287,7 +376,7 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
         }]
         output = tc.trigger_build(
             LANDBOT_BUILD_TYPE,
-            'master',
+            'refs/heads/master',
             UNRESOLVED,
             properties)
         if output:
@@ -334,12 +423,6 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
         if not comments:
             return SUCCESS, 200
 
-        # In order to prevent DoS, only ABC members are allowed to call the bot
-        # to trigger builds.
-        # FIXME implement a better anti DoS filter.
-        abc_members = phab.get_project_members(BITCOIN_ABC_PROJECT_PHID)
-        comments = [c for c in comments if c["authorPHID"] in abc_members]
-
         # Check if there is a specially crafted comment that should trigger a
         # CI build. Format:
         # @bot <build_name> [build_name ...]
@@ -350,14 +433,79 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
             # Escape to prevent shell injection and remove duplicates
             return [quote(token) for token in list(set(tokens))]
 
+        def next_token(current_token):
+            next_token = {
+                "": "PHID-TOKN-coin-1",
+                "PHID-TOKN-coin-1": "PHID-TOKN-coin-2",
+                "PHID-TOKN-coin-2": "PHID-TOKN-coin-3",
+                "PHID-TOKN-coin-3": "PHID-TOKN-coin-4",
+                "PHID-TOKN-coin-4": "PHID-TOKN-like-1",
+                "PHID-TOKN-like-1": "PHID-TOKN-heart-1",
+                "PHID-TOKN-heart-1": "PHID-TOKN-like-1",
+            }
+            return next_token[current_token] if current_token in next_token else "PHID-TOKN-like-1"
+
+        def is_user_allowed_to_trigger_builds(user_PHID, current_token):
+            if current_token not in [
+                    "", "PHID-TOKN-coin-1", "PHID-TOKN-coin-2", "PHID-TOKN-coin-3"]:
+                return False
+
+            return all(role in phab.get_user_roles(user_PHID) for role in [
+                "verified",
+                "approved",
+                "activated",
+            ])
+
+        # Anti DoS filter
+        #
+        # Users are allowed to trigger builds if these conditions are met:
+        #  - It is an ABC member
+        #  OR
+        #  | - It is a "verified", "approved" and  "activated" user
+        #  | AND
+        #  | - The maximum number of requests for this revision has not been
+        #  |   reached yet.
+        #
+        # The number of requests is tracked by awarding a coin token to the
+        # revision each time a build request is submitted (the number of build
+        # in that request is not taken into account).
+        # The awarded coin token is graduated as follow:
+        #  "Haypence" => "Piece of Eight" => "Dubloon" => "Mountain of Wealth".
+        # If the "Mountain of Wealth" token is reached, the next request will be
+        # refused by the bot. At this stage only ABC members will be able to
+        # trigger new builds.
+        abc_members = phab.get_project_members(BITCOIN_ABC_PROJECT_PHID)
+        current_token = phab.get_object_token(revision_PHID)
+
         builds = []
         for comment in comments:
-            builds += get_builds_from_comment(comment["content"]["raw"])
+            comment_builds = get_builds_from_comment(comment["content"]["raw"])
+
+            # Parsing the string is cheaper than phabricator requests, so check
+            # if the comment is for us prior to filtering on the user.
+            if not comment_builds:
+                continue
+
+            user = comment["authorPHID"]
+
+            # ABC members can always trigger builds
+            if user in abc_members:
+                builds += comment_builds
+                continue
+
+            if is_user_allowed_to_trigger_builds(user, current_token):
+                builds += comment_builds
+
         # If there is no build provided, this request is not what we are after,
         # just return.
         # TODO return an help command to explain how to use the bot.
         if not builds:
             return SUCCESS, 200
+
+        # Give (only positive) feedback to user. If several comments are part of
+        # the same transaction then there is no way to differentiate what the
+        # token is for; however this is very unlikely to happen in real life.
+        phab.set_object_token(revision_PHID, next_token(current_token))
 
         staging_ref = phab.get_latest_diff_staging_ref(revision_PHID)
         # Trigger the requested builds
@@ -376,6 +524,7 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
         return SUCCESS, 200
 
     @app.route("/status", methods=['POST'])
+    @persistDatabase
     def buildStatus():
         out = get_json_request_data(request)
         app.logger.info("Received /status POST with data: {}".format(out))
@@ -448,26 +597,28 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                 '|---|---|\n'
             ).format(project_name)
 
-        # secp256k1 is a special case because it has a Travis build from a
+        # secp256k1 is a special case because it has a Cirrus build from a
         # Github repo that is not managed by the build-configurations.yml config.
         # The status always need to be fetched.
-        sepc256k1_default_branch = 'master'
-        sepc256k1_travis_status = travis.get_branch_status(
-            27431354, sepc256k1_default_branch)
-        travis_badge_url = BADGE_TRAVIS_BASE.get_badge_url(
-            message=sepc256k1_travis_status.value,
-            color='brightgreen' if sepc256k1_travis_status == BuildStatus.Success else 'red',
+        sepc256k1_cirrus_status = cirrus.get_default_branch_status()
+        cirrus_badge_url = BADGE_CIRRUS_BASE.get_badge_url(
+            message=sepc256k1_cirrus_status.value,
+            color=('brightgreen' if sepc256k1_cirrus_status == BuildStatus.Success else
+                   'red' if sepc256k1_cirrus_status == BuildStatus.Failure else
+                   'blue' if sepc256k1_cirrus_status == BuildStatus.Running else
+                   'lightblue' if sepc256k1_cirrus_status == BuildStatus.Queued else
+                   'inactive'),
         )
 
-        # Add secp256k1 Travis to the status panel.
+        # Add secp256k1 Cirrus to the status panel.
         panel_content = add_project_header_to_panel(
             'secp256k1 ([[https://github.com/Bitcoin-ABC/secp256k1 | Github]])')
         panel_content = add_line_to_panel(
             '| [[{} | {}]] | {{image uri="{}", alt="{}"}} |'.format(
-                'https://travis-ci.org/github/bitcoin-abc/secp256k1',
-                sepc256k1_default_branch,
-                travis_badge_url,
-                sepc256k1_travis_status.value,
+                'https://cirrus-ci.com/github/Bitcoin-ABC/secp256k1',
+                'master',
+                cirrus_badge_url,
+                sepc256k1_cirrus_status.value,
             )
         )
         panel_content = add_line_to_panel('')
@@ -507,7 +658,7 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
         # If the list of project names has changed (project was added, deleted
         # or renamed, update the panel data accordingly.
         (removed_projects, added_projects) = dict_xor(
-            create_server.panel_data, project_ids, lambda key: {})
+            create_server.db['panel_data'], project_ids, lambda key: {})
 
         # Log the project changes if any
         if (len(removed_projects) + len(added_projects)) > 0:
@@ -543,7 +694,7 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
 
         # Update the builds
         for project_id, project_builds in sorted(
-                create_server.panel_data.items()):
+                create_server.db['panel_data'].items()):
             build_type_ids = [build['teamcity_build_type_id'] for build in list(
                 associated_builds.values()) if build['teamcity_project_id'] == project_id]
 
@@ -618,9 +769,9 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
 
         phab.set_text_panel_content(17, panel_content)
 
-    def update_coverage_panel(coverage_summary):
-        # FIXME don't harcode the permalink but pull it from some configuration
-        coverage_permalink = "**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId=BitcoinABC_Master_BitcoinAbcMasterCoverage&tab=report__Root_Code_Coverage&guest=1 | HTML coverage report ]]**\n\n"
+    def update_coverage_panel(build_type_id, project_name, coverage_summary):
+        coverage_permalink = "**[[ https://build.bitcoinabc.org/viewLog.html?buildId=lastSuccessful&buildTypeId={}&tab=report__Root_Code_Coverage&guest=1 | {} coverage report ]]**\n\n".format(
+            build_type_id, project_name)
 
         coverage_report = "| Granularity | % hit | # hit | # total |\n"
         coverage_report += "| ----------- | ----- | ----- | ------- |\n"
@@ -650,11 +801,15 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                 match.group('total'),
             )
 
+        # Cache the coverage data for this build type
+        coverage_data = create_server.db['coverage_data']
+        coverage_data[build_type_id] = coverage_permalink + coverage_report
+
         # Update the coverage panel with our remarkup content
-        phab.set_text_panel_content(21, coverage_permalink + coverage_report)
+        phab.set_text_panel_content(21, "\n".join(coverage_data.values()))
 
     def handle_build_result(buildName, buildTypeId, buildResult,
-                            buildURL, branch, buildId, buildTargetPHID, **kwargs):
+                            buildURL, branch, buildId, buildTargetPHID, projectName, **kwargs):
         # Do not report build status for ignored builds
         if phab.getIgnoreKeyword() in buildTypeId:
             return SUCCESS, 200
@@ -685,10 +840,12 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                     coverage_summary = None
 
                 if coverage_summary:
-                    update_coverage_panel(coverage_summary)
+                    update_coverage_panel(
+                        buildTypeId, projectName, coverage_summary)
 
         # If we have a buildTargetPHID, report the status.
-        build_target = create_server.diff_targets.get(buildTargetPHID, None)
+        build_target = create_server.db['diff_targets'].get(
+            buildTargetPHID, None)
         if build_target is not None:
             phab.update_build_target_status(build_target, buildId, status)
 
@@ -699,7 +856,7 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
             )
 
             if build_target.is_finished():
-                del create_server.diff_targets[buildTargetPHID]
+                del create_server.db['diff_targets'][buildTargetPHID]
 
         revisionPHID = phab.get_revisionPHID(branch)
 
@@ -781,8 +938,8 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                         (buildFailures, testFailures) = tc.getLatestBuildAndTestFailures(
                             'BitcoinABC')
                         if len(buildFailures) == 0 and len(testFailures) == 0:
-                            if not create_server.master_is_green:
-                                create_server.master_is_green = True
+                            if not create_server.db['master_is_green']:
+                                create_server.db['master_is_green'] = True
                                 slackbot.postMessage(
                                     'dev', "Master is green again.")
 
@@ -793,6 +950,18 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                             "buildId": buildId,
                         }
                     )
+
+                    # Explicitly ignored log lines. Use with care.
+                    buildLog = tc.getBuildLog(buildId)
+                    for line in tc.getIgnoreList():
+                        # Skip empty lines and comments in the ignore file
+                        if not line or line.decode().strip()[0] == '#':
+                            continue
+
+                        # If any of the ignore patterns match any line in the
+                        # build log, ignore this failure
+                        if re.search(line.decode(), buildLog):
+                            return SUCCESS, 200
 
                     # Get number of build failures over the last few days
                     numRecentFailures = tc.getNumAggregateFailuresSince(
@@ -811,7 +980,7 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
                         return SUCCESS, 200
 
                     # Only mark master as red for failures that are not flaky
-                    create_server.master_is_green = False
+                    create_server.db['master_is_green'] = False
 
                     commitHashes = buildInfo.getCommits()
                     newTask = phab.createBrokenBuildTask(
@@ -860,44 +1029,34 @@ def create_server(tc, phab, slackbot, travis, jsonEncoder=None):
             if status == BuildStatus.Failure:
                 msg = phab.createBuildStatusMessage(
                     status, guest_url, buildName)
+                # We add two newlines to break away from the (IMPORTANT)
+                # callout.
+                msg += '\n\n'
 
-                # Append a snippet of the log if there are build failures,
-                # attempting to focus on the first build failure.
-                buildFailures = tc.getBuildProblems(buildId)
-                if len(buildFailures) > 0:
+                testFailures = tc.getFailedTests(buildId)
+                if len(testFailures) == 0:
+                    # If no test failure is available, print the tail of the
+                    # build log
                     buildLog = tc.getBuildLog(buildId)
                     logLines = []
                     for line in buildLog.splitlines(keepends=True):
                         logLines.append(line)
 
-                        # If this line contains any of the build failures,
-                        # append the last N log lines to the message.
-                        foundBuildFailure = None
-                        for failure in buildFailures:
-                            if re.search(re.escape(failure['details']), line):
-                                foundBuildFailure = failure
-                                break
-
-                        if foundBuildFailure:
-                            # Recreate the build status message to point to the full build log
-                            # to make the build failure more accessible.
-                            msg = phab.createBuildStatusMessage(
-                                status, foundBuildFailure['logUrl'], buildName)
-                            # We add two newlines to break away from the
-                            # (IMPORTANT) callout.
-                            msg += "\n\nSnippet of first build failure:\n```lines=16,COUNTEREXAMPLE\n{}```".format(
-                                ''.join(logLines[-60:]))
-                            break
-
-                # Append detailed links when there are test failures.
-                testFailures = tc.getFailedTests(buildId)
-                if len(testFailures) > 0:
-                    # We add two newlines to break away from the (IMPORTANT)
-                    # callout.
-                    msg += '\n\nEach failure log is accessible here:'
-                for failure in testFailures:
-                    msg += "\n[[{} | {}]]".format(failure['logUrl'],
-                                                  failure['name'])
+                    msg += "Tail of the build log:\n```lines=16,COUNTEREXAMPLE\n{}```".format(
+                        ''.join(logLines[-60:]))
+                else:
+                    # Print the failure log for each test
+                    msg += 'Failed tests logs:\n'
+                    msg += '```lines=16,COUNTEREXAMPLE'
+                    for failure in testFailures:
+                        msg += "\n====== {} ======\n{}".format(
+                            failure['name'], failure['details'])
+                    msg += '```'
+                    msg += '\n\n'
+                    msg += 'Each failure log is accessible here:'
+                    for failure in testFailures:
+                        msg += "\n[[{} | {}]]".format(
+                            failure['logUrl'], failure['name'])
 
                 phab.commentOnRevision(revisionPHID, msg, buildName)
 

@@ -28,6 +28,7 @@ class PrioritiseTransactionTest(BitcoinTestFramework):
             "-acceptnonstdtxn=1",
             "-txindex"
         ]] * self.num_nodes
+        self.supports_cli = False
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -189,7 +190,7 @@ class PrioritiseTransactionTest(BitcoinTestFramework):
         tx_id = self.nodes[0].decoderawtransaction(tx_hex)["txid"]
 
         # This will raise an exception due to min relay fee not being met
-        assert_raises_rpc_error(-26, "min relay fee not met (code 66)",
+        assert_raises_rpc_error(-26, "min relay fee not met",
                                 self.nodes[0].sendrawtransaction, tx_hex)
         assert tx_id not in self.nodes[0].getrawmempool()
 

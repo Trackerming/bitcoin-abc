@@ -7,7 +7,10 @@
 from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_array_result
+from test_framework.util import (
+    assert_array_result,
+    assert_equal,
+)
 
 
 class ListTransactionsTest(BitcoinTestFramework):
@@ -30,14 +33,15 @@ class ListTransactionsTest(BitcoinTestFramework):
                             {"txid": txid},
                             {"category": "receive", "amount": Decimal("0.1"), "confirmations": 0})
         # mine a block, confirmations should change:
-        self.nodes[0].generate(1)
+        blockhash = self.nodes[0].generate(1)[0]
+        blockheight = self.nodes[0].getblockheader(blockhash)['height']
         self.sync_all()
         assert_array_result(self.nodes[0].listtransactions(),
                             {"txid": txid},
-                            {"category": "send", "amount": Decimal("-0.1"), "confirmations": 1})
+                            {"category": "send", "amount": Decimal("-0.1"), "confirmations": 1, "blockhash": blockhash, "blockheight": blockheight})
         assert_array_result(self.nodes[1].listtransactions(),
                             {"txid": txid},
-                            {"category": "receive", "amount": Decimal("0.1"), "confirmations": 1})
+                            {"category": "receive", "amount": Decimal("0.1"), "confirmations": 1, "blockhash": blockhash, "blockheight": blockheight})
 
         # send-to-self:
         txid = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), 0.2)
@@ -88,6 +92,10 @@ class ListTransactionsTest(BitcoinTestFramework):
         txid = self.nodes[1].sendtoaddress(multisig["address"], 0.1)
         self.nodes[1].generate(1)
         self.sync_all()
+        assert_equal(len(self.nodes[0].listtransactions(
+            label="watchonly", include_watchonly=True)), 1)
+        assert_equal(len(self.nodes[0].listtransactions(
+            dummy="watchonly", include_watchonly=True)), 1)
         assert len(
             self.nodes[0].listtransactions(
                 label="watchonly",

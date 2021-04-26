@@ -13,17 +13,61 @@
 
 #include <boost/variant.hpp>
 
+#include <string>
+
 static const bool DEFAULT_ACCEPT_DATACARRIER = true;
 
 class CKeyID;
 class CScript;
+struct ScriptHash;
+
+template <typename HashType> class BaseHash {
+protected:
+    HashType m_hash;
+
+public:
+    BaseHash() : m_hash() {}
+    BaseHash(const HashType &in) : m_hash(in) {}
+
+    uint8_t *begin() { return m_hash.begin(); }
+
+    const uint8_t *begin() const { return m_hash.begin(); }
+
+    uint8_t *end() { return m_hash.end(); }
+
+    const uint8_t *end() const { return m_hash.end(); }
+
+    operator std::vector<uint8_t>() const {
+        return std::vector<uint8_t>{m_hash.begin(), m_hash.end()};
+    }
+
+    std::string ToString() const { return m_hash.ToString(); }
+
+    bool operator==(const BaseHash<HashType> &other) const noexcept {
+        return m_hash == other.m_hash;
+    }
+
+    bool operator!=(const BaseHash<HashType> &other) const noexcept {
+        return !(m_hash == other.m_hash);
+    }
+
+    bool operator<(const BaseHash<HashType> &other) const noexcept {
+        return m_hash < other.m_hash;
+    }
+
+    size_t size() const { return m_hash.size(); }
+
+    uint8_t *data() { return m_hash.data(); }
+    const uint8_t *data() const { return m_hash.data(); }
+};
 
 /** A reference to a CScript: the Hash160 of its serialization (see script.h) */
-class CScriptID : public uint160 {
+class CScriptID : public BaseHash<uint160> {
 public:
-    CScriptID() : uint160() {}
+    CScriptID() : BaseHash() {}
     explicit CScriptID(const CScript &in);
-    CScriptID(const uint160 &in) : uint160(in) {}
+    explicit CScriptID(const uint160 &in) : BaseHash(in) {}
+    explicit CScriptID(const ScriptHash &in);
 };
 
 /**
@@ -34,19 +78,19 @@ static const unsigned int MAX_OP_RETURN_RELAY = 223;
 
 /**
  * A data carrying output is an unspendable output containing data. The script
- * type is designated as TX_NULL_DATA.
+ * type is designated as TxoutType::NULL_DATA.
  */
 extern bool fAcceptDatacarrier;
 
-enum txnouttype {
-    TX_NONSTANDARD,
+enum class TxoutType {
+    NONSTANDARD,
     // 'standard' transaction types:
-    TX_PUBKEY,
-    TX_PUBKEYHASH,
-    TX_SCRIPTHASH,
-    TX_MULTISIG,
+    PUBKEY,
+    PUBKEYHASH,
+    SCRIPTHASH,
+    MULTISIG,
     // unspendable OP_RETURN script that carries data
-    TX_NULL_DATA,
+    NULL_DATA,
 };
 
 class CNoDestination {
@@ -59,25 +103,30 @@ public:
     }
 };
 
-struct PKHash : public uint160 {
-    PKHash() : uint160() {}
-    explicit PKHash(const uint160 &hash) : uint160(hash) {}
+struct PKHash : public BaseHash<uint160> {
+    PKHash() : BaseHash() {}
+    explicit PKHash(const uint160 &hash) : BaseHash(hash) {}
     explicit PKHash(const CPubKey &pubkey);
-    using uint160::uint160;
+    explicit PKHash(const CKeyID &pubkey_id);
 };
+CKeyID ToKeyID(const PKHash &key_hash);
 
-struct ScriptHash : public uint160 {
-    ScriptHash() : uint160() {}
-    explicit ScriptHash(const uint160 &hash) : uint160(hash) {}
+struct ScriptHash : public BaseHash<uint160> {
+    ScriptHash() : BaseHash() {}
+    // This doesn't do what you'd expect.
+    // Use ScriptHash(GetScriptForDestination(...)) instead.
+    explicit ScriptHash(const PKHash &hash) = delete;
+
+    explicit ScriptHash(const uint160 &hash) : BaseHash(hash) {}
     explicit ScriptHash(const CScript &script);
-    using uint160::uint160;
+    explicit ScriptHash(const CScriptID &script);
 };
 
 /**
  * A txout script template with a specific destination. It is either:
  *  * CNoDestination: no destination set
- *  * PKHash: TX_PUBKEYHASH destination (P2PKH)
- *  * ScriptHash: TX_SCRIPTHASH destination (P2SH)
+ *  * PKHash: TxoutType::PUBKEYHASH destination (P2PKH)
+ *  * ScriptHash: TxoutType::SCRIPTHASH destination (P2SH)
  *  A CTxDestination is the internal data type encoded in a bitcoin address
  */
 typedef boost::variant<CNoDestination, PKHash, ScriptHash> CTxDestination;
@@ -85,8 +134,8 @@ typedef boost::variant<CNoDestination, PKHash, ScriptHash> CTxDestination;
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination &dest);
 
-/** Get the name of a txnouttype as a C string, or nullptr if unknown. */
-const char *GetTxnOutputType(txnouttype t);
+/** Get the name of a TxoutType as a string */
+std::string GetTxnOutputType(TxoutType t);
 
 /**
  * Parse a scriptPubKey and identify script type for standard scripts. If
@@ -96,11 +145,11 @@ const char *GetTxnOutputType(txnouttype t);
  *
  * @param[in]   scriptPubKey   Script to parse
  * @param[out]  vSolutionsRet  Vector of parsed pubkeys and hashes
- * @return                     The script type. TX_NONSTANDARD represents a
- * failed solve.
+ * @return                     The script type. TxoutType::NONSTANDARD
+ * represents a failed solve.
  */
-txnouttype Solver(const CScript &scriptPubKey,
-                  std::vector<std::vector<uint8_t>> &vSolutionsRet);
+TxoutType Solver(const CScript &scriptPubKey,
+                 std::vector<std::vector<uint8_t>> &vSolutionsRet);
 
 /**
  * Parse a standard scriptPubKey for the destination address. Assigns result to
@@ -116,14 +165,13 @@ bool ExtractDestination(const CScript &scriptPubKey,
  * multisig scripts, this populates the addressRet vector with the pubkey IDs
  * and nRequiredRet with the n required to spend. For other destinations,
  * addressRet is populated with a single value and nRequiredRet is set to 1.
- * Returns true if successful. Currently does not extract address from
- * pay-to-witness scripts.
+ * Returns true if successful.
  *
  * Note: this function confuses destinations (a subset of CScripts that are
  * encodable as an address) with key identifiers (of keys involved in a
  * CScript), and its use should be phased out.
  */
-bool ExtractDestinations(const CScript &scriptPubKey, txnouttype &typeRet,
+bool ExtractDestinations(const CScript &scriptPubKey, TxoutType &typeRet,
                          std::vector<CTxDestination> &addressRet,
                          int &nRequiredRet);
 

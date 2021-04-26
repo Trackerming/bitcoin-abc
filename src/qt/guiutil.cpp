@@ -1,4 +1,4 @@
-// Copyright (c) 2011-2016 The Bitcoin Core developers
+// Copyright (c) 2011-2019 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -14,22 +14,13 @@
 #include <qt/bitcoinaddressvalidator.h>
 #include <qt/bitcoinunits.h>
 #include <qt/qvalidatedlineedit.h>
-#include <qt/walletmodel.h>
+#include <qt/sendcoinsrecipient.h>
 #include <script/script.h>
 #include <script/standard.h>
 #include <util/strencodings.h>
 #include <util/system.h>
 
 #ifdef WIN32
-#ifdef _WIN32_WINNT
-#undef _WIN32_WINNT
-#endif
-#define _WIN32_WINNT 0x0501
-#ifdef _WIN32_IE
-#undef _WIN32_IE
-#endif
-#define _WIN32_IE 0x0501
-#define WIN32_LEAN_AND_MEAN 1
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -48,20 +39,24 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QFontMetrics>
+#include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QList>
 #include <QMouseEvent>
+#include <QProcess>
 #include <QProgressDialog>
+#include <QScreen>
 #include <QSettings>
+#include <QShortcut>
+#include <QSize>
+#include <QString>
 #include <QTextDocument> // for Qt::mightBeRichText
 #include <QThread>
 #include <QUrlQuery>
+#include <QtGlobal>
 
 #if defined(Q_OS_MAC)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-
-#include <CoreServices/CoreServices.h>
 
 void ForceActivation();
 #endif
@@ -69,8 +64,8 @@ void ForceActivation();
 namespace GUIUtil {
 
 QString dateTimeStr(const QDateTime &date) {
-    return date.date().toString(Qt::SystemLocaleShortDate) + QString(" ") +
-           date.toString("hh:mm");
+    return date.date().toString(QLocale().dateFormat(QLocale::ShortFormat)) +
+           QString(" ") + date.toString("hh:mm");
 }
 
 QString dateTimeStr(qint64 nTime) {
@@ -272,6 +267,10 @@ QList<QModelIndex> getEntryData(QAbstractItemView *view, int column) {
     return view->selectionModel()->selectedRows(column);
 }
 
+QString getDefaultDataDirectory() {
+    return boostPathToQString(GetDefaultDataDir());
+}
+
 QString getSaveFileName(QWidget *parent, const QString &caption,
                         const QString &dir, const QString &filter,
                         QString *selectedSuffixOut) {
@@ -357,7 +356,7 @@ bool checkPoint(const QPoint &p, const QWidget *w) {
     if (!atW) {
         return false;
     }
-    return atW->topLevelWidget() == w;
+    return atW->window() == w;
 }
 
 bool isObscured(QWidget *w) {
@@ -385,6 +384,11 @@ void bringToFront(QWidget *w) {
     }
 }
 
+void handleCloseWindowShortcut(QWidget *w) {
+    QObject::connect(new QShortcut(QKeySequence(Qt::CTRL + Qt::Key_W), w),
+                     &QShortcut::activated, w, &QWidget::close);
+}
+
 void openDebugLogfile() {
     fs::path pathDebug = GetDataDir() / "debug.log";
 
@@ -409,8 +413,17 @@ bool openBitcoinConf() {
     configFile.close();
 
     /* Open bitcoin.conf with the associated application */
-    return QDesktopServices::openUrl(
+    bool res = QDesktopServices::openUrl(
         QUrl::fromLocalFile(boostPathToQString(pathConfig)));
+#ifdef Q_OS_MAC
+    // Workaround for macOS-specific behavior; see #15409.
+    if (!res) {
+        res = QProcess::startDetached(
+            "/usr/bin/open", QStringList{"-t", boostPathToQString(pathConfig)});
+    }
+#endif
+
+    return res;
 }
 
 QStringList splitSkipEmptyParts(const QString &s, const QString &separator) {
@@ -652,7 +665,7 @@ static fs::path GetAutostartFilePath() {
     if (chain == CBaseChainParams::MAIN) {
         return GetAutostartDir() / "bitcoin.desktop";
     }
-    return GetAutostartDir() / strprintf("bitcoin-%s.lnk", chain);
+    return GetAutostartDir() / strprintf("bitcoin-%s.desktop", chain);
 }
 
 bool GetStartOnSystemStartup() {
@@ -711,95 +724,6 @@ bool SetStartOnSystemStartup(bool fAutoStart) {
     return true;
 }
 
-#elif defined(Q_OS_MAC)
-// based on:
-// https://github.com/Mozketo/LaunchAtLoginController/blob/master/LaunchAtLoginController.m
-
-// NB: caller must release returned ref if it's not NULL
-LSSharedFileListItemRef findStartupItemInList(LSSharedFileListRef list,
-                                              CFURLRef findUrl);
-LSSharedFileListItemRef findStartupItemInList(LSSharedFileListRef list,
-                                              CFURLRef findUrl) {
-    LSSharedFileListItemRef foundItem = nullptr;
-    // loop through the list of startup items and try to find the bitcoin app
-    CFArrayRef listSnapshot = LSSharedFileListCopySnapshot(list, nullptr);
-    for (int i = 0; !foundItem && i < CFArrayGetCount(listSnapshot); ++i) {
-        LSSharedFileListItemRef item =
-            (LSSharedFileListItemRef)CFArrayGetValueAtIndex(listSnapshot, i);
-        UInt32 resolutionFlags = kLSSharedFileListNoUserInteraction |
-                                 kLSSharedFileListDoNotMountVolumes;
-        CFURLRef currentItemURL = nullptr;
-
-#if defined(MAC_OS_X_VERSION_MAX_ALLOWED) &&                                   \
-    MAC_OS_X_VERSION_MAX_ALLOWED >= 10100
-        if (&LSSharedFileListItemCopyResolvedURL) {
-            currentItemURL = LSSharedFileListItemCopyResolvedURL(
-                item, resolutionFlags, nullptr);
-        }
-#if defined(MAC_OS_X_VERSION_MIN_REQUIRED) &&                                  \
-    MAC_OS_X_VERSION_MIN_REQUIRED < 10100
-        else {
-            LSSharedFileListItemResolve(item, resolutionFlags, &currentItemURL,
-                                        nullptr);
-        }
-#endif
-#else
-        LSSharedFileListItemResolve(item, resolutionFlags, &currentItemURL,
-                                    nullptr);
-#endif
-
-        if (currentItemURL && CFEqual(currentItemURL, findUrl)) {
-            // found
-            CFRetain(foundItem = item);
-        }
-        if (currentItemURL) {
-            CFRelease(currentItemURL);
-        }
-    }
-    CFRelease(listSnapshot);
-    return foundItem;
-}
-
-bool GetStartOnSystemStartup() {
-    CFURLRef bitcoinAppUrl = CFBundleCopyBundleURL(CFBundleGetMainBundle());
-    LSSharedFileListRef loginItems = LSSharedFileListCreate(
-        nullptr, kLSSharedFileListSessionLoginItems, nullptr);
-    LSSharedFileListItemRef foundItem =
-        findStartupItemInList(loginItems, bitcoinAppUrl);
-    // findStartupItemInList retains the item it returned, need to release
-    if (foundItem) {
-        CFRelease(foundItem);
-    }
-    CFRelease(loginItems);
-    CFRelease(bitcoinAppUrl);
-    return foundItem;
-}
-
-bool SetStartOnSystemStartup(bool fAutoStart) {
-    CFURLRef bitcoinAppUrl = CFBundleCopyBundleURL(CFBundleGetMainBundle());
-    LSSharedFileListRef loginItems = LSSharedFileListCreate(
-        nullptr, kLSSharedFileListSessionLoginItems, nullptr);
-    LSSharedFileListItemRef foundItem =
-        findStartupItemInList(loginItems, bitcoinAppUrl);
-
-    if (fAutoStart && !foundItem) {
-        // add bitcoin app to startup item list
-        LSSharedFileListInsertItemURL(loginItems,
-                                      kLSSharedFileListItemBeforeFirst, nullptr,
-                                      nullptr, bitcoinAppUrl, nullptr, nullptr);
-    } else if (!fAutoStart && foundItem) {
-        // remove item
-        LSSharedFileListItemRemove(loginItems, foundItem);
-    }
-    // findStartupItemInList retains the item it returned, need to release
-    if (foundItem) {
-        CFRelease(foundItem);
-    }
-    CFRelease(loginItems);
-    CFRelease(bitcoinAppUrl);
-    return true;
-}
-#pragma GCC diagnostic pop
 #else
 
 bool GetStartOnSystemStartup() {
@@ -850,33 +774,10 @@ QString formatDurationStr(int secs) {
 QString formatServicesStr(quint64 mask) {
     QStringList strList;
 
-    // Don't display experimental service bits
-    for (uint64_t check = 1; check <= NODE_LAST_NON_EXPERIMENTAL_SERVICE_BIT;
-         check <<= 1) {
-        if (mask & check) {
-            switch (check) {
-                case NODE_NETWORK:
-                    strList.append("NETWORK");
-                    break;
-                case NODE_GETUTXO:
-                    strList.append("GETUTXO");
-                    break;
-                case NODE_BLOOM:
-                    strList.append("BLOOM");
-                    break;
-                case NODE_XTHIN:
-                    strList.append("XTHIN");
-                    break;
-                case NODE_BITCOIN_CASH:
-                    strList.append("CASH");
-                    break;
-                case NODE_NETWORK_LIMITED:
-                    strList.append("LIMITED");
-                    break;
-                default:
-                    strList.append(QString("%1[%2]").arg("UNKNOWN").arg(check));
-            }
-        }
+    constexpr uint64_t nonExperimentalMask =
+        (NODE_LAST_NON_EXPERIMENTAL_SERVICE_BIT << 1) - 1;
+    for (const auto &flag : serviceFlagsToStr(mask & nonExperimentalMask)) {
+        strList.append(QString::fromStdString(flag));
     }
 
     if (strList.size()) {
@@ -954,7 +855,7 @@ qreal calculateIdealFontSize(int width, const QString &text, QFont font,
     while (font_size >= minPointSize) {
         font.setPointSizeF(font_size);
         QFontMetrics fm(font);
-        if (fm.horizontalAdvance(text) < width) {
+        if (GUIUtil::TextWidth(fm, text) < width) {
             break;
         }
         font_size -= 0.5;
@@ -990,12 +891,34 @@ int TextWidth(const QFontMetrics &fm, const QString &text) {
 void PolishProgressDialog(QProgressDialog *dialog) {
 #ifdef Q_OS_MAC
     // Workaround for macOS-only Qt bug; see: QTBUG-65750, QTBUG-70357.
-    const int margin = dialog->fontMetrics().width("X");
+    const int margin = GUIUtil::TextWidth(dialog->fontMetrics(), "X");
     dialog->resize(dialog->width() + 2 * margin, dialog->height());
     dialog->show();
 #else
     Q_UNUSED(dialog);
 #endif
+}
+
+void LogQtInfo() {
+#ifdef QT_STATIC
+    const std::string qt_link{"static"};
+#else
+    const std::string qt_link{"dynamic"};
+#endif
+#ifdef QT_STATICPLUGIN
+    const std::string plugin_link{"static"};
+#else
+    const std::string plugin_link{"dynamic"};
+#endif
+    LogPrintf("Qt %s (%s), plugin=%s (%s)\n", qVersion(), qt_link,
+              QGuiApplication::platformName().toStdString(), plugin_link);
+    LogPrintf("System: %s, %s\n", QSysInfo::prettyProductName().toStdString(),
+              QSysInfo::buildAbi().toStdString());
+    for (const QScreen *s : QGuiApplication::screens()) {
+        LogPrintf("Screen: %s %dx%d, pixel ratio=%.1f\n",
+                  s->name().toStdString(), s->size().width(),
+                  s->size().height(), s->devicePixelRatio());
+    }
 }
 
 } // namespace GUIUtil
