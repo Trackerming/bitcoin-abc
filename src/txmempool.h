@@ -644,7 +644,7 @@ public:
     bool getSpentIndex(CSpentIndexKey &key, CSpentIndexValue &value);
     bool removeSpentIndex(const uint256 txhash);
 
-    void removeRecursive(const CTransaction &tx, MemPoolRemovalReason reason);
+    void removeRecursive(const CTransaction &tx, MemPoolRemovalReason reason) EXCLUSIVE_LOCKS_REQUIRED(cs);;
     void removeForReorg(const Config &config, const CCoinsViewCache *pcoins,
                         unsigned int nMemPoolHeight, int flags)
     EXCLUSIVE_LOCKS_REQUIRED(cs, cs_main);
