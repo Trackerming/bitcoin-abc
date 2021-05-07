@@ -1,7 +1,8 @@
 abc-ci-builds
 
 *.tar.gz
-
+build*
+.vscode
 *.exe
 src/bitcoin
 src/bitcoind

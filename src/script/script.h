@@ -524,7 +524,8 @@ public:
 
         return (opcodetype)(OP_1 + n - 1);
     }
-
+    
+    bool IsPayToPublicKeyHash() const;
     bool IsPayToScriptHash() const;
     bool IsCommitment(const std::vector<uint8_t> &data) const;
     bool IsWitnessProgram(int &version, std::vector<uint8_t> &program) const;

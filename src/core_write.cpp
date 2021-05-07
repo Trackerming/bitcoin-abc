@@ -22,8 +22,7 @@ UniValue ValueFromAmount(const Amount &amount) {
     Amount n_abs(sign ? -amount : amount);
     int64_t quotient = n_abs / COIN;
     int64_t remainder = (n_abs % COIN) / SATOSHI;
-    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "",
-                                              quotient, remainder));
+    return UniValue(UniValue::VNUM, strprintf("%s%d.%08d", sign ? "-" : "", quotient, remainder));
 }
 
 std::string FormatScript(const CScript &script) {
@@ -273,6 +272,14 @@ void TxToUniv(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry,
 
     if (include_hex) {
         // The hex-encoded transaction. Used the name "hex" to be consistent
+        // with the verbose output of "getrawtransaction".
+        entry.pushKV("hex", EncodeHexTx(tx, serialize_flags));
+    }
+}
+
+void TxToUnivS(const CTransaction &tx, const uint256 &hashBlock, UniValue &entry, bool include_hex, int serialize_flags) {
+    if (include_hex) {
+        // the hex-encoded transaction. used the name "hex" to be consistent
         // with the verbose output of "getrawtransaction".
         entry.pushKV("hex", EncodeHexTx(tx, serialize_flags));
     }

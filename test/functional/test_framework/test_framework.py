@@ -654,7 +654,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             os.rmdir(cache_path('wallets'))
             for entry in os.listdir(cache_path()):
                 # Only keep chainstate and blocks folder
-                if entry not in ['chainstate', 'blocks']:
+                if entry not in ['chainstate', 'blocks', 'indexes']:
                     os.remove(cache_path(entry))
 
         for i in range(self.num_nodes):

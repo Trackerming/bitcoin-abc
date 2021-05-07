@@ -22,7 +22,8 @@ class CScript;
 struct ScriptHash;
 
 template <typename HashType> class BaseHash {
-protected:
+// protected:
+public:
     HashType m_hash;
 
 public:
@@ -54,6 +55,10 @@ public:
     bool operator<(const BaseHash<HashType> &other) const noexcept {
         return m_hash < other.m_hash;
     }
+
+    /*uint160 getMHash(){
+        return (uint160)m_hash;
+    }*/
 
     size_t size() const { return m_hash.size(); }
 
